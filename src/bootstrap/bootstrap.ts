@@ -1,25 +1,26 @@
 /**
  * JobPilot entry point.
  *
- * Wires the runtime together and owns the top-level lifecycle: mount the
- * panel, create the controller, attach the SPA observers, and dispose
- * everything when the page we were mounted for disappears.
+ * Wires the runtime together and owns the top-level lifecycle: mount the panel,
+ * create the controller, attach the SPA observers, and dispose everything when
+ * the page we were mounted for disappears.
  *
- * The important invariant here is that there is exactly one mounted
- * controller at a time. A route change disposes the old one before the new
- * one is created, so observers, timers and DOM nodes cannot accumulate.
+ * The important invariant here is that there is exactly one mounted controller
+ * at a time. A route change disposes the old one before the new one is created,
+ * so observers, timers and DOM nodes cannot accumulate.
  */
-
 import { createController } from "../application/controller";
 import { createApplicationHistory } from "../application/history";
 import { createOrchestrator } from "../application/orchestrator";
 import { createRepository } from "../application/repository";
+import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
-import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { createPanel } from "../ui/panel";
+import { buildSections } from "../ui/sections";
+import { safetyFromState, type PanelViewModel } from "../ui/view-model";
 import { createEngineFor, createRuntimeDeps, VERSION } from "./container";
 
 export interface BootstrapResult {
@@ -29,8 +30,7 @@ export interface BootstrapResult {
 /**
  * Starts JobPilot in the current document.
  *
- * Resolves the configuration first (because the logger's level comes from it),
- * then delegates to `bootstrapWith`.
+ * Configuration is resolved first because the logger's level comes from it.
  */
 export const bootstrap = async (): Promise<BootstrapResult> => {
   const defaults = createDefaultConfig();
@@ -44,7 +44,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const effectiveConfig = loaded.config;
   const engine = createEngineFor(effectiveConfig);
   const history = createApplicationHistory(loaded.applications);
-  const queue = createTaskQueue();
 
   for (const warning of loaded.warnings) {
     deps.logger.warn("bootstrap", warning);
@@ -52,40 +51,30 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   const policy = toSessionPolicy(effectiveConfig);
 
+  // The panel needs a controller to exist, and the controller needs a panel to
+  // render into. Declared first and assigned below; the panel's callbacks only
+  // run after a user interaction, by which point it is set.
+  let controller: ReturnType<typeof createController> | undefined;
+
   const panel = createPanel({
     document: globalThis.document,
     version: VERSION,
     callbacks: {
-      onStart: () => controller?.dispatch({ type: "START" }),
-      onPause: () => controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } }),
-      onResume: () => controller?.dispatch({ type: "RESUME" }),
-      onStop: () => controller?.dispatch({ type: "STOP" }),
-      onClearQueue: () => {
-        queue.clearPending();
-        deps.logger.info("panel", "cleared pending queue", { pending: queue.pendingCount() });
+      start: () => controller?.dispatch({ type: "START" }),
+      pause: () => controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } }),
+      resume: () => controller?.dispatch({ type: "RESUME" }),
+      skipCurrent: () => {
+        deps.logger.info("panel", "skip requested");
+        controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
       },
-      onOpenSettings: () => {
-        panel.showToast(
-          "info",
-          "Edit settings by exporting, editing, and re-importing the config.",
-        );
-      },
-      onExportConfig: () => {
-        const json = JSON.stringify(effectiveConfig, null, 2);
-        void navigator.clipboard?.writeText(json).then(
-          () => panel.showToast("info", "Config copied to clipboard"),
-          () => panel.showToast("warn", "Clipboard unavailable; see the logs for the config"),
-        );
-        deps.logger.info("panel", "exported config");
-      },
-      onImportConfig: (json) => {
-        panel.showToast("warn", "Config import requires a reload in this build.");
-        deps.logger.warn("panel", "config import requested", { bytes: json.length });
+      stop: () => controller?.dispatch({ type: "STOP" }),
+      setCollapsed: (collapsed) => {
+        deps.logger.debug("panel", "collapsed changed", { collapsed });
       },
     },
   });
 
-  document.body.append(panel.root);
+  globalThis.document.body.append(panel.host);
 
   const watchdog = createWatchdog({
     clock: deps.clock,
@@ -116,7 +105,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     persist,
     dispatch: (event) => controller?.dispatch(event),
     notify: (level, message) => {
-      panel.showToast(level, message);
+      panel.toast(level, message);
       deps.logger.info("notify", message, { level });
     },
     onDiagnostic: (reason) => {
@@ -133,11 +122,127 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     },
   });
 
-  let controller: ReturnType<typeof createController> | undefined;
-
+  /**
+   * Renders the panel from current application state.
+   *
+   * The panel is a pure function of this view model, so a rendering bug can be
+   * reproduced by constructing the same object in a test.
+   */
   const render = (): void => {
     if (controller === undefined) return;
-    panel.update(controller.context(), history.all(), deps.logger.entries());
+    const context = controller.context();
+    const safety = safetyFromState(context.state, effectiveConfig.automation.mode);
+    const records = history.all();
+
+    const partial: Omit<PanelViewModel, "sections"> = {
+      state: context.state,
+      mode: effectiveConfig.automation.mode,
+      safety: safety.level,
+      safetyLabel: safety.label,
+      launcherCount:
+        context.queueDepth > 0 ? `${context.sessionApplications}/${context.queueDepth}` : "",
+
+      running: [
+        "scanning",
+        "evaluating",
+        "opening",
+        "validating",
+        "applying",
+        "verifying",
+        "cooldown",
+      ].includes(context.state),
+      paused: context.state === "paused" || context.state === "blocked" || context.state === "failed",
+
+      ...(context.pauseReason === undefined
+        ? context.lastMessage === undefined
+          ? {}
+          : {
+              message: {
+                tone: context.lastError === undefined ? ("info" as const) : ("error" as const),
+                text: context.lastMessage,
+              },
+            }
+        : {
+            blocked: {
+              reason: describePauseReason(context.pauseReason),
+              body: "JobPilot has stopped all actions. Your queue and progress are saved. Resolve the page state, then choose Resume.",
+              canResume: true,
+            },
+          }),
+
+      ...(context.currentJob === undefined
+        ? {}
+        : {
+            current: {
+              title: context.currentJob.title,
+              company: context.currentJob.companyName,
+              phase: context.state,
+            },
+          }),
+
+      // A send whose outcome is unobservable is surfaced as a decision rather
+      // than silently retried or silently dropped.
+      decisions: records
+        .filter((record) => record.status === "submitted")
+        .map((record) => ({
+          kind: "uncertain-send" as const,
+          jobId: String(record.jobId),
+          title: String(record.jobId),
+          message:
+            "A message may have been sent. Check the conversation before continuing; this job will not be retried automatically.",
+          actions: [
+            { id: "open", label: "Open conversation" },
+            { id: "mark-sent", label: "Mark as sent" },
+            { id: "mark-not-sent", label: "Mark as not sent" },
+          ],
+        })),
+
+      stats: [
+        { label: "Scanned", value: context.stats.scanned },
+        { label: "Accepted", value: context.stats.accepted },
+        { label: "Applied", value: context.stats.applied },
+        { label: "Skipped", value: context.stats.skipped },
+        { label: "Blocked", value: context.stats.blocked },
+        { label: "Failed", value: context.stats.failed },
+      ],
+
+      matches: [],
+      queue: [],
+      history: records.slice(-40).map((record) => ({
+        jobId: String(record.jobId),
+        title: String(record.jobId),
+        company: record.platform,
+        outcome: record.status,
+        meta: record.reasons.at(-1) ?? new Date(record.updatedAt).toLocaleTimeString(),
+      })),
+      logs: deps.logger
+        .entries()
+        .slice(-40)
+        .reverse()
+        .map((entry) => ({
+          level: entry.level,
+          time: new Date(entry.timestamp).toLocaleTimeString(),
+          component: entry.component,
+          message: entry.message,
+        })),
+    };
+
+    const view: PanelViewModel = {
+      ...partial,
+      sections: buildSections(globalThis.document, {
+        ...(partial.message === undefined ? {} : { message: partial.message }),
+        ...(partial.blocked === undefined ? {} : { blocked: partial.blocked }),
+        ...(partial.current === undefined ? {} : { current: partial.current }),
+        decisions: partial.decisions,
+        stats: partial.stats,
+        matches: partial.matches,
+        queue: partial.queue,
+        history: partial.history,
+        logs: partial.logs,
+      }),
+    };
+
+    panel.render(view);
   };
 
   controller = createController({
@@ -151,18 +256,17 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     onPersist: persist,
   });
 
-  // SPA lifecycle ---------------------------------------------------------
+  // --- SPA lifecycle ------------------------------------------------------
   const pageObserver = createPageObserver(window);
 
   const refreshPageKind = (): void => {
     const kind = deps.platform.detectPage();
-    panel.setPageKind(kind, kind === "job-list" || kind === "job-detail");
-    return;
+    deps.logger.debug("bootstrap", "page kind", { kind });
   };
 
   pageObserver.onPageChange(() => {
     const before = deps.platform.detectPage();
-    // Give the SPA a moment to render the new route's DOM.
+    // Give the SPA a moment to render the new route's DOM before re-reading it.
     setTimeout(() => {
       try {
         const after = deps.platform.detectPage();
@@ -179,17 +283,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   pageObserver.onDomChange(refreshPageKind);
   pageObserver.start();
   refreshPageKind();
-
-  panel.setSettings({
-    automationMode: effectiveConfig.automation.mode,
-    maxPerSession: policy.maxApplicationsPerSession,
-    maxPerHour: policy.maxApplicationsPerHour,
-    minDelayMs: policy.minActionDelayMs,
-    maxDelayMs: policy.maxActionDelayMs,
-    maxRetries: policy.maxRetries,
-    logLevel: effectiveConfig.logging.level,
-  });
-
   render();
 
   deps.logger.info("bootstrap", "JobPilot ready", {

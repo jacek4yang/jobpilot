@@ -1,0 +1,61 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+
+  A <textarea> editor instead of a contenteditable one, used to prove that
+  readEditorText / writeEditorText handle BOTH shapes. The live BOSS editor
+  shape is unknown; both are guesses ("fixture-only").
+
+  Selectors this fixture is intended to satisfy (confidence "fixture-only"):
+    chatRoot, chatHeader, jobTitleInChat, companyInChat, chatJobIdAttribute,
+    commonPhraseToggle, commonPhrasePanel, commonPhraseItem, sendButton,
+    outgoingMessage, outgoingMessageBody.
+    chatEditor  <- "textarea.chat-editor" (the second candidate in the group)
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>沟通会话（文本框编辑器） - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main class="chat-page">
+      <section class="chat-panel" data-jobpilot-chat data-job-id="job-70001">
+        <header class="chat-header" data-jobpilot-chat-header>
+          <span class="chat-header__recruiter" data-jobpilot-chat-recruiter>王先生</span>
+          <span class="chat-header__job-title" data-jobpilot-chat-title data-job-id="job-70001">
+            数据平台工程师
+          </span>
+          <span class="chat-header__company" data-jobpilot-chat-company>示例数据有限公司</span>
+        </header>
+
+        <div class="chat-messages">
+          <div class="message-item is-outgoing" data-jobpilot-outgoing>
+            <div class="message-item__body" data-jobpilot-body>您好，想了解一下这个岗位。</div>
+          </div>
+        </div>
+
+        <div class="chat-editor">
+          <button
+            type="button"
+            class="chat-editor__phrase-toggle"
+            data-jobpilot-action="common-phrases"
+          >
+            常用语
+          </button>
+
+          <textarea class="chat-editor" rows="3" aria-label="输入消息"></textarea>
+
+          <button type="button" class="chat-editor__send" data-jobpilot-action="send">发送</button>
+
+          <ul class="common-phrase-panel" data-jobpilot-common-phrases>
+            <li data-jobpilot-common-phrase>您好，我对这个职位很感兴趣，方便聊聊吗？</li>
+            <li data-jobpilot-common-phrase>您好，请问该岗位还在招聘吗？</li>
+            <li data-jobpilot-common-phrase>您好，我已发送简历，期待您的回复。</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+
+  A page showing a 安全验证 / risk warning. It must be detected as blocked, and
+  no communication action may proceed.
+
+  Selectors this fixture is intended to satisfy:
+    guards.captcha     [data-jobpilot-guard='captcha'], #captcha,
+                       .captcha-container  (fixture-only)
+    guards.riskControl [data-jobpilot-guard='risk-control'] (fixture-only)
+    communication riskBanner [data-jobpilot-guard] via the chat-scoped candidate
+                       [data-jobpilot-chat] [data-jobpilot-guard] (fixture-only)
+
+  The chat panel is present on purpose: it proves the adapter can find a
+  conversation AND still refuses, because the guards outrank the chat surface.
+
+  The risk banner is placed INSIDE the chat panel and the captcha block OUTSIDE
+  it, so the two detection paths (page guards vs chat-scoped riskBanner) are
+  independently exercised.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>安全验证 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <div class="captcha-container" id="captcha" data-jobpilot-guard="captcha">
+      <p>请完成安全验证</p>
+      <p>拖动滑块完成拼图</p>
+      <div class="captcha-container__slider" role="slider" aria-label="拖动滑块"></div>
+    </div>
+
+    <main class="chat-page">
+      <section class="chat-panel" data-jobpilot-chat data-job-id="job-12345">
+        <div
+          class="chat-panel__risk"
+          data-jobpilot-guard="risk-control"
+          role="alert"
+        >
+          <p>当前操作存在风险，请稍后再试</p>
+        </div>
+
+        <header class="chat-header" data-jobpilot-chat-header>
+          <span class="chat-header__job-title" data-jobpilot-chat-title data-job-id="job-12345">
+            后端开发工程师
+          </span>
+          <span class="chat-header__company" data-jobpilot-chat-company>示例科技有限公司</span>
+        </header>
+
+        <div class="chat-editor">
+          <div
+            class="chat-editor__input"
+            data-jobpilot-editor
+            contenteditable="true"
+            role="textbox"
+            aria-label="输入消息"
+          ></div>
+
+          <button type="button" class="chat-editor__send" data-jobpilot-action="send">发送</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

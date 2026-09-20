@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+
+  Same conversation shape as chat-conversation.html, but the intended message IS
+  already present in the outgoing list, and the editor is empty again. This is
+  the post-send state, used to test send observation: with baseline 0,
+  observeSend() must report {kind:"observed"}.
+
+  Selectors this fixture is intended to satisfy (confidence "fixture-only"):
+    chatRoot, chatEditor, chatHeader, jobTitleInChat, companyInChat,
+    chatJobIdAttribute, commonPhraseToggle, commonPhrasePanel,
+    commonPhraseItem, sendButton, outgoingMessage, outgoingMessageBody.
+
+  The message text below ("您好，我对这个职位很感兴趣，方便聊聊吗？") is also the
+  FIRST common phrase, so a test can prove the adapter reports the text it
+  actually observed rather than the phrase it suggested.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>沟通会话（已发送） - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main class="chat-page">
+      <section class="chat-panel" data-jobpilot-chat data-job-id="job-12345">
+        <header class="chat-header" data-jobpilot-chat-header>
+          <span class="chat-header__recruiter" data-jobpilot-chat-recruiter>李女士</span>
+          <a
+            class="chat-header__job-title"
+            data-jobpilot-chat-title
+            data-job-id="job-12345"
+            href="/job_detail/job-12345.html"
+          >
+            后端开发工程师
+          </a>
+          <span class="chat-header__company" data-jobpilot-chat-company>示例科技有限公司</span>
+        </header>
+
+        <div class="chat-messages">
+          <div class="message-item is-incoming">
+            <div class="message-item__body">您好，感谢您的关注。</div>
+          </div>
+
+          <div class="message-item is-outgoing" data-jobpilot-outgoing>
+            <div class="message-item__body" data-jobpilot-body>您好，我对这个职位很感兴趣。</div>
+          </div>
+
+          <!-- The message the adapter just sent. -->
+          <div class="message-item is-outgoing" data-jobpilot-outgoing>
+            <div class="message-item__body" data-jobpilot-body>
+              您好，我对这个职位很感兴趣，方便聊聊吗？
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-editor">
+          <button
+            type="button"
+            class="chat-editor__phrase-toggle"
+            data-jobpilot-action="common-phrases"
+          >
+            常用语
+          </button>
+
+          <!-- Emptied after a successful send, as BOSS-like editors do. -->
+          <div
+            class="chat-editor__input"
+            data-jobpilot-editor
+            contenteditable="true"
+            role="textbox"
+            aria-label="输入消息"
+          ></div>
+
+          <button type="button" class="chat-editor__send" data-jobpilot-action="send">发送</button>
+
+          <ul class="common-phrase-panel" data-jobpilot-common-phrases>
+            <li data-jobpilot-common-phrase>您好，我对这个职位很感兴趣，方便聊聊吗？</li>
+            <li data-jobpilot-common-phrase>您好，请问该岗位还在招聘吗？</li>
+            <li data-jobpilot-common-phrase>您好，我已发送简历，期待您的回复。</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

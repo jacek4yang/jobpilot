@@ -1,0 +1,62 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+
+  A job-detail page carrying 立即沟通 (via the shared `detail.applyButton` group,
+  [data-jobpilot-action='apply']) PLUS the post-send success dialog. Used to test
+  classifyModal() -> {kind:"success"} and findCommunicateButton().
+
+  Selectors this fixture is intended to satisfy:
+    detail.root          [data-jobpilot-detail]              (fixture-only)
+    detail.applyButton   [data-jobpilot-action='apply']      (fixture-only)
+    detail.title         [itemprop='title'] / h1.job-detail__title (fixture-only)
+    detail.companyName   [itemprop='hiringOrganization'] [itemprop='name'] (fixture-only)
+    successModal         [data-jobpilot-modal='success']     (fixture-only)
+    successModalStayButton [data-jobpilot-modal='success'] [data-jobpilot-action='stay']
+                                                             (fixture-only)
+
+  classifyModal() must return "success" ONLY because BOTH the structural anchor
+  and the visible text 已向BOSS发送消息 are present. Removing either must
+  downgrade the result to "unknown"; a test should assert that.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>职位详情（发送成功弹窗） - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main class="job-detail" data-jobpilot-detail>
+      <h1 class="job-detail__title" itemprop="title">后端开发工程师</h1>
+
+      <section class="job-detail__company" itemprop="hiringOrganization">
+        <span class="job-detail__company-name" itemprop="name">示例科技有限公司</span>
+      </section>
+
+      <div class="job-detail__actions">
+        <button
+          type="button"
+          class="job-detail__apply"
+          data-jobpilot-action="apply"
+          aria-label="立即沟通"
+        >
+          立即沟通
+        </button>
+      </div>
+    </main>
+
+    <!--
+      The confirmation dialog. It is VISIBLE (no hidden attribute, no
+      display:none), because a hidden dialog is pre-rendered markup, not
+      evidence that anything was sent.
+    -->
+    <div class="dialog-container success" role="dialog" data-jobpilot-modal="success">
+      <div class="dialog__body">已向BOSS发送消息，请留意对方回复。</div>
+      <div class="dialog__footer">
+        <button type="button" data-jobpilot-action="stay">留在此页</button>
+        <button type="button" data-jobpilot-action="continue">继续沟通</button>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+
+  A job-detail page with an UNRELATED visible dialog: a 实名认证 (real-name
+  verification) prompt. It must classify as "unknown", never as "success".
+
+  This is the highest-value negative fixture in the set. If classifyModal()
+  reported "success" here, the queue runner would mark a job as contacted when
+  nothing was sent — and because the intent would already be `send-attempted`,
+  the message would never be sent at all.
+
+  Selectors this fixture is intended to satisfy:
+    detail.root    [data-jobpilot-detail]                 (fixture-only)
+    detail.applyButton [data-jobpilot-action='apply']     (fixture-only)
+    unknownModal   [role='dialog']                        (unverified heuristic)
+
+  Note: successModal's candidates must NOT match anything here. There is no
+  [data-jobpilot-modal] attribute and no 已向BOSS发送消息 text.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>职位详情（无关弹窗） - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main class="job-detail" data-jobpilot-detail>
+      <h1 class="job-detail__title" itemprop="title">后端开发工程师</h1>
+
+      <section class="job-detail__company" itemprop="hiringOrganization">
+        <span class="job-detail__company-name" itemprop="name">示例科技有限公司</span>
+      </section>
+
+      <div class="job-detail__actions">
+        <button
+          type="button"
+          class="job-detail__apply"
+          data-jobpilot-action="apply"
+          aria-label="立即沟通"
+        >
+          立即沟通
+        </button>
+      </div>
+    </main>
+
+    <!-- Visible, but NOT a send confirmation. -->
+    <div class="dialog-container" role="dialog" aria-label="实名认证">
+      <div class="dialog__body">根据相关规定，沟通前需要完成实名认证。</div>
+      <div class="dialog__footer">
+        <button type="button">去认证</button>
+        <button type="button">稍后再说</button>
+      </div>
+    </div>
+  </body>
+</html>

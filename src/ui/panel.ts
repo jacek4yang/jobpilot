@@ -1,50 +1,47 @@
-import type { AutomationContext } from "../application/state";
-import { describePauseReason } from "../application/state";
-import type { ApplicationRecord } from "../domain/application/application";
-import type { LogEntry } from "../ports/logger";
+/**
+ * JobPilot panel.
+ *
+ * Presentation only: it renders view models it is handed and reports user
+ * intent through callbacks. It never reaches into automation, storage or the
+ * platform adapter, which keeps the dependency direction UI -> Application.
+ *
+ * Isolation: the panel is mounted inside a shadow root when the environment
+ * supports it, falling back to a scoped `.jobpilot-root` element. Either way
+ * the host page's styles cannot reach in and JobPilot's cannot leak out.
+ */
+import type { PanelTab, PanelViewModel, UiCallbacks } from "./view-model";
 import { PANEL_CSS } from "./styles";
-
-export type PanelTab = "status" | "queue" | "rules" | "history" | "logs" | "settings";
-
-export interface PanelCallbacks {
-  readonly onStart: () => void;
-  readonly onPause: () => void;
-  readonly onResume: () => void;
-  readonly onStop: () => void;
-  readonly onClearQueue: () => void;
-  readonly onOpenSettings: () => void;
-  readonly onExportConfig: () => void;
-  readonly onImportConfig: (json: string) => void;
-}
 
 export interface PanelOptions {
   readonly document: Document;
+  /** Injected so the header version label never disagrees with the build. */
   readonly version: string;
-  readonly callbacks: PanelCallbacks;
-}
-
-export interface SettingsViewModel {
-  readonly automationMode: string;
-  readonly maxPerSession: number;
-  readonly maxPerHour: number;
-  readonly minDelayMs: number;
-  readonly maxDelayMs: number;
-  readonly maxRetries: number;
-  readonly logLevel: string;
+  readonly callbacks: UiCallbacks;
+  /** Start collapsed (the launcher is shown instead of the full panel). */
+  readonly startCollapsed?: boolean;
 }
 
 export interface Panel {
-  readonly root: HTMLElement;
-  update(
-    context: AutomationContext,
-    history: readonly ApplicationRecord[],
-    logs: readonly LogEntry[],
-  ): void;
-  setPageKind(pageKind: string, supported: boolean): void;
-  showToast(level: "info" | "warn" | "error", message: string): void;
-  setSettings(settings: SettingsViewModel): void;
+  readonly host: HTMLElement;
+  render(view: PanelViewModel): void;
+  /** Shows a transient message. At most one is visible at a time. */
+  toast(tone: "info" | "warn" | "error" | "success", message: string): void;
+  expand(): void;
+  collapse(): void;
+  readonly expanded: boolean;
   dispose(): void;
 }
+
+const TABS: readonly { readonly id: PanelTab; readonly label: string }[] = [
+  { id: "search", label: "Search" },
+  { id: "matches", label: "Matches" },
+  { id: "queue", label: "Queue" },
+  { id: "history", label: "History" },
+  { id: "rules", label: "Rules" },
+  { id: "messages", label: "Messages" },
+  { id: "settings", label: "Settings" },
+  { id: "logs", label: "Logs" },
+];
 
 const el = <K extends keyof HTMLElementTagNameMap>(
   doc: Document,
@@ -58,328 +55,234 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   return node;
 };
 
-const STATE_LABEL: Record<string, string> = {
-  idle: "idle",
-  scanning: "scanning",
-  evaluating: "evaluating",
-  opening: "opening",
-  validating: "validating",
-  applying: "applying",
-  verifying: "verifying",
-  cooldown: "cooldown",
-  paused: "paused",
-  blocked: "blocked",
-  failed: "failed",
-};
-
 /**
- * Builds the control panel.
+ * Creates the panel.
  *
- * The panel is presentation-only: it renders state it is handed and reports
- * user intent through callbacks. It never reaches into the automation
- * directly, which keeps the dependency direction UI -> Application.
+ * Uses Shadow DOM so host styles cannot affect the panel. The stylesheet is
+ * still scoped with a `jobpilot-` prefix, so the fallback path is equally safe.
  */
 export const createPanel = (options: PanelOptions): Panel => {
-  const { document: doc, callbacks } = options;
+  const doc = options.document;
+  const callbacks = options.callbacks;
+
+  const host = doc.createElement("div");
+  host.setAttribute("data-jobpilot-host", "");
+  // Keep the host itself out of the page's layout and stacking context.
+  host.style.setProperty("all", "initial", "important");
+  host.style.setProperty("position", "static", "important");
+
+  const useShadow = typeof host.attachShadow === "function";
+  const root: ShadowRoot | HTMLElement = useShadow
+    ? host.attachShadow({ mode: "open" })
+    : host;
 
   const style = doc.createElement("style");
   style.textContent = PANEL_CSS;
+  root.append(style);
 
-  const root = el(doc, "div", "jobpilot-root");
-  root.setAttribute("data-collapsed", "false");
+  // --- Launcher -----------------------------------------------------------
+  const launcher = el(doc, "div", "jobpilot-launcher");
+  launcher.setAttribute("role", "button");
+  launcher.setAttribute("tabindex", "0");
+  launcher.setAttribute("aria-label", "Open JobPilot");
+  const dot = el(doc, "span", "jobpilot-dot");
+  dot.setAttribute("data-state", "idle");
+  const monogram = el(doc, "span", "jobpilot-launcher-monogram", "JP");
+  const launcherCount = el(doc, "span", "jobpilot-launcher-count", "");
+  launcher.append(dot, monogram, launcherCount);
 
-  // Header -----------------------------------------------------------------
+  // --- Panel shell --------------------------------------------------------
+  const panelEl = el(doc, "div", "jobpilot-root");
+
   const header = el(doc, "div", "jobpilot-header");
-  const title = el(doc, "span", "jobpilot-title", `JobPilot v${options.version}`);
-  const badge = el(doc, "span", "jobpilot-badge", "idle");
-  badge.setAttribute("data-state", "idle");
-  const pageBadge = el(doc, "span", "jobpilot-badge", "page?");
-  header.append(title, badge, pageBadge);
-  header.addEventListener("click", () => {
-    const collapsed = root.getAttribute("data-collapsed") === "true";
-    root.setAttribute("data-collapsed", collapsed ? "false" : "true");
-  });
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+  header.setAttribute("aria-label", "Collapse JobPilot");
+  const title = el(doc, "span", "jobpilot-title", `JobPilot ${options.version}`);
+  const modeChip = el(doc, "span", "jobpilot-mode-chip", "assist");
+  const safetyChip = el(doc, "span", "jobpilot-safety-chip", "Safe");
+  safetyChip.setAttribute("data-safety", "safe");
+  header.append(title, modeChip, safetyChip);
 
-  // Tabs -------------------------------------------------------------------
-  const tabs: PanelTab[] = ["status", "queue", "rules", "history", "logs", "settings"];
   const tabBar = el(doc, "div", "jobpilot-tabs");
   tabBar.setAttribute("role", "tablist");
-  const panels = new Map<PanelTab, HTMLElement>();
   const tabButtons = new Map<PanelTab, HTMLButtonElement>();
+  const panels = new Map<PanelTab, HTMLElement>();
 
-  for (const tab of tabs) {
-    const button = el(doc, "button", "jobpilot-tab", tab);
+  for (const tab of TABS) {
+    const button = el(doc, "button", "jobpilot-tab", tab.label);
     button.type = "button";
     button.setAttribute("role", "tab");
-    button.setAttribute("aria-selected", tab === "status" ? "true" : "false");
+    button.setAttribute("aria-selected", tab.id === "search" ? "true" : "false");
+    button.addEventListener("click", () => selectTab(tab.id));
     tabBar.append(button);
-    tabButtons.set(tab, button);
+    tabButtons.set(tab.id, button);
   }
 
   const body = el(doc, "div", "jobpilot-body");
-  for (const tab of tabs) {
-    const panel = el(doc, "div", "jobpilot-panel");
-    panel.setAttribute("data-active", tab === "status" ? "true" : "false");
-    panels.set(tab, panel);
-    body.append(panel);
+  for (const tab of TABS) {
+    const section = el(doc, "div", "jobpilot-panel");
+    section.setAttribute("data-active", tab.id === "search" ? "true" : "false");
+    section.setAttribute("data-panel", tab.id);
+    panels.set(tab.id, section);
+    body.append(section);
   }
 
-  const selectTab = (active: PanelTab): void => {
-    for (const [tab, button] of tabButtons) {
-      button.setAttribute("aria-selected", tab === active ? "true" : "false");
-      panels.get(tab)?.setAttribute("data-active", tab === active ? "true" : "false");
+  const selectTab = (id: PanelTab): void => {
+    for (const [tabId, button] of tabButtons) {
+      button.setAttribute("aria-selected", tabId === id ? "true" : "false");
+    }
+    for (const [tabId, section] of panels) {
+      section.setAttribute("data-active", tabId === id ? "true" : "false");
     }
   };
-  for (const [tab, button] of tabButtons) {
-    button.addEventListener("click", () => selectTab(tab));
-  }
 
-  // Status panel -----------------------------------------------------------
-  const statusPanel = panels.get("status");
-  const message = el(doc, "p", "jobpilot-message", "Idle");
-  const statsGrid = el(doc, "div", "jobpilot-grid");
-  const statValues = new Map<string, HTMLElement>();
-  const statDefs: readonly (readonly [string, string])[] = [
-    ["scanned", "Scanned"],
-    ["accepted", "Accepted"],
-    ["applied", "Applied"],
-    ["skipped", "Skipped"],
-    ["blocked", "Blocked"],
-    ["failed", "Failed"],
-  ];
-  for (const [key, label] of statDefs) {
-    const box = el(doc, "div", "jobpilot-stat");
-    box.append(
-      el(doc, "span", "jobpilot-stat-label", label),
-      el(doc, "span", "jobpilot-stat-value", "0"),
-    );
-    const value = box.querySelector(".jobpilot-stat-value");
-    if (value instanceof HTMLElement) statValues.set(key, value);
-    statsGrid.append(box);
-  }
-  const sessionLine = el(doc, "p", "jobpilot-hint", "");
-  statusPanel?.append(message, statsGrid, sessionLine);
-
-  // Queue panel ------------------------------------------------------------
-  const queuePanel = panels.get("queue");
-  const queueSummary = el(doc, "p", "jobpilot-hint", "Queue empty");
-  const queueList = el(doc, "ul", "jobpilot-list");
-  const clearQueueBtn = el(doc, "button", "jobpilot-btn", "Clear pending");
-  clearQueueBtn.type = "button";
-  clearQueueBtn.addEventListener("click", () => callbacks.onClearQueue());
-  queuePanel?.append(queueSummary, queueList, clearQueueBtn);
-
-  // Rules panel ------------------------------------------------------------
-  const rulesPanel = panels.get("rules");
-  rulesPanel?.append(
-    el(
-      doc,
-      "p",
-      "jobpilot-hint",
-      "Hard filters reject outright; soft rules add weighted score. Every decision is recorded with its reasons in History.",
-    ),
-  );
-
-  // History panel ----------------------------------------------------------
-  const historyPanel = panels.get("history");
-  const historyList = el(doc, "ul", "jobpilot-list");
-  historyPanel?.append(historyList);
-
-  // Logs panel -------------------------------------------------------------
-  const logsPanel = panels.get("logs");
-  const logList = el(doc, "ul", "jobpilot-log");
-  logsPanel?.append(logList);
-
-  // Settings panel ---------------------------------------------------------
-  const settingsPanel = panels.get("settings");
-  const settingsSummary = el(doc, "div", "jobpilot-hint", "");
-  const exportBtn = el(doc, "button", "jobpilot-btn", "Export config");
-  exportBtn.type = "button";
-  exportBtn.addEventListener("click", () => callbacks.onExportConfig());
-  const importArea = el(doc, "textarea", "jobpilot-textarea");
-  importArea.placeholder = "Paste exported config JSON here, then press Import";
-  const importBtn = el(doc, "button", "jobpilot-btn", "Import config");
-  importBtn.type = "button";
-  importBtn.addEventListener("click", () => {
-    callbacks.onImportConfig(importArea.value);
-  });
-  const settingsBtn = el(doc, "button", "jobpilot-btn", "Edit settings");
-  settingsBtn.type = "button";
-  settingsBtn.addEventListener("click", () => callbacks.onOpenSettings());
-  settingsPanel?.append(settingsSummary, settingsBtn, exportBtn, importArea, importBtn);
-
-  // Action bar -------------------------------------------------------------
+  // --- Action bar ---------------------------------------------------------
   const actions = el(doc, "div", "jobpilot-actions");
   const startBtn = el(doc, "button", "jobpilot-btn", "Start");
   startBtn.type = "button";
   startBtn.setAttribute("data-variant", "primary");
+  startBtn.addEventListener("click", () => callbacks.start());
+
   const pauseBtn = el(doc, "button", "jobpilot-btn", "Pause");
   pauseBtn.type = "button";
+  pauseBtn.addEventListener("click", () => callbacks.pause());
+
   const resumeBtn = el(doc, "button", "jobpilot-btn", "Resume");
   resumeBtn.type = "button";
+  resumeBtn.addEventListener("click", () => callbacks.resume());
+
+  const skipBtn = el(doc, "button", "jobpilot-btn", "Skip");
+  skipBtn.type = "button";
+  skipBtn.addEventListener("click", () => callbacks.skipCurrent());
+
   const stopBtn = el(doc, "button", "jobpilot-btn", "Stop");
   stopBtn.type = "button";
   stopBtn.setAttribute("data-variant", "danger");
+  stopBtn.addEventListener("click", () => callbacks.stop());
 
-  startBtn.addEventListener("click", () => callbacks.onStart());
-  pauseBtn.addEventListener("click", () => callbacks.onPause());
-  resumeBtn.addEventListener("click", () => callbacks.onResume());
-  stopBtn.addEventListener("click", () => callbacks.onStop());
+  actions.append(startBtn, pauseBtn, resumeBtn, skipBtn, stopBtn);
 
-  actions.append(startBtn, pauseBtn, resumeBtn, stopBtn);
+  panelEl.append(header, tabBar, body, actions);
+  root.append(launcher, panelEl);
 
-  root.append(header, tabBar, body, actions);
+  // --- Collapse / expand --------------------------------------------------
+  let expanded = options.startCollapsed !== true;
+  const applyExpanded = (): void => {
+    launcher.classList.toggle("jobpilot-hidden", expanded);
+    panelEl.classList.toggle("jobpilot-hidden", !expanded);
+  };
 
-  let toast: HTMLElement | undefined;
+  const expand = (): void => {
+    expanded = true;
+    applyExpanded();
+    callbacks.setCollapsed(false);
+  };
+  const collapse = (): void => {
+    expanded = false;
+    applyExpanded();
+    callbacks.setCollapsed(true);
+  };
+
+  launcher.addEventListener("click", expand);
+  launcher.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      expand();
+    }
+  });
+  header.addEventListener("click", collapse);
+  header.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      collapse();
+    }
+  });
+
+  // --- Keyboard shortcuts -------------------------------------------------
+  // Registered on the panel only, and never while focus is inside a text
+  // field, so JobPilot cannot interfere with normal typing on the host page.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!expanded) return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return;
+    }
+    if (event.key === "Escape") {
+      collapse();
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === "p" || event.key === "P") callbacks.pause();
+    if (event.key === "s" || event.key === "S") callbacks.skipCurrent();
+  };
+  doc.addEventListener("keydown", onKeyDown);
+
+  // --- Toast --------------------------------------------------------------
+  let toastEl: HTMLElement | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
+  applyExpanded();
+
   return {
-    root,
+    host,
 
-    update(context, history, logs) {
-      const label = STATE_LABEL[context.state] ?? context.state;
-      badge.textContent = label;
-      badge.setAttribute("data-state", context.state);
+    render(view) {
+      dot.setAttribute("data-state", view.state);
+      modeChip.textContent = view.mode;
+      safetyChip.textContent = view.safetyLabel;
+      safetyChip.setAttribute("data-safety", view.safety);
 
-      if (context.pauseReason !== undefined) {
-        message.textContent = describePauseReason(context.pauseReason);
-        message.setAttribute("data-level", "warn");
-      } else {
-        message.textContent = context.lastMessage ?? "Idle";
-        message.setAttribute("data-level", context.lastError === undefined ? "info" : "error");
+      launcherCount.textContent = view.launcherCount;
+
+      for (const section of panels.values()) {
+        section.replaceChildren();
       }
 
-      statValues.get("scanned")?.replaceChildren(String(context.stats.scanned));
-      statValues.get("accepted")?.replaceChildren(String(context.stats.accepted));
-      statValues.get("applied")?.replaceChildren(String(context.stats.applied));
-      statValues.get("skipped")?.replaceChildren(String(context.stats.skipped));
-      statValues.get("blocked")?.replaceChildren(String(context.stats.blocked));
-      statValues.get("failed")?.replaceChildren(String(context.stats.failed));
-      sessionLine.textContent = `Session applications: ${context.sessionApplications}`;
+      for (const [tabId, section] of panels) {
+        const content = view.sections[tabId];
+        if (content !== undefined) section.append(content);
+      }
 
-      const active = [
-        "scanning",
-        "evaluating",
-        "opening",
-        "validating",
-        "applying",
-        "verifying",
-        "cooldown",
-      ].includes(context.state);
-      const paused =
-        context.state === "paused" || context.state === "blocked" || context.state === "failed";
-      startBtn.disabled = active;
-      pauseBtn.disabled = !active;
-      resumeBtn.disabled = !paused;
-      stopBtn.disabled = context.state === "idle";
+      const canStart = !view.running;
+      const canPause = view.running;
+      const canResume = view.paused;
+      const canSkip = view.running;
+      const canStop = view.running || view.paused;
 
-      queueSummary.textContent =
-        context.queueDepth === 0 ? "Queue empty" : `${context.queueDepth} task(s) pending`;
-      queueList.replaceChildren(
-        ...history
-          .filter((record) => record.status === "approved" || record.status === "opened")
-          .slice(0, 20)
-          .map((record) => {
-            const item = el(doc, "li", "jobpilot-list-item");
-            item.append(
-              el(doc, "div", "jobpilot-mono", String(record.jobId)),
-              el(doc, "div", "jobpilot-muted", `${record.status} · score ${record.score ?? "-"}`),
-            );
-            return item;
-          }),
-      );
-
-      // Newest first, bounded so a long session cannot bloat the DOM.
-      historyList.replaceChildren(
-        ...history
-          .slice()
-          .sort((a, b) => b.updatedAt - a.updatedAt)
-          .slice(0, 30)
-          .map((record) => {
-            const item = el(doc, "li", "jobpilot-list-item");
-            const reason = record.reasons.at(-1);
-            item.append(
-              el(doc, "div", "jobpilot-mono", String(record.jobId)),
-              el(
-                doc,
-                "div",
-                "jobpilot-muted",
-                `${record.status} · score ${record.score ?? "-"} · ${new Date(record.updatedAt).toLocaleTimeString()}`,
-              ),
-            );
-            if (reason !== undefined) {
-              item.append(el(doc, "div", "jobpilot-hint", reason));
-            }
-            return item;
-          }),
-      );
-
-      logList.replaceChildren(
-        ...logs
-          .slice(-40)
-          .reverse()
-          .map((entry) => {
-            const item = el(doc, "li", "jobpilot-log-item");
-            item.setAttribute("data-level", entry.level);
-            item.append(
-              el(doc, "span", "jobpilot-log-level", entry.level),
-              el(
-                doc,
-                "span",
-                undefined,
-                `${new Date(entry.timestamp).toLocaleTimeString()} ${entry.component}: ${entry.message}`,
-              ),
-            );
-            return item;
-          }),
-      );
+      startBtn.disabled = !canStart;
+      pauseBtn.disabled = !canPause;
+      resumeBtn.disabled = !canResume;
+      skipBtn.disabled = !canSkip;
+      stopBtn.disabled = !canStop;
     },
 
-    setPageKind(pageKind, supported) {
-      pageBadge.textContent = pageKind;
-      pageBadge.setAttribute("data-state", supported ? "idle" : "blocked");
-    },
-
-    showToast(level, msg) {
-      toast?.remove();
+    toast(tone, message) {
       if (toastTimer !== undefined) clearTimeout(toastTimer);
-      toast = el(doc, "div", "jobpilot-toast", msg);
-      toast.setAttribute("data-level", level);
-      doc.body.append(toast);
+      toastEl?.remove();
+      const node = el(doc, "div", "jobpilot-toast", message);
+      node.setAttribute("data-tone", tone);
+      root.append(node);
+      toastEl = node;
       toastTimer = setTimeout(() => {
-        toast?.remove();
-        toast = undefined;
+        node.remove();
+        if (toastEl === node) toastEl = undefined;
+        toastTimer = undefined;
       }, 6_000);
     },
 
-    setSettings(settings) {
-      settingsSummary.replaceChildren();
-      const rows: readonly (readonly [string, string])[] = [
-        ["Automation mode", settings.automationMode],
-        ["Max per session", String(settings.maxPerSession)],
-        ["Max per hour", String(settings.maxPerHour)],
-        ["Delay range", `${settings.minDelayMs}-${settings.maxDelayMs} ms`],
-        ["Max retries", String(settings.maxRetries)],
-        ["Log level", settings.logLevel],
-      ];
-      for (const [key, value] of rows) {
-        const row = el(doc, "div");
-        row.append(
-          el(doc, "span", "jobpilot-field-label", key),
-          el(doc, "span", "jobpilot-muted", value),
-        );
-        settingsSummary.append(row);
-      }
+    expand,
+    collapse,
+    get expanded() {
+      return expanded;
     },
 
     dispose() {
       if (toastTimer !== undefined) clearTimeout(toastTimer);
-      toast?.remove();
-      toast = undefined;
-      style.remove();
-      root.remove();
+      toastEl?.remove();
+      doc.removeEventListener("keydown", onKeyDown);
+      host.remove();
     },
   };
 };
-
-export { PANEL_CSS };
