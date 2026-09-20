@@ -9,9 +9,19 @@
  * at a time. A route change disposes the old one before the new one is created,
  * so observers, timers and DOM nodes cannot accumulate.
  */
+
+import { readBossRecruiterActivity } from "../adapters/boss/activity";
+import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
 import { createController } from "../application/controller";
+import {
+  createDiscoveryService,
+  type DiscoveryFailure,
+  formatReasons,
+  type Match,
+} from "../application/discovery";
 import { createApplicationHistory } from "../application/history";
 import { createOrchestrator } from "../application/orchestrator";
+import { toDomainProfile } from "../application/profile-mapping";
 import { createRepository } from "../application/repository";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
@@ -51,15 +61,114 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   const policy = toSessionPolicy(effectiveConfig);
 
+  // Discovery results live here until the user selects them into the queue.
+  // Discovery never enqueues on its own; that is the central product rule.
+  let matches: readonly Match[] = [];
+  let discoveryNote: string | undefined;
+
+  const discoveryService = createDiscoveryService({
+    platform: deps.platform,
+    logger: deps.logger,
+    resolveCities: (cities) => {
+      const { resolved, failed } = resolveCityCodes(cities);
+      const firstFailure = failed[0];
+      if (firstFailure !== undefined && !firstFailure.ok) {
+        return { ok: false, city: firstFailure.input, suggestions: firstFailure.suggestions };
+      }
+      return { ok: true, codes: resolved.map((entry) => entry.code) };
+    },
+    contactedJobIds: history.submittedJobIds(),
+    companyBlacklist: effectiveConfig.filters.companyBlacklist,
+    titleBlacklist: [],
+    scoring: {
+      baseScore: effectiveConfig.scoring.baseScore,
+      acceptThreshold: effectiveConfig.scoring.acceptThreshold,
+      preferredSkills: effectiveConfig.scoring.preferredSkills,
+      preferredIndustries: [],
+    },
+    activityPreference: "any",
+    skipUnknownActivity: true,
+    readActivity: readBossRecruiterActivity,
+  });
+
   // The panel needs a controller to exist, and the controller needs a panel to
   // render into. Declared first and assigned below; the panel's callbacks only
   // run after a user interaction, by which point it is set.
   let controller: ReturnType<typeof createController> | undefined;
 
+  /**
+   * Runs discovery for the active profile and repopulates Matches.
+   *
+   * Discovery never enqueues: it produces candidates for review. Starting it
+   * while the queue is running is refused rather than allowed to fight the
+   * runner for control of the page.
+   */
+  async function runDiscovery(): Promise<void> {
+    const stored = effectiveConfig.profiles.find((entry) => entry.enabled);
+    const active = stored === undefined ? undefined : toDomainProfile(stored);
+    if (active === undefined) {
+      discoveryNote = "No enabled search profile. Create one before discovering.";
+      render();
+      panel.toast("warn", discoveryNote);
+      return;
+    }
+
+    if (controller !== undefined && controller.context().state !== "idle") {
+      // Never silently destroy queue progress by starting a search mid-run.
+      discoveryNote = "Stop the current run before starting a new search.";
+      render();
+      panel.toast("warn", discoveryNote);
+      return;
+    }
+
+    discoveryNote = "Discovering…";
+    render();
+
+    const result = await discoveryService.run(active);
+
+    if (!result.ok) {
+      discoveryNote = describeDiscoveryFailure(result.failure);
+      render();
+      panel.toast("warn", discoveryNote);
+      deps.logger.warn("bootstrap", "discovery stopped", { failure: result.failure.kind });
+      return;
+    }
+
+    matches = result.matches;
+    const accepted = matches.filter((match) => match.accepted).length;
+    discoveryNote = `Found ${matches.length} jobs, ${accepted} matched "${active.name}".`;
+    render();
+    deps.logger.info("bootstrap", "discovery complete", {
+      total: matches.length,
+      accepted,
+    });
+  }
+
+  /** Turns a discovery failure into something a user can act on. */
+  function describeDiscoveryFailure(failure: DiscoveryFailure): string {
+    switch (failure.kind) {
+      case "city":
+        return failure.suggestions.length > 0
+          ? `City "${failure.city}" is not a recognised BOSS city. Did you mean: ${failure.suggestions.join(", ")}?`
+          : `City "${failure.city}" is not a recognised BOSS city.`;
+      case "page-kind":
+        return `This page is not a job list (detected: ${failure.pageKind}). Nothing was scanned.`;
+      case "no-jobs":
+        return "No jobs found on this page.";
+      case "aborted":
+        return "Discovery was cancelled.";
+      case "error":
+        return `Discovery failed: ${failure.message}`;
+    }
+  }
+
   const panel = createPanel({
     document: globalThis.document,
     version: VERSION,
     callbacks: {
+      discover: () => {
+        void runDiscovery();
+      },
       start: () => controller?.dispatch({ type: "START" }),
       pause: () => controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } }),
       resume: () => controller?.dispatch({ type: "RESUME" }),
@@ -156,12 +265,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         context.state === "paused" || context.state === "blocked" || context.state === "failed",
 
       ...(context.pauseReason === undefined
-        ? context.lastMessage === undefined
+        ? context.lastMessage === undefined && discoveryNote === undefined
           ? {}
           : {
               message: {
                 tone: context.lastError === undefined ? ("info" as const) : ("error" as const),
-                text: context.lastMessage,
+                text: discoveryNote ?? context.lastMessage ?? "",
               },
             }
         : {
@@ -208,7 +317,20 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         { label: "Failed", value: context.stats.failed },
       ],
 
-      matches: [],
+      // Matches are rendered with their rule trace, so a score is never shown
+      // without the reasons that produced it.
+      matches: matches.slice(0, 50).map((match) => ({
+        jobId: String(match.summary.id),
+        title: match.summary.title,
+        company: match.summary.companyName,
+        meta: [match.summary.locationRaw, match.summary.salaryRaw]
+          .filter((value) => value.length > 0)
+          .join(" · "),
+        score: match.score,
+        accepted: match.accepted,
+        selected: match.accepted,
+        reasons: formatReasons(match.reasons),
+      })),
       queue: [],
       history: records.slice(-40).map((record) => ({
         jobId: String(record.jobId),

@@ -142,6 +142,11 @@ export const createPanel = (options: PanelOptions): Panel => {
 
   // --- Action bar ---------------------------------------------------------
   const actions = el(doc, "div", "jobpilot-actions");
+  const discoverBtn = el(doc, "button", "jobpilot-btn", "Discover");
+  discoverBtn.type = "button";
+  discoverBtn.setAttribute("data-action", "discover");
+  discoverBtn.addEventListener("click", () => callbacks.discover());
+
   const startBtn = el(doc, "button", "jobpilot-btn", "Start");
   startBtn.type = "button";
   startBtn.setAttribute("data-variant", "primary");
@@ -164,7 +169,7 @@ export const createPanel = (options: PanelOptions): Panel => {
   stopBtn.setAttribute("data-variant", "danger");
   stopBtn.addEventListener("click", () => callbacks.stop());
 
-  actions.append(startBtn, pauseBtn, resumeBtn, skipBtn, stopBtn);
+  actions.append(discoverBtn, startBtn, pauseBtn, resumeBtn, skipBtn, stopBtn);
 
   panelEl.append(header, tabBar, body, actions);
   root.append(launcher, panelEl);
@@ -256,6 +261,7 @@ export const createPanel = (options: PanelOptions): Panel => {
       const canSkip = view.running;
       const canStop = view.running || view.paused;
 
+      discoverBtn.disabled = !canStart;
       startBtn.disabled = !canStart;
       pauseBtn.disabled = !canPause;
       resumeBtn.disabled = !canResume;

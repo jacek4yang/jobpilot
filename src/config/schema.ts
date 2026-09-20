@@ -165,10 +165,43 @@ export interface JobPilotConfig {
   readonly rateLimit: RateLimitConfig;
   readonly ui: UiConfig;
   readonly logging: LoggingConfig;
+  /**
+   * Saved search intents.
+   *
+   * Persisted as a whole list rather than a single global keyword set, because
+   * a real job search is several distinct searches that the user switches
+   * between. Stored as plain records: the domain owns the shape, and the config
+   * layer only guarantees the array survives a round trip.
+   */
+  readonly profiles: readonly StoredSearchProfile[];
+}
+
+/**
+ * A search profile as persisted.
+ *
+ * Kept structurally identical to the domain's `SearchProfile` but declared
+ * here so the config layer does not depend on the domain. The mapping is done
+ * at the boundary, which keeps the dependency arrow pointing inward.
+ */
+export interface StoredSearchProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly keywords: readonly string[];
+  readonly cities: readonly string[];
+  readonly includeKeywords: readonly string[];
+  readonly excludeKeywords: readonly string[];
+  readonly enabled: boolean;
+  readonly salaryMinK?: number;
+  readonly salaryMaxK?: number;
+  readonly degree?: readonly string[];
+  readonly experience?: readonly string[];
+  readonly companyScales?: readonly string[];
+  readonly recruiterActivity?: string;
+  readonly skipUnknownActivity?: boolean;
 }
 
 /** Schema revision of {@link JobPilotConfig}. Bump together with a migration. */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export const PANEL_POSITIONS: readonly UiConfig["panelPosition"][] = [
   "top-left",
@@ -245,6 +278,9 @@ export const createDefaultConfig = (): JobPilotConfig => ({
     persistLogs: false,
     telemetryEnabled: false,
   },
+  // Starts empty on purpose. Shipping a preset keyword list would silently
+  // filter every new user's results down to one person's job search.
+  profiles: [],
 });
 
 /** Projects the automation section onto the runtime-facing session policy. */

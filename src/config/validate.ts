@@ -26,6 +26,7 @@ import type {
   LoggingConfig,
   RateLimitConfig,
   ScoringConfigSection,
+  StoredSearchProfile,
   UiConfig,
 } from "./schema";
 import { createDefaultConfig, isAutomationMode, isPanelPosition, LOG_LEVELS } from "./schema";
@@ -650,10 +651,84 @@ export const validateConfig = (input: unknown): ValidationResult => {
       defaults.logging,
       report,
     ),
+    profiles: validateProfiles(root, report, "config"),
   };
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value };
+};
+
+/**
+ * Validates the persisted search-profile list.
+ *
+ * A malformed profile is DROPPED rather than repaired. Repairing one would risk
+ * turning a profile the user wrote into a different search; dropping it is
+ * visible (the profile is simply gone) and cannot cause an unintended search.
+ * A non-array value is reported.
+ */
+const validateProfiles = (
+  source: Record<string, unknown>,
+  report: Report,
+  path: string,
+): readonly StoredSearchProfile[] => {
+  const value = source["profiles"];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    report(`${path}.profiles must be an array`);
+    return [];
+  }
+
+  const profiles: StoredSearchProfile[] = [];
+
+  for (let index = 0; index < value.length; index += 1) {
+    const raw: unknown = value[index];
+    const itemPath = `${path}.profiles[${index}]`;
+    if (!isRecord(raw)) {
+      report(`${itemPath} must be an object`);
+      continue;
+    }
+
+    const id = raw["id"];
+    const name = raw["name"];
+    if (typeof id !== "string" || id.trim().length === 0) {
+      report(`${itemPath}.id must be a non-empty string`);
+      continue;
+    }
+    if (typeof name !== "string" || name.trim().length === 0) {
+      report(`${itemPath}.name must be a non-empty string`);
+      continue;
+    }
+
+    const salaryMinK = raw["salaryMinK"];
+    const salaryMaxK = raw["salaryMaxK"];
+    const recruiterActivity = raw["recruiterActivity"];
+    const skipUnknownActivity = raw["skipUnknownActivity"];
+
+    profiles.push({
+      id: id.trim(),
+      name: name.trim(),
+      keywords: readStringArray(raw, "keywords", [], report, itemPath),
+      cities: readStringArray(raw, "cities", [], report, itemPath),
+      includeKeywords: readStringArray(raw, "includeKeywords", [], report, itemPath),
+      excludeKeywords: readStringArray(raw, "excludeKeywords", [], report, itemPath),
+      enabled: readBoolean(raw, "enabled", true, report, itemPath),
+      ...(typeof salaryMinK === "number" && Number.isFinite(salaryMinK) ? { salaryMinK } : {}),
+      ...(typeof salaryMaxK === "number" && Number.isFinite(salaryMaxK) ? { salaryMaxK } : {}),
+      ...(Array.isArray(raw["degree"])
+        ? { degree: readStringArray(raw, "degree", [], report, itemPath) }
+        : {}),
+      ...(Array.isArray(raw["experience"])
+        ? { experience: readStringArray(raw, "experience", [], report, itemPath) }
+        : {}),
+      ...(Array.isArray(raw["companyScales"])
+        ? { companyScales: readStringArray(raw, "companyScales", [], report, itemPath) }
+        : {}),
+      ...(typeof recruiterActivity === "string" ? { recruiterActivity } : {}),
+      ...(typeof skipUnknownActivity === "boolean" ? { skipUnknownActivity } : {}),
+    });
+  }
+
+  return profiles;
 };
 
 /**

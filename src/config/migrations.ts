@@ -92,8 +92,41 @@ const migrateV2ToV3: MigrationStep = {
   },
 };
 
+/**
+ * v3 -> v4: introduce saved search profiles.
+ *
+ * v4 adds `config.profiles`. A v3 document has no way to express a search
+ * intent, so the list starts empty rather than being inferred from the flat
+ * keyword filters: inventing a profile would put words into the user's mouth
+ * and could make JobPilot search for something they never asked for. The
+ * existing flat filters keep working unchanged, so the upgrade is
+ * behaviour-preserving.
+ *
+ * Note the field lives inside `config`, because profiles are part of
+ * `JobPilotConfig`; writing it at the root would put it somewhere the validator
+ * never reads.
+ */
+const migrateV3ToV4: MigrationStep = {
+  name: "v3 -> v4: add search profiles",
+  from: 3,
+  to: 4,
+  apply: (root) => {
+    const config = asRecord(root["config"]);
+    const profiles = config["profiles"];
+    return {
+      ...root,
+      schemaVersion: 4,
+      config: { ...config, profiles: Array.isArray(profiles) ? profiles : [] },
+    };
+  },
+};
+
 /** The full chain, ascending. Append-only: never renumber or reuse a step. */
-export const MIGRATION_STEPS: readonly MigrationStep[] = [migrateV1ToV2, migrateV2ToV3];
+export const MIGRATION_STEPS: readonly MigrationStep[] = [
+  migrateV1ToV2,
+  migrateV2ToV3,
+  migrateV3ToV4,
+];
 
 /**
  * Reads the version of an untrusted root.

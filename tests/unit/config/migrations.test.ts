@@ -66,7 +66,7 @@ describe("migratePersistedRoot — version detection", () => {
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(result.appliedSteps.length).toBeGreaterThan(0);
     expect(result.appliedSteps[0]).toMatch(/^v1 -> v2/);
-    expect(result.appliedSteps.at(-1)).toMatch(/^v2 -> v3/);
+    expect(result.appliedSteps.at(-1)).toMatch(/^v3 -> v4/);
   });
 
   it("migrates an explicit v1 document", () => {
@@ -77,7 +77,7 @@ describe("migratePersistedRoot — version detection", () => {
       statistics: STATISTICS,
     });
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.appliedSteps).toHaveLength(2);
+    expect(result.appliedSteps).toHaveLength(3);
   });
 
   it("migrates a v2 document with a single step", () => {
@@ -88,8 +88,9 @@ describe("migratePersistedRoot — version detection", () => {
       statistics: STATISTICS,
     });
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.appliedSteps).toHaveLength(1);
+    expect(result.appliedSteps).toHaveLength(2);
     expect(result.appliedSteps[0]).toMatch(/^v2 -> v3/);
+    expect(result.appliedSteps[1]).toMatch(/^v3 -> v4/);
   });
 
   it("names every applied step, so diagnostics can explain the upgrade", () => {
@@ -321,5 +322,75 @@ describe("migratePersistedRoot — the upgraded config is usable", () => {
     });
     expect(config.automation.maxApplicationsPerSession).toBe(5);
     expect(config.logging.level).toBe("debug");
+  });
+});
+
+describe("migratePersistedRoot — v3 -> v4 search profiles", () => {
+  it("adds an empty profiles list without inventing a search", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 3,
+      config: { general: { locale: "zh-CN" } },
+      applications: [{ jobId: "j1" }],
+      statistics: { contacted: 3 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // A v3 document had no way to express a search intent, so the list must
+    // start empty. Deriving one from the flat filters would make JobPilot
+    // search for something the user never asked for.
+    expect((result.root.config as Record<string, unknown>)["profiles"]).toEqual([]);
+    expect(result.appliedSteps).toContain("v3 -> v4: add search profiles");
+  });
+
+  it("preserves existing user data across the upgrade", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 3,
+      config: {},
+      applications: [{ jobId: "keep-me" }],
+      statistics: { contacted: 9 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.root.applications).toEqual([{ jobId: "keep-me" }]);
+    expect(result.root.statistics).toEqual({ contacted: 9 });
+  });
+
+  it("does not overwrite profiles that are already present", () => {
+    const existing = [{ id: "p1", name: "Rust", keywords: ["rust"] }];
+    const result = migratePersistedRoot({
+      schemaVersion: 3,
+      config: { profiles: existing },
+      applications: [],
+      statistics: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The profile survives with its user-supplied fields intact; the migration
+    // only fills in the fields a v3 document could not have carried.
+    const profiles = (result.root.config as Record<string, unknown>)["profiles"] as readonly Record<
+      string,
+      unknown
+    >[];
+    expect(profiles).toHaveLength(1);
+    expect(profiles[0]?.["id"]).toBe("p1");
+    expect(profiles[0]?.["name"]).toBe("Rust");
+    expect(profiles[0]?.["keywords"]).toEqual(["rust"]);
+  });
+
+  it("replaces a non-array profiles value rather than trusting it", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 3,
+      config: { profiles: "not an array" },
+      applications: [],
+      statistics: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect((result.root.config as Record<string, unknown>)["profiles"]).toEqual([]);
   });
 });

@@ -22,6 +22,8 @@ export type PanelTab =
 export type SafetyLevel = "safe" | "auto" | "paused" | "blocked";
 
 export interface UiCallbacks {
+  /** Runs discovery for the active search profile and populates Matches. */
+  readonly discover: () => void;
   readonly start: () => void;
   readonly pause: () => void;
   readonly resume: () => void;
