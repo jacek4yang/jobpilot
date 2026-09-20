@@ -15,6 +15,7 @@ import { createCommunicationAction } from "../adapters/boss/communication";
 import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
 import { createNavigatorLock } from "../adapters/userscript/navigator-lock";
 import { createCommunicationRunner } from "../application/communication-runner";
+import { createCommunicationService } from "../application/communication-service";
 import { createController } from "../application/controller";
 import {
   createDiscoveryService,
@@ -22,14 +23,18 @@ import {
   formatReasons,
   type Match,
 } from "../application/discovery";
+import { evaluateSendGates } from "../application/gates";
 import { createApplicationHistory } from "../application/history";
+import { createVerificationController } from "../application/human-verification";
 import { createOrchestrator } from "../application/orchestrator";
 import { toDomainProfile } from "../application/profile-mapping";
 import { createRepository } from "../application/repository";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import { traceStorage } from "../diagnostics/trace";
 import type { CommunicationIntent } from "../domain/communication/intent";
+import { createTemplate } from "../domain/communication/template";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
@@ -40,6 +45,18 @@ import { type PanelViewModel, safetyFromState } from "../ui/view-model";
 import { createEngineFor, createRuntimeDeps, VERSION } from "./container";
 
 export interface BootstrapResult {
+  /**
+   * The gate-guarded send path.
+   *
+   * Exposed so the runtime has exactly one way to send, and so a caller cannot
+   * reach a click without the gates running. Nothing else calls the runner.
+   */
+  readonly communicationService: ReturnType<typeof createCommunicationService>;
+  /**
+   * Human-verification state. Exposed so the UI can offer Re-check and Resume,
+   * and so the gate can consult a live value rather than a constant.
+   */
+  readonly verification: ReturnType<typeof createVerificationController>;
   dispose(): void;
 }
 
@@ -289,6 +306,95 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     // The durable record wins over any caller's in-memory copy, so replaying a
     // stale intent cannot cause a second click.
     readPersistedIntent: async () => pendingIntent,
+  });
+
+  /**
+   * Human-verification controller.
+   *
+   * Constructed here rather than lazily so the "no automatic action during
+   * human verification" gate has a live value to consult from the first
+   * dispatch. A gate reading an unconstructed controller would silently
+   * evaluate to "not blocked", which is the unsafe default.
+   */
+  const verification = createVerificationController(deps.recorder, () => deps.clock.now());
+
+  /** Observes storage so persistence failures feed the health gate. */
+  const tracedStorage = traceStorage(deps.storage, deps.recorder);
+
+  /**
+   * Message templates.
+   *
+   * A single conservative default for now: the template editor is not built
+   * yet, and a send with no template must refuse rather than emit an empty
+   * message. The default states nothing about the applicant, so it cannot
+   * misrepresent them.
+   */
+  const templates = [
+    createTemplate({
+      id: "default",
+      name: "Default greeting",
+      content: "您好，我看到{{jobTitle}}这个职位很感兴趣，方便聊聊吗？",
+      isDefault: true,
+    }),
+  ];
+
+  /**
+   * The communication service.
+   *
+   * The ONLY path that may send. It evaluates every gate, persists the intent,
+   * reads it back to confirm persistence actually worked, and only then
+   * delegates to the runner. Nothing else calls the runner, so no path can
+   * reach a click without the gates having run first.
+   *
+   * The gate inputs are supplied as a thunk because they change over time
+   * (verification state, storage health, controller context). Capturing them
+   * once at construction would freeze the gates at their startup values, which
+   * is the same class of bug as not having them.
+   */
+  const communicationService = createCommunicationService({
+    runner: communicationRunner,
+    recorder: deps.recorder,
+    clock: deps.clock,
+    logger: deps.logger,
+    baseGateInput: () => ({
+      mode: effectiveConfig.automation.mode,
+      humanVerificationActive: verification.isBlocked(),
+      storage: tracedStorage.health(),
+      isQueueOwner: isOwner,
+      sessionLimitReached:
+        policy.maxApplicationsPerSession > 0 &&
+        (controller?.context().sessionApplications ?? 0) >= policy.maxApplicationsPerSession,
+      hourlyLimitReached:
+        policy.maxApplicationsPerHour > 0 &&
+        (controller?.context().applicationTimestamps.length ?? 0) >= policy.maxApplicationsPerHour,
+      rateLimited: false,
+    }),
+    verifyChat: () => {
+      // Only that a conversation is open. The authoritative identity check runs
+      // inside the runner against the job id, which is where it belongs.
+      const chat = communicationAction.readCurrentChat();
+      return chat === null
+        ? { verified: false, detail: "no conversation is open" }
+        : { verified: true, detail: "a conversation is open" };
+    },
+    isDraftPresent: () => {
+      const text = communicationAction.readEditor();
+      return text !== null && text.trim().length > 0;
+    },
+    outgoingCount: (text) => communicationAction.outgoingCount(text),
+    readPersistedIntent: () => pendingIntent,
+    persistIntent: async (intent) => {
+      pendingIntent = intent;
+      await persist();
+    },
+    clearIntent: async () => {
+      pendingIntent = undefined;
+      await persist();
+    },
+    storageHealth: () => tracedStorage.health(),
+    templates: () => templates,
+    newIntentId: () =>
+      `txn-${deps.clock.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   });
 
   const orchestrator = createOrchestrator({
@@ -560,19 +666,53 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     const recovered = pendingIntent;
     if (recovered === undefined) return;
 
+    // Recovery goes through the same gates as a fresh send. It must: a
+    // recovered transaction is exactly the situation where a challenge or a
+    // broken storage layer is most likely, and the verification pass reads the
+    // live conversation, which is an action rather than a passive observation.
+    // Nothing here can click — the runner refuses once a click is recorded —
+    // but the gates still have to be consulted rather than assumed.
+    const base = {
+      mode: effectiveConfig.automation.mode,
+      humanVerificationActive: verification.isBlocked(),
+      storage: tracedStorage.health(),
+      isQueueOwner: isOwner,
+      sessionLimitReached: false,
+      hourlyLimitReached: false,
+      rateLimited: false,
+      draftPresent: false,
+      chatVerified: true,
+      hasPersistedIntent: true,
+      sendAlreadyAttempted: true,
+    };
+
+    const gate = evaluateSendGates(base);
+    if (!gate.allowed) {
+      deps.logger.warn("bootstrap", "recovered transaction left unresolved by a gate", {
+        jobId: recovered.jobId,
+        reason: gate.reason,
+      });
+      panel.toast(
+        "warn",
+        `A message may have been sent to ${recovered.jobId}. JobPilot will not check it automatically: ${gate.message ?? "a safety gate is blocking"}.`,
+      );
+      return;
+    }
+
     if (recovered.phase !== "send-attempted") {
-      // Nothing was clicked, so there is nothing to verify.
+      // Nothing was clicked, so there is nothing to verify. Clearing the record
+      // is the whole action, and it is not a send.
       deps.logger.info("bootstrap", "discarding an uncommitted transaction", {
         jobId: recovered.jobId,
         phase: recovered.phase,
       });
-      await communicationRunner.run(recovered);
+      await communicationService.discardRecovered();
       return;
     }
 
     // A click may have gone out. Verify only; the runner refuses to re-send
     // because it consults the persisted intent first.
-    const outcome = await communicationRunner.run(recovered, { observeTimeoutMs: 6_000 });
+    const outcome = await communicationService.verifyRecovered({ observeTimeoutMs: 6_000 });
     deps.logger.warn("bootstrap", "resolved an interrupted transaction", {
       jobId: recovered.jobId,
       outcome: outcome.kind,
@@ -596,6 +736,15 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   });
 
   return {
+    /**
+     * The gate-guarded send path.
+     *
+     * Exposed deliberately: it is the only way to send, and a caller that
+     * cannot reach it cannot bypass the gates. The orchestration layer receives
+     * it through the orchestrator rather than reaching into this closure.
+     */
+    communicationService,
+    verification,
     dispose() {
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (isOwner) void lock.release(ownerId);

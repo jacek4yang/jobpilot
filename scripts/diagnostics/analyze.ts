@@ -115,24 +115,12 @@ const analyzeTransactions = (events: readonly DiagnosticEvent[]): Finding[] => {
   const verifyStarts = findByEvent(ordered, "communication.verification.started");
   const committed = findByEvent(ordered, "communication.transaction.committed");
   const uncertain = findByEvent(ordered, "communication.transaction.uncertain");
+  const failed = findByEvent(ordered, "communication.transaction.failed");
 
   const drafts = findByEvent(ordered, "message.draft.checked").filter(
     (event) => event.data?.["draftPresent"] === true,
   );
   const identityRejected = findByEvent(ordered, "chat.identity.rejected");
-
-  // Verified vs uncertain: exactly one should be the terminal outcome.
-  if (committed.length > 0 && uncertain.length > 0) {
-    findings.push({
-      id: "transaction.mixed-outcome",
-      title: "Transaction reported both committed and uncertain",
-      confidence: "confirmed",
-      detail:
-        "A transaction reached both a committed and an uncertain terminal state. Exactly one terminal outcome is expected per transaction.",
-      evidence: [...committed.map(seq), ...uncertain.map(seq)],
-      nextStep: "Treat the job as contacted and inspect transactions.json before any retry.",
-    });
-  }
 
   // A verification started without an attempt means the send was never observed
   // to be dispatched, which is either a bug or a mis-ordered trace.
@@ -169,16 +157,56 @@ const analyzeTransactions = (events: readonly DiagnosticEvent[]): Finding[] => {
     }
   }
 
-  // More than one attempt for one transaction is a duplicate-send signal.
-  if (attempts.length > 1) {
+  // More than one attempt for the SAME transaction is a duplicate-send signal.
+  // Correlating on `transactionId` is essential: two attempts in two different
+  // transactions is the normal case, and reporting it as a violation would be a
+  // false positive of exactly the kind this analyzer must not produce.
+  const attemptsByTransaction = new Map<string, DiagnosticEvent[]>();
+  for (const attempt of attempts) {
+    const id = attempt.transactionId ?? "(no transaction id)";
+    const bucket = attemptsByTransaction.get(id) ?? [];
+    bucket.push(attempt);
+    attemptsByTransaction.set(id, bucket);
+  }
+
+  for (const [transactionId, repeated] of attemptsByTransaction) {
+    if (repeated.length <= 1) continue;
+    const identified = transactionId !== "(no transaction id)";
     findings.push({
-      id: "transaction.multiple-attempts",
-      title: "More than one send attempt recorded",
-      confidence: "confirmed",
-      detail: `${attempts.length} send attempts were recorded. At most one is permitted per transaction.`,
-      evidence: attempts.map(seq),
+      id: `transaction.multiple-attempts.${transactionId}`,
+      title: "More than one send attempt for one transaction",
+      // Without an id the events cannot be proven to belong to one
+      // transaction, so the claim is downgraded rather than asserted.
+      confidence: identified ? "confirmed" : "likely",
+      detail: identified
+        ? `Transaction ${transactionId} recorded ${repeated.length} send attempts. At most one is permitted per transaction.`
+        : `${repeated.length} send attempts carried no transaction id, so they may or may not belong to one transaction.`,
+      evidence: repeated.map(seq),
       nextStep:
-        "Inspect transactions.json for duplicate transaction ids and check the never-send-twice guard.",
+        "Inspect transactions.json for this transaction id and check the never-send-twice guard.",
+    });
+  }
+
+  // A transaction reaching both terminal outcomes is also per-transaction.
+  const terminalByTransaction = new Map<string, Set<string>>();
+  for (const event of [...committed, ...uncertain, ...failed]) {
+    const id = event.transactionId ?? "(no transaction id)";
+    const set = terminalByTransaction.get(id) ?? new Set<string>();
+    set.add(event.event);
+    terminalByTransaction.set(id, set);
+  }
+
+  for (const [transactionId, outcomes] of terminalByTransaction) {
+    if (outcomes.size <= 1) continue;
+    findings.push({
+      id: `transaction.mixed-outcome.${transactionId}`,
+      title: "Transaction reported more than one terminal outcome",
+      confidence: transactionId === "(no transaction id)" ? "likely" : "confirmed",
+      detail: `Transaction ${transactionId} reached conflicting terminal states: ${[...outcomes].join(", ")}. Exactly one terminal outcome is expected per transaction.`,
+      evidence: [...committed, ...uncertain, ...failed]
+        .filter((event) => (event.transactionId ?? "(no transaction id)") === transactionId)
+        .map(seq),
+      nextStep: "Treat the job as contacted and inspect transactions.json before any retry.",
     });
   }
 

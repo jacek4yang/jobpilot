@@ -91,6 +91,25 @@ export interface CommunicateInput {
 
 export interface CommunicationService {
   communicate(input: CommunicateInput): Promise<CommunicationServiceResult>;
+  /**
+   * Resolves a transaction recovered from a previous page, by verification only.
+   *
+   * Never sends. The runner refuses once a click is recorded, and this method
+   * deliberately offers no way to override that — the only outcomes are
+   * `sent` (observed), `uncertain` (unobservable) or `blocked`.
+   */
+  verifyRecovered(options?: {
+    readonly observeTimeoutMs?: number;
+  }): Promise<CommunicationServiceResult>;
+  /**
+   * Abandons a recovered transaction that never reached the point of no return.
+   *
+   * Safe because nothing was clicked. Returns true when a transaction was
+   * discarded.
+   */
+  discardRecovered(): Promise<boolean>;
+  /** The in-flight transaction, if any. Read-only. */
+  pendingIntent(): CommunicationIntent | undefined;
 }
 
 const DEFAULT_TTL_MS = 180_000;
@@ -379,5 +398,103 @@ export const createCommunicationService = (
         }
       }
     },
+
+    async verifyRecovered(options) {
+      const recovered = deps.readPersistedIntent();
+      if (recovered === undefined) {
+        return { kind: "aborted", detail: "no transaction to verify" };
+      }
+
+      // The gates apply to recovery too. A recovered transaction is exactly
+      // when a challenge or a broken storage layer is most likely, and this
+      // path reads the live conversation, which is an action.
+      const gate = evaluateSendGates({
+        ...deps.baseGateInput(),
+        draftPresent: false,
+        chatVerified: true,
+        hasPersistedIntent: true,
+        // Deliberately true: it stops any send and leaves the runner to verify.
+        sendAlreadyAttempted: true,
+      });
+      recordGateOutcome(deps.recorder, "recovery", gate, {
+        transactionId: recovered.id,
+        jobId: recovered.jobId,
+      });
+      if (!gate.allowed) {
+        return {
+          kind: "refused",
+          reason: "gate-blocked",
+          message: gate.message ?? "a safety gate is blocking recovery",
+        };
+      }
+
+      deps.recorder.record({
+        level: "info",
+        category: "recovery",
+        event: "communication.recovery.started",
+        jobId: recovered.jobId,
+        transactionId: recovered.id,
+        data: { phase: recovered.phase, clickDispatched: recovered.clickDispatched ?? null },
+      });
+
+      let outcome: CommunicationOutcome;
+      try {
+        outcome = await deps.runner.run(
+          recovered,
+          options?.observeTimeoutMs === undefined
+            ? {}
+            : { observeTimeoutMs: options.observeTimeoutMs },
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        deps.logger.error("communication", "recovery threw", { error: message });
+        return { kind: "uncertain", detail: `recovery could not complete: ${message}` };
+      }
+
+      switch (outcome.kind) {
+        case "sent":
+          return { kind: "sent", evidence: outcome.evidence };
+        case "uncertain":
+          return { kind: "uncertain", detail: outcome.detail };
+        case "blocked":
+          return { kind: "blocked", reason: outcome.reason, evidence: outcome.evidence };
+        case "aborted":
+          return { kind: "aborted", detail: outcome.detail };
+        default: {
+          const exhaustive: never = outcome;
+          return { kind: "aborted", detail: String(exhaustive) };
+        }
+      }
+    },
+
+    async discardRecovered() {
+      const recovered = deps.readPersistedIntent();
+      if (recovered === undefined) return false;
+
+      // Refuse to discard anything that might have been sent. Discarding a
+      // `send-attempted` record would erase the evidence that a message may
+      // have gone out, which is the one thing that must never be lost.
+      if (hasSendBeenAttempted(recovered)) {
+        reportInvariantViolation(deps.recorder, {
+          invariant: INVARIANTS.noSecondSendAfterAttempt,
+          detail: "refused to discard a transaction that may already have sent",
+          context: { jobId: recovered.jobId, transactionId: recovered.id },
+        });
+        return false;
+      }
+
+      await deps.clearIntent();
+      deps.recorder.record({
+        level: "info",
+        category: "recovery",
+        event: "communication.recovery.discarded",
+        jobId: recovered.jobId,
+        transactionId: recovered.id,
+        data: { phase: recovered.phase },
+      });
+      return true;
+    },
+
+    pendingIntent: () => deps.readPersistedIntent(),
   };
 };

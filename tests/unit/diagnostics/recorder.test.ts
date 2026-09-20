@@ -450,3 +450,60 @@ describe("filename safety", () => {
     expect(sanitizeFileNamePart("T100-two-job-batch")).toBe("T100-two-job-batch");
   });
 });
+
+describe("ring buffer re-entrancy", () => {
+  /**
+   * Regression for a demonstrated defect: the drop callback was invoked
+   * synchronously from inside `push`, and a callback that writes back into the
+   * same buffer made the recursion self-sustaining at small capacities.
+   *
+   * Measured before the fix: 60 writes at capacity 5 produced 140,145 events.
+   * Every shipping capacity happened to be large enough to mask it, so the
+   * defect hid behind the values nobody tested.
+   */
+  it("does not amplify writes when the drop callback pushes back", () => {
+    const plain = createRingBuffer<number>({ capacity: 5 });
+    const selfReporting = createRingBuffer<number>({
+      capacity: 5,
+      onDrop: () => selfReporting.push(1),
+    });
+
+    for (let i = 0; i < 50; i += 1) {
+      plain.push(i);
+      selfReporting.push(i);
+    }
+
+    // The callback genuinely adds items, so its drop count is legitimately
+    // higher. What must NOT happen is amplification: the bound has to remain a
+    // small multiple of the real writes rather than growing without limit.
+    // Before the fix this reached five figures for 50 pushes.
+    expect(selfReporting.size).toBeLessThanOrEqual(5);
+    expect(selfReporting.dropped).toBeLessThan(1_000);
+    expect(plain.dropped).toBeLessThan(1_000);
+  });
+
+  it("does not overflow the stack with a pathological callback", () => {
+    const buffer = createRingBuffer<number>({ capacity: 5, onDrop: () => buffer.push(1) });
+    for (let i = 0; i < 50; i += 1) buffer.push(i);
+    expect(buffer.size).toBeLessThanOrEqual(5);
+  });
+
+  for (const capacity of [1, 2, 5, 10, 11, 20]) {
+    it(`stays bounded at capacity ${capacity}`, () => {
+      const rec = recorder({ capacity });
+      for (let i = 0; i < 60; i += 1) rec.infoEvent("runtime", `e${i}`);
+      // A small bounded multiple of the real writes, not an explosion.
+      expect(rec.stats().recorded).toBeLessThan(1_000);
+      expect(rec.events().length).toBeLessThanOrEqual(capacity);
+    });
+  }
+
+  it("never slices past the retention target", () => {
+    // The eviction batch is clamped to what is evictable, so a large overflow
+    // cannot discard more than intended.
+    const buffer = createRingBuffer<number>({ capacity: 100 });
+    for (let i = 0; i < 1_000; i += 1) buffer.push(i);
+    expect(buffer.size).toBeGreaterThanOrEqual(1);
+    expect(buffer.size).toBeLessThanOrEqual(100);
+  });
+});

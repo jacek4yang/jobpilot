@@ -31,21 +31,51 @@ export const createRingBuffer = <T>(options: RingBufferOptions): RingBuffer<T> =
   const capacity = Math.max(MIN_CAPACITY, Math.floor(options.capacity));
   let items: T[] = [];
   let dropped = 0;
+  /**
+   * Re-entrancy guard.
+   *
+   * The drop callback is allowed to write (the recorder reports truncation as
+   * an event, which lands back in this buffer). Without this guard, a small
+   * capacity makes that recursion self-sustaining: evicting one entry lets the
+   * nested push evict one more, forever. The count is still accumulated during
+   * the nested call; only the *notification* is deferred, so nothing is lost.
+   */
+  let evicting = false;
+  /** Notifications suppressed while a nested call was in progress. */
+  let deferredNotifications = 0;
 
   return {
     push(value) {
       items.push(value);
       if (items.length <= capacity) return;
 
-      // Evict a batch rather than one item at a time: with a hot producer,
-      // shifting per-push is quadratic and the drop callback would fire on
-      // nearly every write.
-      const overflow = items.length - capacity;
-      const batch = Math.max(overflow, Math.ceil(capacity * 0.1));
-      const evicted = Math.min(batch, items.length - Math.floor(capacity * 0.9));
-      items = items.slice(evicted);
-      dropped += evicted;
-      options.onDrop?.(evicted);
+      // Evict down to the high-water mark in one step. `batch` is clamped to
+      // what is actually evictable, so a large overflow cannot slice past the
+      // target and silently discard more than intended.
+      const highWater = Math.max(1, Math.floor(capacity * 0.9));
+      const evictable = items.length - highWater;
+      const batch = Math.min(Math.max(1, Math.ceil(capacity * 0.1)), evictable);
+      items = items.slice(batch);
+      dropped += batch;
+
+      if (evicting) {
+        deferredNotifications += batch;
+        return;
+      }
+
+      evicting = true;
+      try {
+        options.onDrop?.(batch);
+        // Flush anything the nested call suppressed, so a caller that only
+        // observes the callback still sees the true total.
+        if (deferredNotifications > 0) {
+          const deferred = deferredNotifications;
+          deferredNotifications = 0;
+          options.onDrop?.(deferred);
+        }
+      } finally {
+        evicting = false;
+      }
     },
 
     entries: () => [...items],
