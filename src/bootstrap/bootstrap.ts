@@ -28,6 +28,7 @@ import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
+import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { DEFAULT_LOCK_TTL_MS } from "../ports/lock";
 import { createPanel } from "../ui/panel";
@@ -56,6 +57,10 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const effectiveConfig = loaded.config;
   const engine = createEngineFor(effectiveConfig);
   const history = createApplicationHistory(loaded.applications);
+  // The execution queue. Populated from an explicit selection over the
+  // discovered matches — discovery itself never enqueues, which is the central
+  // product rule that keeps a search from turning into unattended contact.
+  const queue = createTaskQueue();
 
   for (const warning of loaded.warnings) {
     deps.logger.warn("bootstrap", warning);
@@ -137,8 +142,22 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
 
     matches = result.matches;
+
+    // Enqueue the accepted matches for review and execution. Deduplication is
+    // by job id inside the queue, and a job already contacted is filtered by
+    // stage A, so this cannot reintroduce a completed job.
+    let enqueued = 0;
+    for (const match of matches) {
+      if (!match.accepted) continue;
+      if (queue.enqueue({ jobId: String(match.summary.id), now: deps.clock.now() })) {
+        enqueued += 1;
+      }
+    }
+
     const accepted = matches.filter((match) => match.accepted).length;
-    discoveryNote = `Found ${matches.length} jobs, ${accepted} matched "${active.name}".`;
+    discoveryNote =
+      `Found ${matches.length} jobs, ${accepted} matched "${active.name}"` +
+      (enqueued > 0 ? `, ${enqueued} queued.` : ".");
     render();
     deps.logger.info("bootstrap", "discovery complete", {
       total: matches.length,
@@ -292,7 +311,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       safety: safety.level,
       safetyLabel: safety.label,
       launcherCount:
-        context.queueDepth > 0 ? `${context.sessionApplications}/${context.queueDepth}` : "",
+        queue.pendingCount() > 0 ? `${context.sessionApplications}/${queue.pendingCount()}` : "",
       pageKind: currentPageKind,
 
       running: [
@@ -374,7 +393,23 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         selected: match.accepted,
         reasons: formatReasons(match.reasons),
       })),
-      queue: [],
+      queue: queue
+        .snapshot()
+        .tasks.slice(0, 40)
+        .map((task) => {
+          const match = matches.find((candidate) => String(candidate.summary.id) === task.jobId);
+          return {
+            jobId: task.jobId,
+            title: match?.summary.title ?? task.jobId,
+            company: match?.summary.companyName ?? "",
+            status: task.status,
+            detail:
+              task.lastError ??
+              (task.attempts > 0
+                ? `attempt ${task.attempts}`
+                : new Date(task.enqueuedAt).toLocaleTimeString()),
+          };
+        }),
       history: records.slice(-40).map((record) => ({
         jobId: String(record.jobId),
         title: String(record.jobId),
