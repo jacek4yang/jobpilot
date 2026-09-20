@@ -159,3 +159,82 @@ describe("navigator lock adapter", () => {
     expect(await lock.currentHolder()).toBe("tab-a");
   });
 });
+
+/**
+ * A lock manager whose callback is invoked in a later TASK, matching the real
+ * `navigator.locks` spec rather than resolving synchronously.
+ *
+ * The existing fake called back synchronously, which is why the original
+ * single-microtask yield passed its tests while being wrong in a browser.
+ */
+const specAccurateLockManager = () => {
+  const held = new Map<string, number>();
+  let counter = 0;
+
+  const locks = {
+    request(
+      name: string,
+      options: { readonly ifAvailable: boolean },
+      callback: (lock: unknown) => Promise<void>,
+    ): Promise<void> {
+      return new Promise<void>((resolve) => {
+        // Defer to a macrotask: the callback must NOT run before the caller's
+        // `await` chain continues.
+        setTimeout(() => {
+          if (options.ifAvailable && held.has(name)) {
+            void Promise.resolve(callback(null)).finally(resolve);
+            return;
+          }
+          counter += 1;
+          held.set(name, counter);
+          void Promise.resolve(callback({ name })).finally(() => {
+            held.delete(name);
+            resolve();
+          });
+        }, 0);
+      });
+    },
+  };
+
+  return { navigator: { locks } as unknown as Navigator };
+};
+
+describe("navigator lock adapter — spec-accurate async grant", () => {
+  it("reports success when the grant arrives in a later task", async () => {
+    const fake = specAccurateLockManager();
+    const lock = createNavigatorLock({ clock: fakeClock(), navigator: fake.navigator });
+
+    const result = await lock.acquire({ ownerId: "tab-a", ttlMs: 10_000 });
+
+    // Regression: a single microtask yield returned before the callback ran, so
+    // this returned ok:false while the lock was actually held.
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.handle.token).toBe("tab-a");
+    expect(await lock.currentHolder()).toBe("tab-a");
+  });
+
+  it("does not leave the lock held when it reports failure", async () => {
+    const fake = specAccurateLockManager();
+    const first = createNavigatorLock({ clock: fakeClock(), navigator: fake.navigator });
+    await first.acquire({ ownerId: "tab-a", ttlMs: 10_000 });
+
+    const second = createNavigatorLock({ clock: fakeClock(), navigator: fake.navigator });
+    const refused = await second.acquire({ ownerId: "tab-b", ttlMs: 10_000 });
+
+    expect(refused.ok).toBe(false);
+    // The refused tab must not believe it owns anything.
+    expect(await second.currentHolder()).toBeUndefined();
+  });
+
+  it("grants the lock to a second tab once the first releases", async () => {
+    const fake = specAccurateLockManager();
+    const clock = fakeClock();
+    const tabA = createNavigatorLock({ clock, navigator: fake.navigator });
+    await tabA.acquire({ ownerId: "tab-a", ttlMs: 10_000 });
+    await tabA.release("tab-a");
+
+    const tabB = createNavigatorLock({ clock, navigator: fake.navigator });
+    const result = await tabB.acquire({ ownerId: "tab-b", ttlMs: 10_000 });
+    expect(result.ok).toBe(true);
+  });
+});

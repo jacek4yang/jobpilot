@@ -92,20 +92,29 @@ export const createNavigatorLock = (deps: NavigatorLockDeps): Lock => {
       }
 
       // The callback runs for `ifAvailable` without waiting for the lock, so we
-      // learn the outcome through `outcome` rather than by awaiting the request
+      // learn the outcome through a signal rather than by awaiting the request
       // (which would only settle when the lock is finally released).
-      const outcome: { value: "granted" | "refused" | "pending" } = { value: "pending" };
+      //
+      // The signal is a deferred promise, NOT a microtask yield: per spec the
+      // request callback is invoked in a later TASK, so a single
+      // `await Promise.resolve()` can return before the callback has run. That
+      // mistake made `acquire` report "held-by-other" while the lock had in fact
+      // been granted and was being held — the inverse of the intended meaning.
+      let settleGrant: (value: "granted" | "refused") => void = () => {};
+      const granted = new Promise<"granted" | "refused">((resolve) => {
+        settleGrant = resolve;
+      });
 
       const requestPromise = manager.request(
         "jobpilot-execution",
         { ifAvailable: true },
         async (lock) => {
           if (lock === null || lock === undefined) {
-            outcome.value = "refused";
+            settleGrant("refused");
             return;
           }
-          outcome.value = "granted";
           held = { token: ownerId, expiresAt: deps.clock.now() + ttlMs };
+          settleGrant("granted");
           // Park until released or reaped, so the browser keeps holding it.
           await new Promise<void>((resolve) => {
             holdOpen = resolve;
@@ -114,13 +123,12 @@ export const createNavigatorLock = (deps: NavigatorLockDeps): Lock => {
       );
       // Never let a rejection surface as an unhandled error.
       void requestPromise.catch(() => {
-        outcome.value = "refused";
+        settleGrant("refused");
       });
 
-      // Yield once so a callback scheduled as a microtask has run.
-      await Promise.resolve();
+      const outcome = await granted;
 
-      if (outcome.value === "refused" || held === undefined) {
+      if (outcome === "refused" || held === undefined) {
         return { ok: false, reason: "held-by-other" };
       }
       return { ok: true, handle: { token: held.token, expiresAt: held.expiresAt } };

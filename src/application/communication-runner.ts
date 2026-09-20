@@ -9,11 +9,14 @@
  *  1. A block signal (CAPTCHA / risk / login) stops before anything is touched.
  *  2. A message is never written into a non-empty editor.
  *  3. The conversation must match the job's identity before writing.
- *  4. `dispatchSend` is called only when `canClickSend` allows it, and the
- *     adapter enforces the same guard independently.
- *  5. `send-attempted` is persisted BEFORE the click, so a crash cannot lead to
- *     a second send.
- *  6. The outcome is decided by observing an outgoing-message delta. Anything
+ *  4. The persisted intent is consulted first, so a caller replaying a stale
+ *     in-memory intent cannot cause a second click.
+ *  5. `send-attempted` is persisted BEFORE the click (the point of no return),
+ *     and `clickDispatched` is persisted immediately AFTER it. The first makes
+ *     a crash recoverable; the second makes a repeat click impossible.
+ *  6. The adapter independently refuses any dispatch when a click is already
+ *     recorded.
+ *  7. The outcome is decided by observing an outgoing-message delta. Anything
  *     else is `uncertain`, never success.
  */
 
@@ -23,6 +26,8 @@ import {
   type CommunicationFailure,
   type CommunicationIntent,
   canClickSend,
+  hasSendBeenAttempted,
+  markClickDispatched,
   reduceIntent,
 } from "../domain/communication/intent";
 import type { Clock } from "../domain/support/shared";
@@ -49,6 +54,15 @@ export interface CommunicationRunnerDeps {
   readonly persistIntent: (intent: CommunicationIntent) => Promise<void>;
   /** Clears the persisted intent once it reaches a terminal phase. */
   readonly clearIntent: () => Promise<void>;
+  /**
+   * Reads back the persisted intent, when one exists.
+   *
+   * This is what makes the guard durable. A caller can hand us a stale
+   * in-memory intent — one captured before an earlier attempt — and without
+   * consulting the record of record we would happily click again. The persisted
+   * intent is the only thing that survives a reload, so it wins.
+   */
+  readonly readPersistedIntent?: () => Promise<CommunicationIntent | undefined>;
 }
 
 export interface RunOptions {
@@ -109,7 +123,30 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       return { kind: "blocked", reason: block.reason, evidence: block.evidence };
     }
 
-    // --- 2. The conversation must be the right one ------------------------
+    // --- 2. The persisted record wins over the caller's in-memory copy ----
+    // A caller may hand us an intent it captured before a previous attempt. If
+    // the durable record shows the click already went out, refuse immediately:
+    // that is the entire point of persisting the transaction.
+    if (deps.readPersistedIntent !== undefined) {
+      const persisted = await deps.readPersistedIntent();
+      if (persisted !== undefined && persisted.id === initial.id) {
+        if (hasSendBeenAttempted(persisted)) {
+          deps.logger.warn("communication", "refusing to run: a click was already dispatched", {
+            jobId: initial.jobId,
+            clickDispatched: persisted.clickDispatched ?? null,
+          });
+          return {
+            kind: "uncertain",
+            detail:
+              "a send was already dispatched for this transaction; verify the conversation before retrying",
+          };
+        }
+        // Adopt the durable phase so this run can never regress it.
+        intent = persisted;
+      }
+    }
+
+    // --- 3. The conversation must be the right one ------------------------
     const chat = deps.action.readCurrentChat();
     if (chat === null) {
       return { kind: "aborted", failure: "CHAT_MISMATCH", detail: "no conversation is open" };
@@ -121,6 +158,11 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
     await transition(reduceIntent(intent, { type: "NAVIGATED" }, { now: deps.clock.now() }));
 
     const jobIdentity: JobIdentity = {
+      // The job id is the authoritative signal and MUST be passed. Without it
+      // `matchChatIdentity` falls back to title+company, which would accept a
+      // different posting at the same company — precisely the conflation the
+      // identity rules forbid.
+      jobId: intent.jobId,
       ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
       ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
       ...(intent.expectedRecruiter === undefined ? {} : { recruiter: intent.expectedRecruiter }),
@@ -203,6 +245,14 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
 
     if (dispatched.kind === "blocked") {
       return { kind: "blocked", reason: dispatched.reason, evidence: dispatched.evidence };
+    }
+    if (dispatched.kind === "dispatched") {
+      // Record the click itself, now that it actually happened. This is what
+      // makes a second click impossible even for a caller holding a stale
+      // in-memory intent, and it survives persistence.
+      intent = markClickDispatched(intent, deps.clock.now());
+      await deps.persistIntent(intent);
+      attemptStarted = true;
     }
     if (dispatched.kind === "refused") {
       // The adapter's own guard fired. Nothing was clicked, so this is safe to

@@ -65,8 +65,22 @@ const intentFor = (overrides: Partial<Parameters<typeof createIntent>[0]> = {}) 
     ...overrides,
   });
 
-/** Moves an intent into the only phase from which a send is legal. */
-const prepared = (intent: CommunicationIntent): CommunicationIntent => ({
+/**
+ * Moves an intent into the phase the runner actually hands to the adapter:
+ * committed to a single send (`send-attempted`), with no click recorded yet.
+ *
+ * Note this is NOT `prepared`. The runner stamps the point of no return before
+ * calling dispatchSend, so a guard requiring `prepared` would refuse every real
+ * send — the contract defect these tests now pin down.
+ */
+const committed = (intent: CommunicationIntent): CommunicationIntent => ({
+  ...intent,
+  phase: "send-attempted",
+  sendAttemptedAt: NOW,
+});
+
+/** An intent still sitting in `prepared`, used to prove it is not sendable. */
+const preparedOnly = (intent: CommunicationIntent): CommunicationIntent => ({
   ...intent,
   phase: "prepared",
 });
@@ -143,34 +157,40 @@ describe("prepareMessage", () => {
 });
 
 describe("dispatchSend", () => {
-  it("refuses when canClickSend is false, before touching the DOM", async () => {
+  it("refuses an intent that has not been committed, before touching the DOM", async () => {
     const root = load("chat-conversation.html");
     const action = actionFor(root);
-
-    // An armed (not prepared) intent is not sendable.
-    const armed = intentFor();
-    const refused = await action.dispatchSend(armed);
+    // `armed` is the initial phase: nothing verified, nothing committed.
+    const refused = await action.dispatchSend(intentFor());
     expect(refused.kind).toBe("refused");
-    expect(refused.kind === "refused" ? refused.detail : "").toContain("armed");
-
-    // A send-attempted intent must NEVER be sendable again. This is the
-    // never-send-twice invariant, asserted at the adapter boundary.
-    const attempted: CommunicationIntent = {
-      ...prepared(armed),
-      phase: "send-attempted",
-      sendAttemptedAt: NOW,
-    };
-    const second = await action.dispatchSend(attempted);
-    expect(second.kind).toBe("refused");
-
-    // ...and the editor was never written to by either refusal.
+    // `prepared` alone is also insufficient. The runner must have committed
+    // the transaction by recording the point of no return first.
+    const notCommitted = await action.dispatchSend(preparedOnly(intentFor()));
+    expect(notCommitted.kind).toBe("refused");
+    // The editor was never written to by either refusal.
     expect(readEditorText(findEditor(root))).toBe("");
   });
 
-  it("dispatches exactly one click for a prepared, matching intent", async () => {
+  it("refuses when a click has already been dispatched", async () => {
     const root = load("chat-conversation.html");
     const action = actionFor(root);
-    const intent = prepared(intentFor());
+
+    // The never-send-twice invariant at the adapter boundary: once
+    // `clickDispatched` is recorded, no further click is possible.
+    const alreadyClicked: CommunicationIntent = {
+      ...committed(intentFor()),
+      clickDispatched: NOW,
+    };
+
+    const second = await action.dispatchSend(alreadyClicked);
+    expect(second.kind).toBe("refused");
+    expect(second.kind === "refused" ? second.detail : "").toContain("already");
+  });
+
+  it("dispatches exactly one click for a committed, matching intent", async () => {
+    const root = load("chat-conversation.html");
+    const action = actionFor(root);
+    const intent = committed(intentFor());
 
     expect((await action.prepareMessage(intent)).kind).toBe("ready");
 
@@ -186,14 +206,14 @@ describe("dispatchSend", () => {
   });
 
   it("blocks on a risk page", async () => {
-    const result = await actionFor(load("risk-page.html")).dispatchSend(prepared(intentFor()));
+    const result = await actionFor(load("risk-page.html")).dispatchSend(committed(intentFor()));
     expect(result.kind === "blocked" ? result.reason : "").toBe("captcha");
   });
 
   it("refuses to send when the editor text is not the intended text", async () => {
     const root = load("chat-conversation.html");
     const action = actionFor(root);
-    const intent = prepared(intentFor());
+    const intent = committed(intentFor());
 
     // Someone typed something else after prepare.
     const editor = findEditor(root);

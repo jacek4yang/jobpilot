@@ -16,8 +16,10 @@
  *      send into the wrong conversation is a privacy failure, not a glitch.
  *   3. A draft written by the user is sacred: `prepareMessage` reports it and
  *      leaves the editor untouched, even if the intent would otherwise proceed.
- *   4. `dispatchSend` consults `canClickSend(intent)` — the single, auditable
- *      never-send-twice guard — and refuses (`{kind:"refused"}`) when it says no.
+ *   4. `dispatchSend` refuses unless the transaction is committed AND no click
+ *      has been recorded (`mayDispatchClick`), so at most one click is possible
+ *      per transaction — including across a reload, because `clickDispatched`
+ *      is persisted.
  *   5. Success is only ever reported from observed evidence: the outgoing count
  *      must STRICTLY exceed the recorded baseline. A clicked button is not
  *      evidence; an unrecognised dialog is not evidence.
@@ -25,7 +27,11 @@
 
 import type { ChatIdentity } from "../../../domain/communication/identity";
 import { countOutgoingMessages, matchChatIdentity } from "../../../domain/communication/identity";
-import { type CommunicationIntent, canClickSend } from "../../../domain/communication/intent";
+import {
+  type CommunicationIntent,
+  hasSendBeenAttempted,
+  mayDispatchClick,
+} from "../../../domain/communication/intent";
 import type { Clock } from "../../../domain/support/shared";
 import type { BlockReason, LocatedElement } from "../../../ports/job-platform";
 import type { Logger } from "../../../ports/logger";
@@ -96,7 +102,7 @@ export interface CommunicationAction {
   outgoingCount(text: string): number;
   /** Ensures the editor holds the intended message; never overwrites a draft. */
   prepareMessage(intent: CommunicationIntent, options?: ActionOptions): Promise<PrepareResult>;
-  /** Clicks send exactly once, guarded by `canClickSend`. */
+  /** Clicks send exactly once; refuses when a click is already recorded. */
   dispatchSend(intent: CommunicationIntent, options?: ActionOptions): Promise<DispatchResult>;
   /** Looks for evidence that the send produced a new outgoing message. */
   observeSend(
@@ -443,14 +449,31 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
       options: ActionOptions = {},
     ): Promise<DispatchResult> {
       // The never-send-twice guard, first, before any DOM work at all.
-      if (!canClickSend(intent)) {
-        logger.warn("boss.communication", "send refused: intent is not sendable", {
+      //
+      // `mayDispatchClick` is the precise predicate here. The runner commits to
+      // the send (stamping `sendAttemptedAt`) BEFORE calling us, so the phase is
+      // already `send-attempted`; a guard on `prepared` would refuse every send.
+      // What must be impossible is a SECOND click, which is what
+      // `clickDispatched` records — and it survives persistence, so a reload
+      // cannot replay the click.
+      if (hasSendBeenAttempted(intent)) {
+        logger.warn("boss.communication", "send refused: a click was already dispatched", {
+          phase: intent.phase,
+          clickDispatched: intent.clickDispatched ?? null,
+        });
+        return {
+          kind: "refused",
+          detail: "a send was already dispatched for this transaction",
+        };
+      }
+      if (!mayDispatchClick(intent)) {
+        logger.warn("boss.communication", "send refused: transaction is not committed", {
           phase: intent.phase,
           sendAttemptedAt: intent.sendAttemptedAt ?? null,
         });
         return {
           kind: "refused",
-          detail: `canClickSend is false for phase "${intent.phase}"`,
+          detail: `intent phase "${intent.phase}" is not a sendable state`,
         };
       }
 

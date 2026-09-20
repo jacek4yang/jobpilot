@@ -47,12 +47,49 @@ export const isTerminalPhase = (phase: IntentPhase): boolean => TERMINAL_PHASES.
 /**
  * True when the message may still be sent.
  *
- * This is the single guard every send path must consult. It exists so that the
- * "never send twice" invariant is enforced in one auditable place rather than
- * repeated as an ad-hoc condition at each call site.
+ * The precondition is `prepared`: the conversation is verified, the message is
+ * in the editor, and nothing has been clicked yet. Once the phase advances to
+ * `send-attempted` this returns false forever, which is what makes a second
+ * send impossible.
+ *
+ * Callers holding a *post-transition* intent (i.e. the adapter, which the
+ * runner hands a `send-attempted` intent) must not use this predicate — see
+ * `mayDispatchClick`.
  */
 export const canClickSend = (intent: CommunicationIntent): boolean =>
   intent.phase === "prepared" && intent.sendAttemptedAt === undefined;
+
+/**
+ * True when a click may still be dispatched for this intent.
+ *
+ * This is the guard the adapter consults, and it encodes a distinction the
+ * phase alone cannot express:
+ *
+ *  - `sendAttemptedAt` is stamped when the runner records the POINT OF NO
+ *    RETURN, which deliberately happens BEFORE the click. Its presence means
+ *    "this transaction is committed to a single send", not "a click happened".
+ *  - `clickDispatched` is stamped by the adapter at the moment it actually
+ *    clicks.
+ *
+ * So a click is permitted exactly when the transaction is committed
+ * (`send-attempted`) and the adapter has not yet clicked. After that it is
+ * forbidden forever, including across a reload, because `clickDispatched`
+ * survives persistence.
+ */
+export const mayDispatchClick = (intent: CommunicationIntent): boolean =>
+  intent.phase === "send-attempted" &&
+  intent.sendAttemptedAt !== undefined &&
+  intent.clickDispatched === undefined;
+
+/** Records that the adapter has dispatched the click. */
+export const markClickDispatched = (
+  intent: CommunicationIntent,
+  now: number,
+): CommunicationIntent => ({ ...intent, clickDispatched: now });
+
+/** True when this transaction has already had its one permitted click. */
+export const hasSendBeenAttempted = (intent: CommunicationIntent): boolean =>
+  intent.clickDispatched !== undefined;
 
 /** Why the transaction ended, in the failure taxonomy. */
 export type CommunicationFailure =
@@ -94,8 +131,19 @@ export interface CommunicationIntent {
 
   readonly createdAt: number;
   readonly expiresAt: number;
-  /** Set immediately before the send click is dispatched. */
+  /**
+   * Set when the runner commits to sending — BEFORE the click is dispatched.
+   * Its presence marks the point of no return, not the click itself.
+   */
   readonly sendAttemptedAt?: number;
+  /**
+   * Set by the adapter at the instant it dispatches the click.
+   *
+   * Distinct from `sendAttemptedAt` on purpose: the runner commits before
+   * clicking, so only this field proves a click actually happened. It is what
+   * makes "never click twice" enforceable across a reload.
+   */
+  readonly clickDispatched?: number;
   /** Populated on a failed or uncertain termination. */
   readonly failure?: CommunicationFailure;
   /** Explanation shown to the user, e.g. the mismatch that was detected. */
@@ -319,6 +367,7 @@ export const serializeIntent = (intent: CommunicationIntent): Record<string, unk
     ? {}
     : { expectedRecruiter: intent.expectedRecruiter }),
   ...(intent.sendAttemptedAt === undefined ? {} : { sendAttemptedAt: intent.sendAttemptedAt }),
+  ...(intent.clickDispatched === undefined ? {} : { clickDispatched: intent.clickDispatched }),
   ...(intent.failure === undefined ? {} : { failure: intent.failure }),
   ...(intent.detail === undefined ? {} : { detail: intent.detail }),
 });
@@ -366,6 +415,7 @@ export const deserializeIntent = (input: unknown): CommunicationIntent | undefin
   if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return undefined;
 
   const sendAttemptedAt = raw["sendAttemptedAt"];
+  const clickDispatched = raw["clickDispatched"];
   const expectedJobTitle = raw["expectedJobTitle"];
   const expectedCompany = raw["expectedCompany"];
   const expectedRecruiter = raw["expectedRecruiter"];
@@ -386,6 +436,9 @@ export const deserializeIntent = (input: unknown): CommunicationIntent | undefin
     ...(typeof expectedRecruiter === "string" ? { expectedRecruiter } : {}),
     ...(typeof sendAttemptedAt === "number" && Number.isFinite(sendAttemptedAt)
       ? { sendAttemptedAt }
+      : {}),
+    ...(typeof clickDispatched === "number" && Number.isFinite(clickDispatched)
+      ? { clickDispatched }
       : {}),
     ...(typeof failure === "string" ? { failure: failure as CommunicationFailure } : {}),
     ...(typeof detail === "string" ? { detail } : {}),

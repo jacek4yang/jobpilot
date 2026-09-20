@@ -361,3 +361,115 @@ describe("observe loop termination", () => {
     expect(calls.observe).toBe(2);
   });
 });
+
+describe("composition with the real adapter contract", () => {
+  /**
+   * Regression for a demonstrated defect: the runner persisted
+   * `send-attempted` BEFORE calling `dispatchSend`, while the adapter required
+   * `canClickSend` (phase `prepared`). The two were mutually exclusive, so a
+   * send could never fire and the user was told "may have been sent" when
+   * nothing had been clicked.
+   *
+   * This fake embodies the adapter's actual guard so the two halves are
+   * exercised together rather than in isolation.
+   */
+  const adapterShapedAction = () => {
+    const clicks: string[] = [];
+    const action: CommunicationAction = {
+      findCommunicateButton: () => null,
+      readCurrentChat: () => matchingChat,
+      readEditor: () => null,
+      outgoingCount: () => clicks.length,
+      prepareMessage: async () => ({ kind: "ready", text: MESSAGE }),
+      dispatchSend: async (value) => {
+        // The guard the real adapter applies: a click is permitted only while
+        // the transaction is committed and no click has been recorded yet.
+        if (value.clickDispatched !== undefined) {
+          return { kind: "refused", detail: "already clicked" };
+        }
+        if (value.phase !== "send-attempted" || value.sendAttemptedAt === undefined) {
+          return { kind: "refused", detail: `phase ${value.phase}` };
+        }
+        clicks.push("click");
+        return { kind: "dispatched" };
+      },
+      observeSend: async (_value, baseline) =>
+        clicks.length > baseline
+          ? { kind: "observed", count: clicks.length, evidence: "bubble" }
+          : { kind: "unobserved", detail: "not yet" },
+      classifyModal: () => ({ kind: "none" }),
+      detectBlock: () => null,
+    };
+    return { action, clicks };
+  };
+
+  it("actually clicks exactly once when composed end to end", async () => {
+    const clock = makeClock();
+    const { action, clicks } = adapterShapedAction();
+    const outcome = await runner(action, clock).run(intent());
+
+    // The defect made this 0 with an `uncertain` outcome.
+    expect(clicks).toHaveLength(1);
+    expect(outcome.kind).toBe("sent");
+  });
+
+  it("does not click again when a caller retries with a stale in-memory intent", async () => {
+    const clock = makeClock();
+    const { action, clicks } = adapterShapedAction();
+
+    // A durable store standing in for GM storage, so the runner can consult the
+    // record of record rather than trusting the caller.
+    let persisted: CommunicationIntent | undefined;
+    const instance = runner(action, clock, {
+      persistIntent: async (value) => {
+        persisted = value;
+      },
+      readPersistedIntent: async () => persisted,
+    });
+
+    const staleIntent = intent();
+    const first = await instance.run(staleIntent);
+    expect(first.kind).toBe("sent");
+    expect(clicks).toHaveLength(1);
+
+    // The caller re-runs with the SAME original object, whose phase is still
+    // "armed". The persisted record proves a click went out, so this must be
+    // refused rather than clicking a second time.
+    const second = await instance.run(staleIntent);
+    expect(clicks).toHaveLength(1);
+    expect(second.kind).toBe("uncertain");
+  });
+});
+
+describe("identity uses the authoritative job id", () => {
+  it("refuses a different posting at the same company", async () => {
+    const clock = makeClock();
+    // Same title and company, but a DIFFERENT job id: the wrong conversation.
+    const { action, calls } = makeAction({
+      chat: {
+        jobIds: ["job-99999"],
+        text: "后端开发工程师 示例科技有限公司",
+      },
+    });
+
+    const outcome = await runner(action, clock).run(intent());
+
+    // Regression: the runner used to omit jobId, so title+company matched and
+    // it would have written into another posting's conversation.
+    expect(outcome.kind).toBe("aborted");
+    if (outcome.kind === "aborted") expect(outcome.failure).toBe("CHAT_MISMATCH");
+    expect(calls.dispatch).toBe(0);
+    expect(calls.prepare).toBe(0);
+  });
+
+  it("accepts the conversation carrying the matching job id", async () => {
+    const clock = makeClock();
+    const { action, calls } = makeAction({
+      chat: { jobIds: ["job-1"], text: "后端开发工程师 示例科技有限公司" },
+    });
+
+    const outcome = await runner(action, clock).run(intent());
+    expect(outcome.kind).toBe("sent");
+    expect(calls.dispatch).toBe(1);
+  });
+});

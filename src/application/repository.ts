@@ -28,11 +28,31 @@ export interface LoadResult {
   readonly warnings: readonly string[];
   /** True when no persisted document existed. */
   readonly fresh: boolean;
+  /**
+   * True when the stored document could NOT be read safely — most importantly
+   * when it was written by a newer schema version and the migration chain
+   * refused to touch it.
+   *
+   * When this is true the caller MUST NOT save. The in-memory defaults are a
+   * placeholder for rendering, not a replacement for the user's data: writing
+   * them back would destroy an intact document that a future build can still
+   * read.
+   */
+  readonly writeBlocked: boolean;
 }
 
 export interface Repository {
   load(): Promise<LoadResult>;
-  save(root: { config: JobPilotConfig; applications: readonly ApplicationRecord[] }): Promise<void>;
+  /**
+   * Persists the document.
+   *
+   * Refuses (without throwing) once a blocked load has been observed, so a
+   * document we could not interpret is never overwritten by defaults.
+   */
+  save(root: {
+    config: JobPilotConfig;
+    applications: readonly ApplicationRecord[];
+  }): Promise<{ readonly saved: boolean; readonly reason?: string }>;
   /** Wipes the persisted document. Used by the "reset" action. */
   clear(): Promise<void>;
 }
@@ -66,6 +86,13 @@ const serializeApplications = (records: readonly ApplicationRecord[]): unknown =
  * diagnostics instead of being swallowed.
  */
 export const createRepository = (storage: Storage, logger: Logger): Repository => {
+  /**
+   * Set once a load reveals a document we could not read. Sticky for the
+   * lifetime of the repository: a single blocked load means the on-disk data
+   * is not ours to replace, even if a later load happens to succeed.
+   */
+  let writesBlocked = false;
+
   return {
     async load(): Promise<LoadResult> {
       const warnings: string[] = [];
@@ -77,20 +104,38 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
           applications: [],
           warnings,
           fresh: true,
+          writeBlocked: false,
         };
       }
 
       const migrated = migratePersistedRoot(raw);
       if (!migrated.ok) {
-        logger.error("repository", "migration failed", { error: migrated.error });
-        warnings.push(`migration failed: ${migrated.error}`);
-        return { config: createDefaultConfig(), applications: [], warnings, fresh: false };
+        // The stored document exists but we cannot interpret it. Refusing to
+        // migrate is the correct, data-preserving choice — so we must also
+        // refuse to WRITE, otherwise the next save would overwrite a document
+        // that a newer build could still read. Return defaults for rendering
+        // only, with writes blocked.
+        writesBlocked = true;
+        logger.error("repository", "migration failed; writes blocked to preserve data", {
+          error: migrated.error,
+        });
+        warnings.push(
+          `stored data could not be read (${migrated.error}); JobPilot is running read-only and will not overwrite it`,
+        );
+        return {
+          config: createDefaultConfig(),
+          applications: [],
+          warnings,
+          fresh: false,
+          writeBlocked: true,
+        };
       }
 
       if (migrated.appliedSteps.length > 0) {
         warnings.push(`applied migrations: ${migrated.appliedSteps.join(", ")}`);
       }
 
+      // Reaching here means the document was readable, so writes stay allowed.
       const validated = validateConfig(migrated.root.config);
       if (!validated.ok) {
         logger.warn("repository", "stored config invalid, using defaults", {
@@ -114,10 +159,21 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
         applications,
         warnings,
         fresh: false,
+        writeBlocked: false,
       };
     },
 
     async save({ config, applications }) {
+      if (writesBlocked) {
+        // Silently refusing is deliberate: the caller may be a timer or an
+        // effect, and throwing would surface an error the user cannot act on.
+        // The load-time warning is what tells the user why nothing persists.
+        logger.warn("repository", "save refused: stored data could not be read", {
+          consequence: "the existing document is preserved unchanged",
+        });
+        return { saved: false, reason: "stored data could not be read" };
+      }
+
       const root: PersistedRoot = {
         schemaVersion: CURRENT_SCHEMA_VERSION,
         config,
@@ -125,6 +181,7 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
         statistics: {},
       };
       await storage.set(STORAGE_KEY, root);
+      return { saved: true };
     },
 
     async clear() {
