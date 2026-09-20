@@ -43,6 +43,17 @@ export const createController = (options: ControllerOptions): Controller => {
   let draining = false;
   const pending: AutomationEvent[] = [];
 
+  /**
+   * Serialises effect execution across dispatches.
+   *
+   * Effects are not awaited by `dispatch` (a slow effect must not block the
+   * state machine), but they must not run concurrently either: two overlapping
+   * effect batches could interleave DOM actions and writes. Chaining each batch
+   * onto this promise keeps them strictly ordered while remaining non-blocking
+   * from the caller's perspective.
+   */
+  let effects: Promise<void> = Promise.resolve();
+
   const runEffects = async (effects: readonly Effect[]): Promise<void> => {
     for (const effect of effects) {
       if (disposed) return;
@@ -106,11 +117,17 @@ export const createController = (options: ControllerOptions): Controller => {
 
         options.onChange(current);
 
-        // Effects are awaited together so persistence ordering is stable.
-        void (async () => {
+        // Effects run outside the reducer, deliberately un-awaited so a slow
+        // effect cannot block the state machine. Concurrency is bounded by the
+        // effect queue below: effects are chained rather than run in parallel,
+        // so two dispatches cannot interleave their DOM work or their writes.
+        effects = effects.then(async () => {
+          // Re-check after the chain hop: a dispose may have landed while this
+          // batch waited for the previous one to finish.
+          if (disposed) return;
           await runEffects(result.effects);
           await persistIfNeeded(result.effects);
-        })();
+        });
 
         queue = queue.concat(pending.splice(0, pending.length));
       }
