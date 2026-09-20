@@ -122,9 +122,17 @@ const reportContextInvariants = (
       });
       return;
     case "not-owner":
+      // Two invariants cover this refusal: only one tab may execute the queue,
+      // and a send requires ownership. Both are recorded so the bundle shows
+      // the ownership failure rather than a generic gate block.
       reportInvariantViolation(recorder, {
         invariant: INVARIANTS.noSecondTabExecutingQueue,
         detail: "this tab does not own the queue",
+        context: { jobId },
+      });
+      reportInvariantViolation(recorder, {
+        invariant: INVARIANTS.noSendWithoutQueueOwnership,
+        detail: "a send was refused because this tab does not own the queue",
         context: { jobId },
       });
       return;
@@ -159,6 +167,21 @@ export const createCommunicationService = (
       if (existing !== undefined && existing.jobId === job.id) {
         if (hasSendBeenAttempted(existing)) {
           // Absolute: a click may have gone out. Verify, never resend.
+          //
+          // Both invariants below are declared in gates.ts, and this is where
+          // they are enforced. Recording them explicitly — rather than
+          // returning silently — is what makes a bundle able to show WHICH
+          // guarantee stopped the second attempt.
+          reportInvariantViolation(deps.recorder, {
+            invariant: INVARIANTS.noSecondSendAfterAttempt,
+            detail: "a click was already dispatched for this job",
+            context: { jobId, transactionId, previousTransaction: existing.id },
+          });
+          reportInvariantViolation(deps.recorder, {
+            invariant: INVARIANTS.noAutomaticSendAfterAmbiguousReload,
+            detail: "an unresolved transaction survived a reload",
+            context: { jobId, phase: existing.phase },
+          });
           deps.recorder.warnEvent("communication", EVENTS.transactionUncertain, {
             detail: "an existing transaction already dispatched a click",
           });
@@ -277,7 +300,26 @@ export const createCommunicationService = (
           : { expectedRecruiter: job.recruiters[0].name }),
       });
 
+      // Persist BEFORE anything irreversible, and verify it actually landed.
+      // If persistence silently failed, the runs-once guarantee does not exist
+      // for this transaction, so proceeding would be the exact fault the
+      // invariant forbids.
       await deps.persistIntent(intent);
+
+      const confirmed = deps.readPersistedIntent();
+      if (confirmed === undefined || confirmed.id !== intent.id) {
+        reportInvariantViolation(deps.recorder, {
+          invariant: INVARIANTS.noSendWithoutPersistedIntent,
+          detail: "the intent could not be read back after being persisted",
+          context: { jobId, transactionId },
+        });
+        return {
+          kind: "refused",
+          reason: "gate-blocked",
+          message:
+            "JobPilot could not record the transaction, so it will not send. Persistence may be failing.",
+        };
+      }
 
       // Only metadata about the message is recorded, never its text.
       deps.recorder.record({
@@ -315,6 +357,18 @@ export const createCommunicationService = (
         case "uncertain":
           return { kind: "uncertain", detail: outcome.detail };
         case "blocked":
+          // An unknown modal reaching here is the case the invariant names: the
+          // adapter classified the dialog as unrecognised and refused to act on
+          // it. Recording the invariant makes "JobPilot stopped at a dialog it
+          // did not understand" visible in the bundle as a guarantee, not just
+          // as a log line.
+          if (outcome.reason === "unknown-dom" || outcome.reason === "ambiguous-state") {
+            reportInvariantViolation(deps.recorder, {
+              invariant: INVARIANTS.noContinuationThroughUnknownModal,
+              detail: `automation stopped at a dialog it could not classify (${outcome.reason})`,
+              context: { jobId, transactionId, evidence: outcome.evidence },
+            });
+          }
           return { kind: "blocked", reason: outcome.reason, evidence: outcome.evidence };
         case "aborted":
           // The runner aborted before clicking, so no message went out.

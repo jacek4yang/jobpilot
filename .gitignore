@@ -34,3 +34,4 @@ pnpm-debug.log*
 .env.*
 !.env.example
 .review-tmp/
+tests/unit/__probe/
