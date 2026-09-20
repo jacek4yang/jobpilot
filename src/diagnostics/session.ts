@@ -73,15 +73,28 @@ export const newSessionId = (now: number, random: () => number = Math.random): s
 };
 
 /**
- * Windows reserved device names.
+ * Neutralises a Windows reserved device name.
  *
- * A file called `CON`, `PRN`, `AUX`, `NUL`, `COM1`..`COM9` or `LPT1`..`LPT9`
- * (with or without an extension) cannot be created on Windows at all. The
- * bundled filename always carries a prefix, so this is not currently reachable
- * through `bundleFileName`, but `sanitizeFileNamePart` is a general helper and
- * its contract is that its output is a safe path segment.
+ * Windows resolves the part BEFORE the first dot against the device list, so
+ * both `NUL` and `NUL.txt` are unusable, and appending a suffix to the whole
+ * string (`NUL.txt_file`) does not help because the base is still `NUL`. The
+ * prefix must therefore be applied to the BASE name, ahead of any extension.
  */
-const WINDOWS_RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+const neutraliseReserved = (name: string): string => {
+  const dot = name.indexOf(".");
+  const base = dot === -1 ? name : name.slice(0, dot);
+  const extension = dot === -1 ? "" : name.slice(dot);
+  return RESERVED_BASE.test(base) ? `${base}_file${extension}` : name;
+};
+
+/**
+ * Windows reserved device names, matched against a base name only.
+ *
+ * The bundled filename always carries a prefix so this is not reachable through
+ * `bundleFileName`, but `sanitizeFileNamePart` is a general helper and its
+ * contract is that its output is a safe path segment.
+ */
+const RESERVED_BASE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 /**
  * Makes an arbitrary string safe to embed in a filename.
@@ -98,10 +111,7 @@ export const sanitizeFileNamePart = (value: string): string => {
   const cleaned = value.replace(/[^A-Za-z0-9._-]/g, "_").replace(/\.{2,}/g, "_");
   const trimmed = cleaned.replace(/^[.-]+/, "").replace(/[.-]+$/, "");
   if (trimmed.length === 0) return "unnamed";
-  // A reserved device name becomes usable by suffixing, which is the standard
-  // workaround and keeps the original text recognisable.
-  const safe = WINDOWS_RESERVED.test(trimmed) ? `${trimmed}_file` : trimmed;
-  return safe.slice(0, 64);
+  return neutraliseReserved(trimmed).slice(0, 64);
 };
 
 /**

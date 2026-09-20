@@ -404,14 +404,43 @@ describe("filename safety", () => {
    * reachable via `bundleFileName`, but the helper's contract is that its
    * output is a safe path segment, and it was not.
    */
-  const RESERVED = ["CON", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9", "con", "nul"];
+  /**
+   * Windows resolves the part before the FIRST DOT against the device list, so
+   * both `NUL` and `NUL.txt` are unusable, and a suffix appended after the
+   * extension does not help. This mirrors that rule rather than a simpler
+   * whole-string match, which would pass on output Windows still rejects.
+   */
+  const isReservedOnWindows = (name: string): boolean => {
+    const base = name.split(".")[0] ?? "";
+    return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(base);
+  };
+
+  const RESERVED = [
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM9",
+    "LPT1",
+    "LPT9",
+    "con",
+    "nul",
+    "NUL.txt",
+    "CON.tar.gz",
+    "com1.log",
+  ];
 
   for (const name of RESERVED) {
     it(`neutralises the reserved name ${name}`, () => {
-      const sanitized = sanitizeFileNamePart(name);
-      expect(/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(sanitized)).toBe(false);
+      expect(isReservedOnWindows(sanitizeFileNamePart(name))).toBe(false);
     });
   }
+
+  it("keeps an ordinary name unchanged", () => {
+    expect(sanitizeFileNamePart("T60")).toBe("T60");
+    expect(sanitizeFileNamePart("normal-name.txt")).toBe("normal-name.txt");
+  });
 
   it("strips path traversal", () => {
     const sanitized = sanitizeFileNamePart("../../etc/passwd");
