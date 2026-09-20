@@ -16,6 +16,18 @@ import type { ActivityPreference, SearchProfile } from "../search-profile/profil
 
 export type Stage = "A" | "B";
 
+/**
+ * Soft-score weights. Named so the explanation the UI renders and the number
+ * the engine computes can never drift apart.
+ */
+export const SCORE_WEIGHTS = {
+  activity: 10,
+  salaryAboveTarget: 10,
+  companyScale: 5,
+} as const;
+
+const ACTIVITY_BONUS = SCORE_WEIGHTS.activity;
+
 export interface StageReason {
   readonly code: string;
   readonly stage: Stage;
@@ -232,12 +244,21 @@ export const evaluateStageB = (input: StageBInput): StageBEvaluation => {
   }
 
   // --- Soft scoring ---------------------------------------------------------
+  // `score` must always equal `baseScore` plus the sum of every delta pushed
+  // below. Any contribution that is reported must actually be applied, or the
+  // explanation the user sees would overstate the score.
   const reasons: StageReason[] = [...hardReasons];
-  if (activityVerdict.kind === "pass") {
-    reasons.push({ code: "activity", stage: "B", message: activityVerdict.reason, delta: 10 });
-  }
-
   let score = input.baseScore;
+
+  if (activityVerdict.kind === "pass") {
+    score += ACTIVITY_BONUS;
+    reasons.push({
+      code: "activity",
+      stage: "B",
+      message: activityVerdict.reason,
+      delta: ACTIVITY_BONUS,
+    });
+  }
 
   const skillText = normalise([...job.skills, job.description].join("\n"));
   for (const skill of input.preferredSkills) {
@@ -270,12 +291,12 @@ export const evaluateStageB = (input: StageBInput): StageBEvaluation => {
   if (profile.salary !== undefined && profile.salary.minK > 0 && job.salary.parsed) {
     const actual = job.salary.min ?? 0;
     if (actual > profile.salary.minK) {
-      score += 10;
+      score += SCORE_WEIGHTS.salaryAboveTarget;
       reasons.push({
         code: "salary-above-target",
         stage: "B",
         message: `salary ${job.salary.raw} is above the target minimum of ${profile.salary.minK}K`,
-        delta: 10,
+        delta: SCORE_WEIGHTS.salaryAboveTarget,
       });
     }
   }
@@ -283,12 +304,12 @@ export const evaluateStageB = (input: StageBInput): StageBEvaluation => {
   if (profile.companyScales !== undefined && profile.companyScales.length > 0) {
     const scale = job.company.size;
     if (scale !== undefined && profile.companyScales.some((wanted) => wanted === scale)) {
-      score += 5;
+      score += SCORE_WEIGHTS.companyScale;
       reasons.push({
         code: "company-scale",
         stage: "B",
         message: `company scale ${scale} matches preference`,
-        delta: 5,
+        delta: SCORE_WEIGHTS.companyScale,
       });
     }
   }

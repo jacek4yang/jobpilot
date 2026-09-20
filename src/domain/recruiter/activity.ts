@@ -64,7 +64,9 @@ const LABEL_PATTERNS: readonly {
     },
   },
   {
-    pattern: /^(?:近)?(\d+)(?:天|日)(?:内|前)(?:活跃|在线)$/,
+    // `3天前活跃`, `近7天活跃`, `7日内在线`. The `内/前/以` infix is optional
+    // because BOSS renders some of these without it.
+    pattern: /^(?:近|过去|最近)?(\d+)(?:天|日)(?:内|前|以)?(?:活跃|在线)$/,
     build: (label, match) => {
       const days = Number(match[1] ?? "0");
       return { label, recency: bandForDays(days), days, online: false };

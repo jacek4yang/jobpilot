@@ -35,20 +35,43 @@ export type IdentityVerdict =
   | { readonly kind: "insufficient"; readonly reason: string };
 
 /**
+ * Company legal-form suffixes, longest first.
+ *
+ * Order matters. `股份有限公司` must be tried before `有限公司`, otherwise
+ * stripping `有限公司` from `示例股份有限公司` leaves the dangling `股份`,
+ * and the same company would normalise two different ways depending on which
+ * legal form is displayed.
+ */
+const COMPANY_SUFFIXES: readonly string[] = [
+  "股份有限公司",
+  "有限责任公司",
+  "有限公司",
+];
+
+/**
  * Normalises text for identity comparison.
  *
- * Strips whitespace, the separators BOSS uses between fields, and the legal
- * suffixes that companies display inconsistently ("X有限公司" vs "X"). This
- * mirrors the normalisation the reference implementation independently arrived
- * at, which is a good sign that it is the right set.
+ * Strips whitespace, the separators BOSS uses between fields, and a trailing
+ * company legal-form suffix. This mirrors the normalisation the reference
+ * implementation independently arrived at, which is a good sign that it is the
+ * right set.
  */
 export const normalizeIdentityText = (value: string | undefined): string => {
   if (value === undefined) return "";
-  return value
+  let text = value
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[·•\-—_（）()【】[\]]/g, "")
-    .replace(/股份有限公司|有限责任公司|有限公司/g, "");
+    .replace(/[·•\-—_（）()【】[\]]/g, "");
+
+  // Strip at most one legal-form suffix, longest match first.
+  for (const suffix of COMPANY_SUFFIXES) {
+    if (text.endsWith(suffix)) {
+      text = text.slice(0, text.length - suffix.length);
+      break;
+    }
+  }
+
+  return text;
 };
 
 /** True when `needle` appears in `haystack` after normalisation. */
