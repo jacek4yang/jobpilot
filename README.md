@@ -26,6 +26,8 @@ so it comes first.
 | Application history / dedup | **Verified** | `tests/unit/application/history.test.ts`, `tests/unit/history` |
 | Storage adapters (GM + in-memory) | **Verified** | `tests/unit/storage/storage.test.ts` |
 | Communication transaction (intent phases) | **Verified as logic** | `tests/unit/communication/intent.test.ts` |
+| Communication runner (drives the transaction) | **Logic verified, NOT wired into the live path** | `tests/unit/application/communication-runner.test.ts`. `src/application/orchestrator.ts` does not yet call it, so no message is sent end to end; see "Known limitations" |
+| Cross-tab execution lock | **Wired and unit-tested** | `src/adapters/userscript/navigator-lock.ts`, acquired in `bootstrap.ts`. Tested against a fake `LockManager`, not against two real browser tabs |
 | Panel mounting, shadow DOM isolation, fail-closed on a CAPTCHA page | **Verified in Chromium** | `tests/browser/` against local fixtures, driving the built bundle |
 | **BOSS adapter: page classification** | **Fixture-only** | `tests/integration/boss-page-detection.test.ts`. Recognises *our synthetic HTML*, not the live site |
 | **BOSS adapter: list/detail parsing** | **Fixture-only** | `tests/integration/boss-parser.test.ts`. Same caveat |
@@ -344,13 +346,15 @@ These are real and current.
 3. **Apply flows are not driven end to end in a browser test.** No browser spec
    completes a real apply; the safety specs assert that JobPilot does *nothing*
    on a blocked page.
-4. **The panel is not fully wired.** The tab strip renders all eight tabs, but
-   `Matches` and `Queue` are rendered from empty arrays in
-   `src/bootstrap/bootstrap.ts`. Discovery exists
-   (`src/application/discovery.ts`) and is unit-tested, but is not yet reachable
-   from the panel.
-5. **Communication is not reachable from the UI.** The runner and the adapter
-   action exist and are unit-tested, but nothing in `bootstrap.ts` calls them yet.
+4. **The panel is only partly wired.** `Matches` is now populated from real
+   discovery (`src/application/discovery.ts`, reached through the panel's
+   Discover action), but the `Queue`, `Rules`, `Messages` and `Settings` tabs
+   still render placeholder content rather than live state.
+5. **Communication is not reachable from the UI.** The runner
+   (`src/application/communication-runner.ts`) and the adapter action are
+   implemented and unit-tested, but `src/application/orchestrator.ts` does not
+   call them. No message is sent end to end, and the "never send twice"
+   transaction guard is therefore exercised only by tests, not by a live path.
 6. **The history-driven "uncertain send" decision list is a placeholder.** It
    currently derives from records with status `submitted`, not from a persisted
    `CommunicationIntent`, because the intent is not yet persisted to storage.
