@@ -1,0 +1,13 @@
+# pnpm workspace configuration.
+#
+# JobPilot is a single package, but pnpm stores build-script approval here.
+packages:
+  - "."
+
+# esbuild ships a native binary via a postinstall script; Vite and Vitest
+# require it. This is the only dependency permitted to run build scripts.
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - tsx@4.23.15

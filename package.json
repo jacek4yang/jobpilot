@@ -1,0 +1,37 @@
+{
+  "name": "jobpilot",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Local-first, rule-driven job application assistant userscript",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "verify:dist": "tsx scripts/verify-build.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm verify:dist"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@playwright/test": "1.63.0",
+    "happy-dom": "20.14.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vite-plugin-monkey": "8.1.1",
+    "vitest": "4.1.11"
+  }
+}
