@@ -168,6 +168,32 @@ export const loadBundle = (bytes: Uint8Array): BundleLoadResult => {
 
   const warnings: string[] = [...validated.errors];
 
+  // Required-file check. Without this, a bundle missing its evidence files
+  // loads cleanly and the analyzer then reports on partial data as if it were
+  // complete — the confidence would be unfounded. The event stream in
+  // particular must be present, because every finding is derived from it.
+  const REQUIRED = [
+    "summary.txt",
+    "build.json",
+    "session.json",
+    "events.ndjson",
+    "state-transitions.ndjson",
+    "config.redacted.json",
+  ] as const;
+  const missing = REQUIRED.filter((name) => !files.has(name));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `bundle is incomplete; missing: ${missing.join(", ")}`,
+    };
+  }
+
+  if (!files.has("checksums.json")) {
+    // Checksums can verify nothing if they are absent, so an unverifiable
+    // bundle is downgraded to a warning rather than trusted silently.
+    warnings.push("checksums.json is absent, so file integrity could not be verified");
+  }
+
   for (const [name, expected] of Object.entries(validated.manifest.checksums)) {
     const content = files.get(name);
     if (content === undefined) {

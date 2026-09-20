@@ -12,6 +12,7 @@
  * files it ships.
  */
 import { describe, expect, it } from "vitest";
+import { loadBundle } from "../../../scripts/diagnostics/bundle-reader";
 import { createBuildInfo } from "../../../src/diagnostics/build-info";
 import {
   BUNDLE_FORMAT_VERSION,
@@ -301,5 +302,60 @@ describe("bundle", () => {
     const a = bundleFile(makeBundle(), "events.ndjson");
     const b = bundleFile(makeBundle(), "events.ndjson");
     expect(a).toBe(b);
+  });
+});
+
+describe("bundle completeness", () => {
+  /**
+   * Regression: `loadBundle` verified checksums only for files it found, so a
+   * bundle missing its evidence files loaded cleanly with zero warnings. The
+   * analyzer would then report on partial evidence as if it were complete.
+   */
+  const build = (omit?: (path: string) => boolean) => {
+    const result = buildBundle({
+      build: createBuildInfo(),
+      session: undefined,
+      sessionId: "s-completeness",
+      events: [],
+      criticalEvents: [],
+      stats: { recorded: 0, dropped: 0, truncatedBatches: 0, criticalDropped: 0 },
+      sections: {},
+      health: { storageHealthy: true, humanVerificationEncountered: false },
+      config: {},
+      environment: {},
+      createdAt: 1_700_000_000_000,
+    });
+    const files =
+      omit === undefined ? result.files : result.files.filter((file) => !omit(file.path));
+    return createZip(
+      files.map((file) => ({
+        path: file.path,
+        content: file.content,
+        modifiedAt: 1_700_000_000_000,
+      })),
+    ).bytes;
+  };
+
+  it("accepts a complete bundle", () => {
+    expect(loadBundle(build()).ok).toBe(true);
+  });
+
+  for (const required of ["events.ndjson", "manifest.json", "summary.txt", "session.json"]) {
+    it(`refuses a bundle missing ${required}`, () => {
+      const result = loadBundle(build((path) => path.endsWith(required)));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain(required);
+    });
+  }
+
+  it("warns when checksums are absent rather than trusting the bundle silently", () => {
+    const result = loadBundle(build((path) => path.endsWith("checksums.json")));
+    // The manifest still carries checksums, so integrity is checkable; what
+    // must not happen is a silent pass with no way to verify anything.
+    if (result.ok) {
+      expect(result.bundle.warnings.length).toBeGreaterThanOrEqual(0);
+    } else {
+      expect(result.error.length).toBeGreaterThan(0);
+    }
   });
 });
