@@ -22,7 +22,13 @@
     "test:watch": "vitest",
     "test:browser": "playwright test",
     "verify:dist": "tsx scripts/verify-build.ts",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm verify:dist"
+    "verify:diagnostic": "tsx scripts/verify-diagnostic-build.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm verify:dist && pnpm build:diagnostic && pnpm verify:diagnostic && pnpm diag:selftest",
+    "build:diagnostic": "node scripts/run-build.mjs diagnostic",
+    "diag:analyze": "tsx scripts/analyze-bundle.ts",
+    "diag:compare": "tsx scripts/compare-bundles.ts",
+    "diag:selftest": "tsx scripts/diag-selftest.ts",
+    "build:all": "node scripts/run-build.mjs production --clean && node scripts/run-build.mjs diagnostic"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

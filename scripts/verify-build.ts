@@ -147,15 +147,50 @@ const runtimeFiles = distEntries.filter(
     !entry.endsWith(".map"),
 );
 
-if (runtimeFiles.length !== 1) {
+/**
+ * The diagnostic channel legitimately produces a second artifact, so the
+ * "exactly one runtime file" guarantee is scoped to THIS channel: the
+ * production build must not emit extra chunks, and must not be the only thing
+ * present if the diagnostic build shares the directory.
+ */
+const DIAGNOSTIC_ARTIFACT = "jobpilot.diagnostic.user.js";
+const ownRuntimeFiles = runtimeFiles.filter((entry) => entry !== DIAGNOSTIC_ARTIFACT);
+
+if (ownRuntimeFiles.length !== 1) {
   fail(
     "single-runtime-file",
-    `expected exactly one runtime file, found ${runtimeFiles.length}: ${runtimeFiles.join(", ")}`,
+    `expected exactly one production runtime file, found ${ownRuntimeFiles.length}: ${ownRuntimeFiles.join(", ")}`,
   );
-} else if (runtimeFiles[0] !== "jobpilot.user.js") {
-  fail("single-runtime-file", `expected dist/jobpilot.user.js, found ${runtimeFiles[0]}`);
+} else if (ownRuntimeFiles[0] !== "jobpilot.user.js") {
+  fail("single-runtime-file", `expected dist/jobpilot.user.js, found ${ownRuntimeFiles[0]}`);
 } else {
-  notes.push("exactly one runtime file: dist/jobpilot.user.js");
+  notes.push("exactly one production runtime file: dist/jobpilot.user.js");
+}
+
+// A production build must never be mistaken for the diagnostic one. Catching
+// this here stops a release shipping the debug artifact under the normal name.
+//
+// The check compares against the diagnostic artifact's own bytes when it is
+// present, rather than searching for a string: minification inlines the channel
+// as a bare identifier, so a literal search is unreliable and can pass
+// vacuously — which is worse than no check, because it looks like coverage.
+const diagnosticPath = join(DIST, DIAGNOSTIC_ARTIFACT);
+let diagnosticSource: string | undefined;
+try {
+  diagnosticSource = readFileSync(diagnosticPath, "utf8");
+} catch {
+  diagnosticSource = undefined;
+}
+
+if (diagnosticSource !== undefined && diagnosticSource === source) {
+  fail(
+    "channel-identity",
+    "dist/jobpilot.user.js is byte-identical to the diagnostic artifact, so the production build is actually the diagnostic build",
+  );
+} else if (/\bdiagnostic\b/.test(metadata)) {
+  fail("channel-identity", "the production userscript metadata claims the diagnostic channel");
+} else {
+  notes.push("channel identity: production (distinct from the diagnostic artifact)");
 }
 
 // 9. No external CSS dependency ---------------------------------------------
