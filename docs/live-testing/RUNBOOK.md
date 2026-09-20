@@ -280,7 +280,7 @@ bundle says what happened; only you can say what you were trying to do.
 > **Script aliases.** The commands below are the analyzer's specified interface
 > (`ARCHITECTURE.md` §14). If `pnpm diag:analyze` is not yet registered in
 > `package.json` on your build, run the underlying script directly:
-> `pnpm tsx scripts/analyze-bundle.ts <bundle.zip>`. Do not invent an equivalent
+> `pnpm diag:analyze <bundle.zip>` (equivalently `pnpm exec tsx scripts/analyze-bundle.ts <bundle.zip>`). Do not invent an equivalent
 > command — if the alias is missing, say so rather than substituting a tool that
 > produces a different report.
 

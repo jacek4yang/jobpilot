@@ -9,11 +9,12 @@ import { createBossPlatform } from "../adapters/boss";
 import { GMStorage } from "../adapters/storage/gm-storage";
 import { MemoryStorage } from "../adapters/storage/memory-storage";
 import type { JobPilotConfig } from "../config/schema";
-import { toSessionPolicy } from "../config/schema";
+import { CURRENT_SCHEMA_VERSION, toSessionPolicy } from "../config/schema";
+import { type BuildInfo, resolveBuildInfo } from "../diagnostics/build-info";
+import { createDiagnosticRecorder, type DiagnosticRecorder } from "../diagnostics/recorder";
 import { createRuleEngine } from "../domain/engine";
 import type { Clock, Random } from "../domain/support/shared";
 import { mathRandom, systemClock } from "../domain/support/shared";
-import { createLogger } from "../infrastructure/logging/logger";
 import type { JobPlatform } from "../ports/job-platform";
 import type { Logger, LogLevel } from "../ports/logger";
 import type { Storage } from "../ports/storage";
@@ -24,7 +25,17 @@ declare const __JOBPILOT_VERSION__: string | undefined;
 export const VERSION: string =
   typeof __JOBPILOT_VERSION__ === "string" ? __JOBPILOT_VERSION__ : "0.0.0-dev";
 
+/** Channel-specific recording budget. Observation differs; safety does not. */
+const RECORDER_CAPACITY: Readonly<Record<BuildInfo["channel"], number>> = {
+  production: 500,
+  diagnostic: 20_000,
+};
+
 export interface RuntimeDeps {
+  /** Build identity: the same value travels into every exported bundle. */
+  readonly build: BuildInfo;
+  /** The diagnostic recorder. Exposed so the UI and bootstrap can record events. */
+  readonly recorder: DiagnosticRecorder;
   readonly platform: JobPlatform;
   readonly storage: Storage;
   readonly logger: Logger;
@@ -58,11 +69,31 @@ export const createRuntimeDeps = (config: JobPilotConfig): RuntimeDeps => {
   const storageAvailable = hasGmStorage();
   const storage: Storage = storageAvailable ? new GMStorage() : new MemoryStorage();
 
-  const logger = createLogger({
-    clock,
-    minLevel: isLogLevel(config.logging.level) ? config.logging.level : "info",
-    capacity: config.logging.maxEntries,
+  // The build identity is resolved first because the channel decides how much
+  // is recorded. A diagnostic build observes more; it does not behave
+  // differently, and no guard or timeout reads this value.
+  const build = resolveBuildInfo(CURRENT_SCHEMA_VERSION);
+
+  const recorder = createDiagnosticRecorder({
+    now: () => clock.now(),
+    capacity:
+      build.channel === "diagnostic"
+        ? RECORDER_CAPACITY.diagnostic
+        : Math.max(RECORDER_CAPACITY.production, config.logging.maxEntries),
+    // A diagnostic build records trace-level detail; the production build keeps
+    // the user's configured level so ordinary use stays quiet.
+    minLevel:
+      build.channel === "diagnostic"
+        ? "trace"
+        : isLogLevel(config.logging.level)
+          ? config.logging.level
+          : "info",
+    criticalCapacity: 500,
   });
+
+  // Every existing call site keeps working: the recorder implements the Logger
+  // port, so no module needed rewriting to gain structured recording.
+  const logger: Logger = recorder;
 
   if (!storageAvailable) {
     logger.warn("bootstrap", "GM storage unavailable; using in-memory storage", {
@@ -78,7 +109,7 @@ export const createRuntimeDeps = (config: JobPilotConfig): RuntimeDeps => {
     version: VERSION,
   });
 
-  return { platform, storage, logger, clock, random, config, version: VERSION };
+  return { build, recorder, platform, storage, logger, clock, random, config, version: VERSION };
 };
 
 /** Builds the rule engine from the loaded configuration. */

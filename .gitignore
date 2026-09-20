@@ -5,7 +5,8 @@ coverage/
 
 # Playwright
 playwright-report/
-test-results/
+test-results/*
+!test-results/README.md
 blob-report/
 .playwright/
 .ms-playwright/
