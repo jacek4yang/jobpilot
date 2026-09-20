@@ -319,3 +319,45 @@ describe("communication runner", () => {
     });
   });
 });
+
+describe("observe loop termination", () => {
+  it("terminates even when the injected clock never advances", async () => {
+    // Regression: the loop condition was purely wall-clock based, so a frozen
+    // clock made it spin forever dispatching observeSend. That is an unbounded
+    // retry loop, which this project must never contain.
+    const frozen: Clock = { now: () => 1_700_000_000_000 };
+    const { action, calls } = makeAction({
+      observations: [{ kind: "unobserved", detail: "never appears" }],
+    });
+
+    const outcome = await runner(action, frozen).run(intent(), {
+      observeTimeoutMs: 100,
+      observeIntervalMs: 10,
+    });
+
+    expect(outcome.kind).toBe("uncertain");
+    // 100ms / 10ms => at most 10 iterations, plus the initial dispatch.
+    expect(calls.observe).toBeLessThanOrEqual(11);
+    expect(calls.dispatch).toBe(1);
+  });
+
+  it("stops at the first observation that confirms the send", async () => {
+    const clock = makeClock();
+    const { action, calls } = makeAction({
+      observations: [
+        { kind: "unobserved", detail: "not yet" },
+        { kind: "observed", count: 1, evidence: "bubble appeared" },
+        { kind: "observed", count: 2, evidence: "should not be reached" },
+      ],
+    });
+
+    const outcome = await runner(action, clock).run(intent(), {
+      observeTimeoutMs: 1_000,
+      observeIntervalMs: 1,
+    });
+
+    expect(outcome.kind).toBe("sent");
+    // Exactly two polls: the failed one and the confirming one.
+    expect(calls.observe).toBe(2);
+  });
+});

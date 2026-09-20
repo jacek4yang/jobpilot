@@ -218,9 +218,18 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
     const baseline = intent.outgoingBaseline;
     const timeoutMs = options.observeTimeoutMs ?? DEFAULT_OBSERVE_TIMEOUT_MS;
     const intervalMs = options.observeIntervalMs ?? DEFAULT_OBSERVE_INTERVAL_MS;
-    const deadline = deps.clock.now() + timeoutMs;
 
-    while (deps.clock.now() < deadline) {
+    // Bound the loop two ways. The iteration cap is what actually guarantees
+    // termination: a wall-clock condition alone is unsafe here, because the
+    // clock is injected and nothing forces it to advance (a frozen or coarse
+    // clock would spin this loop forever, which is the unbounded-retry
+    // behaviour this project must never have).
+    const maxIterations = Math.max(1, Math.ceil(timeoutMs / Math.max(1, intervalMs)));
+    const deadline = deps.clock.now() + timeoutMs;
+    let iterations = 0;
+
+    while (iterations < maxIterations && deps.clock.now() < deadline) {
+      iterations += 1;
       if (options.signal?.aborted === true) {
         return { kind: "uncertain", detail: "aborted while waiting for send confirmation" };
       }
