@@ -17,6 +17,7 @@ import type { PageKind } from "../../src/ports/job-platform";
 import {
   abortedSignal,
   asParseRoot,
+  BOSS_URL,
   type BossFixture,
   createRecordingLogger,
   documentOf,
@@ -118,11 +119,12 @@ describe("boss list parsing — job-list.html", () => {
   });
 
   it("keeps the fixture's relative detail links query-free even when not absolute", () => {
-    const result = parseBossJobList(documentOf(loadFixture("job-list.html")), BOSS_PLATFORM_ID);
-    // The fixture's href carries a `?ka=` tracking param. Whatever the base
-    // resolution outcome (see the KNOWN BUG case further down), tracking params
-    // must never survive into the canonical URL, or one posting splits into
-    // several identities across pages.
+    const result = parseBossJobList(documentOf(loadFixture("job-list.html")), BOSS_PLATFORM_ID, {
+      baseHref: BOSS_URL,
+    });
+    // The fixture's href carries a `?ka=` tracking param. Tracking params must
+    // never survive into the canonical URL, or one posting splits into several
+    // identities across pages.
     const url = first(result.jobs).url ?? "";
     expect(url).toContain("/job_detail/boss-1001.html");
     expect(url).not.toContain("?");
@@ -529,16 +531,31 @@ describe("boss list parsing — baseHref resolution", () => {
     expect(first(result.jobs).url).toBe("https://mirror.example.com/job_detail/boss-1001.html");
   });
 
-  it("keeps native-id cards stable across roots even with no baseHref", () => {
+  it("shows why an explicit baseHref is required, not merely convenient", () => {
+    // Without `baseHref` the two roots disagree, because `readBaseHref` can
+    // resolve a base from a body root (`ownerDocument` is non-null) but not
+    // from a `Document` root (`ownerDocument` is `null`). Native-id cards are
+    // NOT immune: `parseBossJobCard` fingerprints `canonicalUrl: url ?? nativeId`,
+    // so the unresolved relative url is folded into the hash anyway, while
+    // `idIsPlatformNative: true` still claims a native id was found.
     const window = loadFixture("job-list.html");
     const viaDocument = parseBossJobList(documentOf(window), BOSS_PLATFORM_ID);
     const viaBody = parseBossJobList(asParseRoot(window), BOSS_PLATFORM_ID);
+
     expect(first(viaDocument.jobs).idIsPlatformNative).toBe(true);
     expect(first(viaBody.jobs).idIsPlatformNative).toBe(true);
-    // `parseBossJobCard` fingerprints `canonicalUrl: url ?? nativeId`, so an
-    // unresolved relative url would still be folded into the hash. Supplying a
-    // baseHref is therefore what keeps ids consistent, not the native id alone.
-    expect(idsOf(viaBody.jobs)).toEqual(idsOf(viaDocument.jobs));
+    expect(first(viaDocument.jobs).url).toBe("/job_detail/boss-1001.html");
+    expect(first(viaBody.jobs).url).toBe("https://www.zhipin.com/job_detail/boss-1001.html");
+    expect(idsOf(viaBody.jobs)).not.toEqual(idsOf(viaDocument.jobs));
+
+    // Supplying the base reconciles them — this is exactly what the fix bought.
+    const fixedDocument = parseBossJobList(documentOf(window), BOSS_PLATFORM_ID, {
+      baseHref: BOSS_URL,
+    });
+    const fixedBody = parseBossJobList(asParseRoot(window), BOSS_PLATFORM_ID, {
+      baseHref: BOSS_URL,
+    });
+    expect(idsOf(fixedBody.jobs)).toEqual(idsOf(fixedDocument.jobs));
   });
 
   it("still yields a deterministic id set from each root in isolation", () => {
