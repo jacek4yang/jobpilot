@@ -394,3 +394,69 @@ describe("migratePersistedRoot — v3 -> v4 search profiles", () => {
     expect((result.root.config as Record<string, unknown>)["profiles"]).toEqual([]);
   });
 });
+
+describe("migratePersistedRoot — in-flight transaction is carried through", () => {
+  /**
+   * Regression: the section-repair step rebuilt the root from an explicit field
+   * list and silently dropped `pendingIntent`.
+   *
+   * That is a safety regression rather than a data one. A lost
+   * `send-attempted` record is indistinguishable from "never sent", so a
+   * migration could enable a second click on a job that had already been
+   * contacted.
+   */
+  const intent = {
+    id: "intent-1",
+    jobId: "job-1",
+    sourceUrl: "https://www.zhipin.com/web/geek/job",
+    phase: "send-attempted",
+    messageText: "您好",
+    outgoingBaseline: 0,
+    createdAt: 1_700_000_000_000,
+    expiresAt: 1_700_000_180_000,
+    sendAttemptedAt: 1_700_000_000_000,
+    clickDispatched: 1_700_000_000_500,
+  };
+
+  it("survives a migration that runs", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 3,
+      config: {},
+      applications: [],
+      statistics: {},
+      pendingIntent: intent,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A dropped record here could authorise a duplicate send.
+    expect(result.root.pendingIntent).toEqual(intent);
+  });
+
+  it("survives a document that is already current", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      config: {},
+      applications: [],
+      statistics: {},
+      pendingIntent: intent,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.root.pendingIntent).toEqual(intent);
+  });
+
+  it("stays absent when no transaction is in flight", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      config: {},
+      applications: [],
+      statistics: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect("pendingIntent" in result.root).toBe(false);
+  });
+});

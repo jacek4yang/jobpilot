@@ -26,7 +26,9 @@ so it comes first.
 | Application history / dedup | **Verified** | `tests/unit/application/history.test.ts`, `tests/unit/history` |
 | Storage adapters (GM + in-memory) | **Verified** | `tests/unit/storage/storage.test.ts` |
 | Communication transaction (intent phases) | **Verified as logic** | `tests/unit/communication/intent.test.ts` |
-| Communication runner (drives the transaction) | **Logic verified, NOT wired into the live path** | `tests/unit/application/communication-runner.test.ts`, including composition tests against the adapter's real guard. `src/application/orchestrator.ts` does not yet call it, so no message is sent end to end; see "Known limitations" |
+| Communication transaction persistence | **Verified** | The intent is written through storage on every change and recovered on boot (`tests/unit/application/repository.test.ts`). A recovered `send-attempted` transaction is resolved by verification only |
+| Execution queue | **Verified and shipped** | `tests/unit/infrastructure/infrastructure.test.ts`; populated from accepted matches and rendered in the Queue tab |
+| Communication runner (drives a send) | **Logic verified; not yet driven by the queue** | `tests/unit/application/communication-runner.test.ts`, including composition tests against the adapter's real guard. Bootstrap constructs it and uses it to settle a recovered transaction, but the queue does not yet call `run()` for new sends; see "Known limitations" |
 | Cross-tab execution lock | **Wired and unit-tested** | `src/adapters/userscript/navigator-lock.ts`, acquired in `bootstrap.ts`. Tested against a spec-accurate async `LockManager` fake, not against two real browser tabs |
 | Panel mounting, shadow DOM isolation, fail-closed on a CAPTCHA page | **Verified in Chromium** | `tests/browser/` against local fixtures, driving the built bundle |
 | **BOSS adapter: page classification** | **Fixture-only** | `tests/integration/boss-page-detection.test.ts`. Recognises *our synthetic HTML*, not the live site |
@@ -346,18 +348,19 @@ These are real and current.
 3. **Apply flows are not driven end to end in a browser test.** No browser spec
    completes a real apply; the safety specs assert that JobPilot does *nothing*
    on a blocked page.
-4. **The panel is only partly wired.** `Matches` is now populated from real
-   discovery (`src/application/discovery.ts`, reached through the panel's
-   Discover action), but the `Queue`, `Rules`, `Messages` and `Settings` tabs
-   still render placeholder content rather than live state.
-5. **Communication is not reachable from the UI.** The runner
-   (`src/application/communication-runner.ts`) and the adapter action are
-   implemented and unit-tested, but `src/application/orchestrator.ts` does not
-   call them. No message is sent end to end, and the "never send twice"
-   transaction guard is therefore exercised only by tests, not by a live path.
-6. **The history-driven "uncertain send" decision list is a placeholder.** It
-   currently derives from records with status `submitted`, not from a persisted
-   `CommunicationIntent`, because the intent is not yet persisted to storage.
+4. **Two panel tabs are still placeholders.** `Matches` is populated from real
+   discovery and `Queue` from the real task queue, but `Rules`, `Messages` and
+   `Settings` still render explanatory text rather than live controls.
+5. **Sending is not yet driven by the queue.** The runner
+   (`src/application/communication-runner.ts`), the adapter action and the
+   intent persistence are all implemented and tested, and bootstrap uses the
+   runner to settle a transaction recovered from a previous page. But the queue
+   does not call `run()` for new sends, so no message is composed and sent end
+   to end today. The transaction machinery is exercised by tests and by the
+   recovery path, not by a full send.
+6. **The "uncertain send" decision list is a placeholder.** It derives from
+   history records with status `submitted` rather than from the persisted
+   `CommunicationIntent`, which now exists but is not yet surfaced there.
 7. **Multi-tab locking is wired but not verified in a real browser.** The
    `navigator.locks` adapter is acquired in `bootstrap.ts` and Start/Discover
    are refused without ownership, but it has only been tested against a fake
@@ -385,12 +388,11 @@ unverified.
 1. **Verify selectors against the real site**, capture by capture, promoting each
    entry out of `fixture-only`/`unverified` with cited evidence. This is the only
    work that can move `automationVerified` off `false`.
-2. **Persist the `CommunicationIntent`** to storage and recover it on boot, so
-   the `send-attempted` → verify-only path survives a reload in practice and not
-   only in the reducer.
-3. **Finish wiring the UI.** Discovery is reachable from the panel and fills
-   Matches, but the Queue, Rules, Messages and Settings tabs still render
-   placeholders rather than live state.
+2. **Drive sends from the queue.** The runner, adapter action and intent
+   persistence all exist; the remaining step is for the queue to call `run()`
+   for a selected job, which is what would make a full send reachable.
+3. **Build the Rules, Messages and Settings panels.** Discovery, Matches and
+   Queue are live; these three tabs still render explanatory text.
 4. **Verify multi-tab ownership in two real browser tabs.** The lock is
    implemented and acquired at boot; only a fake `LockManager` has exercised it.
 5. **Drive a full apply and a full send in a browser test** against fixtures.
