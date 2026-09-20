@@ -21,13 +21,13 @@ so it comes first.
 | Area | Status | Detail |
 | --- | --- | --- |
 | Domain rules, scoring, two-stage matching | **Verified** | Pure TypeScript, covered by unit tests under `tests/unit/domain`, `tests/unit/matching` |
-| Config schema, validation, migrations v1→v2→v3 | **Verified** | Unit-tested in `tests/unit/config` |
+| Config schema, validation, migrations v1→v2→v3→v4 | **Verified** | Unit-tested in `tests/unit/config` |
 | State machine (reducer + effects) | **Verified** | `tests/unit/application/state-machine.test.ts` |
 | Application history / dedup | **Verified** | `tests/unit/application/history.test.ts`, `tests/unit/history` |
 | Storage adapters (GM + in-memory) | **Verified** | `tests/unit/storage/storage.test.ts` |
 | Communication transaction (intent phases) | **Verified as logic** | `tests/unit/communication/intent.test.ts` |
-| Communication runner (drives the transaction) | **Logic verified, NOT wired into the live path** | `tests/unit/application/communication-runner.test.ts`. `src/application/orchestrator.ts` does not yet call it, so no message is sent end to end; see "Known limitations" |
-| Cross-tab execution lock | **Wired and unit-tested** | `src/adapters/userscript/navigator-lock.ts`, acquired in `bootstrap.ts`. Tested against a fake `LockManager`, not against two real browser tabs |
+| Communication runner (drives the transaction) | **Logic verified, NOT wired into the live path** | `tests/unit/application/communication-runner.test.ts`, including composition tests against the adapter's real guard. `src/application/orchestrator.ts` does not yet call it, so no message is sent end to end; see "Known limitations" |
+| Cross-tab execution lock | **Wired and unit-tested** | `src/adapters/userscript/navigator-lock.ts`, acquired in `bootstrap.ts`. Tested against a spec-accurate async `LockManager` fake, not against two real browser tabs |
 | Panel mounting, shadow DOM isolation, fail-closed on a CAPTCHA page | **Verified in Chromium** | `tests/browser/` against local fixtures, driving the built bundle |
 | **BOSS adapter: page classification** | **Fixture-only** | `tests/integration/boss-page-detection.test.ts`. Recognises *our synthetic HTML*, not the live site |
 | **BOSS adapter: list/detail parsing** | **Fixture-only** | `tests/integration/boss-parser.test.ts`. Same caveat |
@@ -90,7 +90,7 @@ you intend to help verify it. See [`docs/boss-adapter.md`](docs/boss-adapter.md)
 
 - One storage key, `jobpilot:root:v1`, namespaced `jobpilot:` so it cannot
   collide with another userscript.
-- A versioned schema with real migrations (v1→v2→v3), each additive. Unknown
+- A versioned schema with real migrations (v1→v2→v3→v4), each additive. Unknown
   fields are carried through; a document claiming a newer version is refused
   rather than downgraded and guessed at.
 - History is authoritative: a job that reached `submitted` or `verified` cannot
@@ -118,7 +118,7 @@ application layers and are covered by tests.
 | **Fails closed.** An unrecognised page is `unknown`, not a guess. An unmatched apply button is `selector-missing`, with no text-based fallback | `src/adapters/boss/parser/page-kind.ts`, `src/adapters/boss/actions/apply-action.ts` |
 | **Never sends into an unverified chat.** Identity must be confirmed from a job id, or a title plus company/recruiter. `insufficient` evidence is treated exactly like a mismatch | `src/domain/communication/identity.ts` |
 | **Never overwrites a draft.** A non-empty editor is reported and left untouched, and the check runs again immediately before the click | `prepareMessage` / `dispatchSend` in `src/adapters/boss/communication/communication-action.ts` |
-| **Never retries an uncertain send.** Once an intent reaches `send-attempted`, the only legal continuation is verification. `canClickSend` returns `false` forever after | `src/domain/communication/intent.ts` |
+| **Never clicks twice.** `sendAttemptedAt` records the runner committing; `clickDispatched` records the adapter actually clicking. `mayDispatchClick` permits exactly one click per transaction, and it is persisted, so a reload cannot replay it | `src/domain/communication/intent.ts` |
 | **Never infers success.** An unconfirmed click is `needs-confirmation`; an unobserved message is `uncertain`. Neither is ever `submitted` / `verified` | `readApplyEvidence`; `observeSend` |
 | **Prefers a false skip over a duplicate send.** Five independent dedup layers; if the platform's own state is ambiguous, the job is skipped and labelled as assumed-contacted so you can override deliberately | `src/application/orchestrator.ts`, `src/application/history.ts`, `src/application/discovery.ts` |
 | **Yields to the user.** A draft, a route change, or a control the user touches interrupts automation rather than competing with it | `PAGE_CHANGED` and `DRAFT_DETECTED` transitions |
@@ -358,15 +358,21 @@ These are real and current.
 6. **The history-driven "uncertain send" decision list is a placeholder.** It
    currently derives from records with status `submitted`, not from a persisted
    `CommunicationIntent`, because the intent is not yet persisted to storage.
-7. **Multi-tab locking is specified and not implemented.** The `Lock` port and an
-   in-memory implementation exist (`src/ports/lock.ts`); no
-   `navigator.locks`-backed implementation is wired into bootstrap, so two BOSS
-   tabs would both be live today.
+7. **Multi-tab locking is wired but not verified in a real browser.** The
+   `navigator.locks` adapter is acquired in `bootstrap.ts` and Start/Discover
+   are refused without ownership, but it has only been tested against a fake
+   `LockManager`, never against two live tabs.
 8. **Recruiter activity parsing is conservative and often yields `unknown`.**
-   Contradictory labels resolve to the least-active state.
-9. **City codes are vendored, not fetched.** If BOSS changes its taxonomy the
+   Contradictory labels resolve to the least-active state, and the container
+   selectors are unverified heuristics, so `unknown` is common in practice.
+9. **An unreadable document puts JobPilot into read-only mode.** If the stored
+    data was written by a newer schema version, JobPilot refuses to migrate it
+    `and refuses to save`, so an intact document is never overwritten by
+    defaults. The trade-off is that nothing persists until you clear the
+    document or run a build that understands it.
+10. **City codes are vendored, not fetched.** If BOSS changes its taxonomy the
    table goes stale silently; nothing checks it against the site.
-10. **No telemetry, and therefore no crash reporting.** Diagnostics stay in the
+11. **No telemetry, and therefore no crash reporting.** Diagnostics stay in the
     browser. If something fails on the live site, only your own logs will say so.
 
 ---
@@ -382,10 +388,11 @@ unverified.
 2. **Persist the `CommunicationIntent`** to storage and recover it on boot, so
    the `send-attempted` → verify-only path survives a reload in practice and not
    only in the reducer.
-3. **Wire the UI to discovery and the queue**, replacing the empty arrays in
-   `bootstrap.ts`.
-4. **Implement `navigator.locks` behind the `Lock` port** and make a second tab
-   render read-only.
+3. **Finish wiring the UI.** Discovery is reachable from the panel and fills
+   Matches, but the Queue, Rules, Messages and Settings tabs still render
+   placeholders rather than live state.
+4. **Verify multi-tab ownership in two real browser tabs.** The lock is
+   implemented and acquired at boot; only a fake `LockManager` has exercised it.
 5. **Drive a full apply and a full send in a browser test** against fixtures.
 6. **A second platform adapter**, to prove the port boundary is real.
 7. **Import from BOSS Helper settings**, non-destructively, with a field-by-field
