@@ -15,7 +15,11 @@ export interface LockHandle {
 
 export type AcquireResult =
   | { readonly ok: true; readonly handle: LockHandle }
-  | { readonly ok: false; readonly reason: "held-by-other" | "unsupported"; readonly holder?: string };
+  | {
+      readonly ok: false;
+      readonly reason: "held-by-other" | "unsupported";
+      readonly holder?: string;
+    };
 
 export interface Lock {
   /**

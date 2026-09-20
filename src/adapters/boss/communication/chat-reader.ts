@@ -20,7 +20,10 @@
  */
 
 import type { ChatIdentity } from "../../../domain/communication/identity";
+import { extractJobIds, isPlausibleJobId } from "./job-id";
 import { COMMUNICATION_SELECTORS, normalizeText, queryAll, queryFirst } from "./selectors";
+
+export { extractJobIds, isPlausibleJobId } from "./job-id";
 
 /** Body text of an element, whitespace-normalised. Never throws. */
 const textOf = (element: Element | null): string => normalizeText(element?.textContent);
@@ -90,13 +93,31 @@ interface HasValue {
 }
 
 /**
- * Reports whether an element is a form control with a writable `value`.
+ * Tag names whose `value` really is their editable text.
+ *
+ * A narrow allow-list, NOT `"value" in element`: a `<button>` and a `<li>` also
+ * expose a `value` property, and treating those as editors would let the writer
+ * "successfully" write a message into a send button. That is a harmless-looking
+ * bug here and a serious one the moment a caller trusts `ok: true`.
+ */
+const EDITABLE_VALUE_TAGS: readonly string[] = ["textarea", "input"];
+
+/**
+ * Reports whether an element is a text control whose `value` is its content.
  *
  * Duck-typed rather than `instanceof HTMLTextAreaElement`, because the global
  * constructors are not guaranteed to exist outside a browser realm and
- * cross-realm nodes would fail the check anyway.
+ * cross-realm nodes would fail the check anyway. The tag check is what keeps
+ * buttons and list items out.
+ *
+ * Failure mode: returns `false` for anything that is not a `textarea`/`input`
+ * carrying a string `value`. Callers that see `false` must fall through to the
+ * contenteditable path and then to an explicit failure — never to a plain
+ * assignment on an unknown node type.
  */
 export const hasValueProperty = (element: Element): element is Element & HasValue => {
+  const tag = element.tagName.toLowerCase();
+  if (!EDITABLE_VALUE_TAGS.includes(tag)) return false;
   const candidate: unknown = Reflect.get(element, "value");
   return typeof candidate === "string";
 };
@@ -144,71 +165,61 @@ const elementDescendants = (parent: ParentNode): readonly Element[] => {
   }
 };
 
-/** Recursively collects `[href]` and `data-*id` values under a node. */
-const collectIdentityHints = (within: ParentNode): readonly string[] => {
-  const hints: string[] = [];
-  const attributes = COMMUNICATION_SELECTORS.chatJobIdAttribute.candidates;
-
-  const link = queryFirst(within, COMMUNICATION_SELECTORS.jobTitleInChat);
-  if (link !== null) {
-    const href = link.element.getAttribute("href");
-    if (href !== null && href.length > 0) hints.push(href);
-  }
-
-  // The container itself carries the id on real BOSS-like markup, but it is not
-  // part of its own `querySelectorAll`, so it is probed separately. The probe is
-  // duck-typed because `ParentNode` is not guaranteed to be an `Element`.
-  const self: unknown = within;
-  if (self instanceof Object && "getAttribute" in self) {
-    for (const attribute of attributes) {
-      const value = (self as Element).getAttribute(attribute);
-      if (value !== null && value.trim().length > 0) hints.push(value.trim());
-    }
-  }
-
-  // Job ids also hang off the job links inside the conversation.
-  for (const element of elementDescendants(within)) {
-    for (const attribute of attributes) {
-      const value = element.getAttribute(attribute);
-      if (value !== null && value.trim().length > 0) hints.push(value.trim());
-    }
-  }
-  return hints;
+/** The element itself, when the node is one. `ParentNode` may not be. */
+const asElement = (node: ParentNode): Element | null => {
+  const candidate: unknown = node;
+  if (candidate instanceof Object && "getAttribute" in candidate) return candidate as Element;
+  return null;
 };
 
-/** Extracts numeric job ids from free-form hrefs and attribute values. */
-const JOB_ID_PATTERNS: readonly RegExp[] = [
-  /job_detail\/([A-Za-z0-9_-]+)/i,
-  /[?&](?:jobId|job_id|jid|jobid)=([A-Za-z0-9_-]+)/i,
-];
-
 /**
- * Pulls job ids out of the raw identity hints.
+ * Collects the raw strings inside ONE scope that might identify the job.
  *
- * Failure mode: returns `[]` when nothing looks like an id. It never invents an
- * id and never truncates a non-id token into one — `matchChatIdentity` then has
- * to rely on text, which is weaker but not wrong.
+ * Scope discipline: the chat root's own attributes and the job link inside it are
+ * read first and, when that yields an id, the search does NOT widen — so a
+ * recommendation rail or a stale detail pane elsewhere on the page cannot
+ * contribute a competing id. Widening only happens when the chat root carried no
+ * id at all, in which case the extra candidates are a strictly better fallback
+ * than "no evidence".
+ *
+ * Failure mode: returns `[]` for a root with nothing id-shaped in it.
  */
-export const extractJobIds = (hints: readonly string[]): readonly string[] => {
-  const ids: string[] = [];
-  const push = (value: string): void => {
-    const trimmed = normalizeText(value);
-    if (trimmed.length === 0) return;
-    if (!ids.includes(trimmed)) ids.push(trimmed);
+const collectIdentityHints = (root: ParentNode, chatRoot: Element | null): readonly string[] => {
+  const attributes = COMMUNICATION_SELECTORS.chatJobIdAttribute.candidates;
+
+  /** Scope-local hints: this node's own attributes plus the job link inside it. */
+  const hintsWithin = (scope: ParentNode): readonly string[] => {
+    const hints: string[] = [];
+    const self = asElement(scope);
+    if (self !== null) {
+      for (const attribute of attributes) {
+        const value = self.getAttribute(attribute);
+        if (value !== null) hints.push(value);
+      }
+    }
+    const link = queryFirst(scope, COMMUNICATION_SELECTORS.jobTitleInChat);
+    if (link !== null) {
+      const href = link.element.getAttribute("href");
+      if (href !== null) hints.push(href);
+    }
+    for (const element of elementDescendants(scope)) {
+      for (const attribute of attributes) {
+        const value = element.getAttribute(attribute);
+        if (value !== null) hints.push(value);
+      }
+    }
+    return hints;
   };
 
-  for (const hint of hints) {
-    if (/^\d+$/.test(hint)) {
-      push(hint);
-      continue;
-    }
-    for (const pattern of JOB_ID_PATTERNS) {
-      const match = pattern.exec(hint);
-      const captured = match?.[1];
-      if (captured !== undefined) push(captured);
-    }
-  }
-  return ids;
+  if (chatRoot === null) return hintsWithin(root);
+
+  const scoped = hintsWithin(chatRoot);
+  if (extractJobIds(scoped).length > 0) return scoped;
+  // No id inside the conversation region. Widening to the whole document is
+  // weaker evidence, so the widened hints are additionally filtered down to the
+  // ones that at least *look* like ids — a page-level `data-job-id` on an
+  // unrelated recommendation card must not become authoritative identity.
+  return [...scoped, ...hintsWithin(root).filter((hint) => isPlausibleJobId(hint))];
 };
 
 /**
@@ -228,14 +239,17 @@ export const readChatIdentity = (root: ParentNode): ChatIdentity | null => {
   const scope: ParentNode = chatRoot ?? root;
   if (chatRoot === null && findEditor(root) === null) return null;
 
-  const hints = collectIdentityHints(scope);
-  const jobIds = extractJobIds(hints);
+  const jobIds = extractJobIds(collectIdentityHints(root, chatRoot));
 
   const header = queryFirst(scope, COMMUNICATION_SELECTORS.chatHeader);
   const title = queryFirst(scope, COMMUNICATION_SELECTORS.jobTitleInChat);
   const company = queryFirst(scope, COMMUNICATION_SELECTORS.companyInChat);
 
-  const parts = [textOf(header?.element ?? null), textOf(title?.element ?? null), textOf(company?.element ?? null)];
+  const parts = [
+    textOf(header?.element ?? null),
+    textOf(title?.element ?? null),
+    textOf(company?.element ?? null),
+  ];
   const text = normalizeText(parts.filter((part) => part.length > 0).join(" "));
 
   return { jobIds, text };

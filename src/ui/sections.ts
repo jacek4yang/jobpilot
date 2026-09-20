@@ -5,13 +5,13 @@
  * separated from the panel shell so that the shell owns chrome (tabs, launcher,
  * action bar) and these own content, and so each can be exercised in isolation.
  */
-import type { PanelTab } from "./view-model";
 import type {
   BlockedView,
   CurrentItemView,
   HistoryRowView,
   LogRowView,
   MatchRowView,
+  PanelTab,
   PendingDecisionView,
   QueueRowView,
   StatTile,
@@ -276,7 +276,10 @@ export const renderLogs = (doc: Document, rows: readonly LogRowView[]): HTMLElem
 export const buildSections = (
   doc: Document,
   input: {
-    readonly message?: { readonly tone: "info" | "warn" | "error" | "success"; readonly text: string };
+    readonly message?: {
+      readonly tone: "info" | "warn" | "error" | "success";
+      readonly text: string;
+    };
     readonly blocked?: BlockedView;
     readonly current?: CurrentItemView;
     readonly decisions: readonly PendingDecisionView[];

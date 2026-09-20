@@ -273,10 +273,8 @@ export const normalizeText = (value: string | null | undefined): string =>
  * a hard failure and fail closed (`selector-missing`), never as "try something
  * else".
  */
-export const queryFirst = (
-  within: ParentNode,
-  group: SelectorEntry,
-): LocatedElement | null => queryFirstBy(within, group, (candidate, scope) => scope.querySelector(candidate));
+export const queryFirst = (within: ParentNode, group: SelectorEntry): LocatedElement | null =>
+  queryFirstBy(within, group, (candidate, scope) => scope.querySelector(candidate));
 
 /**
  * All matches for a group's first matching candidate.
@@ -290,9 +288,7 @@ export const queryAll = (within: ParentNode, group: SelectorEntry): readonly Ele
     try {
       const found = Array.from(within.querySelectorAll(candidate));
       if (found.length > 0) return found;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return [];
 };

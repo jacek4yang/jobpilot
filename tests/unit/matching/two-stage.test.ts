@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { JobDetail, JobSummary } from "../../../src/domain/job/job";
 import {
   evaluateStageA,
   evaluateStageB,
   type StageBInput,
 } from "../../../src/domain/matching/two-stage";
-import { createProfile, type SearchProfile } from "../../../src/domain/search-profile/profile";
 import { parseActivityLabel } from "../../../src/domain/recruiter/activity";
-import type { JobDetail, JobSummary } from "../../../src/domain/job/job";
+import { createProfile, type SearchProfile } from "../../../src/domain/search-profile/profile";
 import { asCompanyId, asJobId, asPlatformId } from "../../../src/domain/support/ids";
 
 const NOW = 1_700_000_000_000;
@@ -221,7 +221,11 @@ describe("stage B — degree and experience", () => {
 
   it("does not reject when the posting omits the degree", () => {
     const result = stageB({
-      job: (() => { const j = detail(); const { degreeLabel: _omit, ...rest } = j; return rest as typeof j; })(),
+      job: (() => {
+        const j = detail();
+        const { degreeLabel: _omit, ...rest } = j;
+        return rest as typeof j;
+      })(),
       profile: profile({ degree: ["本科"] }),
       acceptThreshold: 0,
     });

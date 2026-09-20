@@ -1,17 +1,30 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    // Browser specs run code inside `page.evaluate`, so DOM types are needed
+    // here even though this config covers Node-side tooling.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    // Playwright's own config types use optional properties whose declared type
+    // does not include `undefined`, which `exactOptionalPropertyTypes` rejects.
+    // The application source keeps the stricter setting (see tsconfig.json);
+    // this relaxation applies only to build tooling and browser specs.
+    "exactOptionalPropertyTypes": false
   },
-  "include": ["vite.config.ts", "scripts/**/*.ts", "playwright.config.ts", "tests/browser/**/*.ts"]
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.ts",
+    "playwright.config.ts",
+    "tests/browser/**/*.ts",
+    "tests/browser/**/*.mjs"
+  ]
 }

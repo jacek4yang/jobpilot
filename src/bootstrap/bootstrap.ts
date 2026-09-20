@@ -20,7 +20,7 @@ import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { createPanel } from "../ui/panel";
 import { buildSections } from "../ui/sections";
-import { safetyFromState, type PanelViewModel } from "../ui/view-model";
+import { type PanelViewModel, safetyFromState } from "../ui/view-model";
 import { createEngineFor, createRuntimeDeps, VERSION } from "./container";
 
 export interface BootstrapResult {
@@ -151,7 +151,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         "verifying",
         "cooldown",
       ].includes(context.state),
-      paused: context.state === "paused" || context.state === "blocked" || context.state === "failed",
+      paused:
+        context.state === "paused" || context.state === "blocked" || context.state === "failed",
 
       ...(context.pauseReason === undefined
         ? context.lastMessage === undefined

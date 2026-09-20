@@ -25,13 +25,12 @@
 
 import type { ChatIdentity } from "../../../domain/communication/identity";
 import { countOutgoingMessages, matchChatIdentity } from "../../../domain/communication/identity";
-import { canClickSend, type CommunicationIntent } from "../../../domain/communication/intent";
+import { type CommunicationIntent, canClickSend } from "../../../domain/communication/intent";
 import type { Clock } from "../../../domain/support/shared";
 import type { BlockReason, LocatedElement } from "../../../ports/job-platform";
 import type { Logger } from "../../../ports/logger";
 import { detectCaptcha, detectLoginRequired, detectRiskControl } from "../guards";
-import { SELECTORS } from "../selectors";
-import { queryFirst as queryBossFirst } from "../selectors";
+import { queryFirst as queryBossFirst, SELECTORS } from "../selectors";
 import {
   classifyModal,
   detectRiskBanner,
@@ -39,11 +38,11 @@ import {
   findEditor,
   findSendButton,
   isEditorEmpty,
+  type ModalClassification,
+  type RiskEvidence,
   readChatIdentity,
   readEditorText,
   readOutgoingMessageBodies,
-  type ModalClassification,
-  type RiskEvidence,
 } from "./chat-reader";
 import { COMMUNICATION_SELECTORS, normalizeText, queryAll } from "./selectors";
 import { writeEditorText } from "./write-editor";
@@ -144,7 +143,10 @@ export const evaluateGuards = (deps: CommunicationActionDeps): GuardOutcome => {
 
   const captcha = detectCaptcha(root);
   if (captcha.detected) {
-    return { blocked: { kind: "blocked", reason: "captcha", evidence: captcha.evidence }, chatRisk: null };
+    return {
+      blocked: { kind: "blocked", reason: "captcha", evidence: captcha.evidence },
+      chatRisk: null,
+    };
   }
 
   const risk = detectRiskControl(root);
@@ -255,9 +257,7 @@ const isHiddenByStyle = (element: Element): boolean => {
 };
 
 /** Builds the adapter. */
-export const createCommunicationAction = (
-  deps: CommunicationActionDeps,
-): CommunicationAction => {
+export const createCommunicationAction = (deps: CommunicationActionDeps): CommunicationAction => {
   const { document: root, clock, logger } = deps;
 
   const blocked = (reason: BlockReason, evidence: string): BlockedResult => {
@@ -281,7 +281,10 @@ export const createCommunicationAction = (
   const verifyConversation = (intent: CommunicationIntent): BlockedResult | null => {
     const chat = readChatIdentity(root);
     if (chat === null) {
-      return blocked("unknown-dom", "no chat root or editor found; cannot confirm the conversation");
+      return blocked(
+        "unknown-dom",
+        "no chat root or editor found; cannot confirm the conversation",
+      );
     }
     const verdict = matchChatIdentity(
       {
@@ -387,7 +390,10 @@ export const createCommunicationAction = (
 
       const text = normalizeText(intent.messageText);
       if (text.length === 0) {
-        return blocked("ambiguous-state", "intent carries an empty message; refusing to type nothing");
+        return blocked(
+          "ambiguous-state",
+          "intent carries an empty message; refusing to type nothing",
+        );
       }
 
       const written = writeEditorText(editor, text);

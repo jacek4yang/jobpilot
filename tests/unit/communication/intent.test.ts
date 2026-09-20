@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  type CommunicationIntent,
   canClickSend,
   createIntent,
   deserializeIntent,
-  isTerminalPhase,
-  type CommunicationIntent,
   type IntentEvent,
+  isTerminalPhase,
   reduceIntent,
   SAFE_TO_ABANDON,
   serializeIntent,
@@ -43,11 +43,7 @@ const run = (
 
 /** Drives an intent all the way to `prepared`. */
 const prepared = (): CommunicationIntent =>
-  run(intent(), [
-    { type: "NAVIGATED" },
-    { type: "CHAT_VERIFIED" },
-    { type: "MESSAGE_PREPARED" },
-  ]);
+  run(intent(), [{ type: "NAVIGATED" }, { type: "CHAT_VERIFIED" }, { type: "MESSAGE_PREPARED" }]);
 
 /** Drives an intent to `send-attempted`. */
 const sendAttempted = (): CommunicationIntent =>
@@ -89,9 +85,13 @@ describe("communication intent", () => {
     });
 
     it("reaches verified when the outgoing count increases", () => {
-      const result = reduceIntent(sendAttempted(), { type: "SEND_OBSERVED", outgoingCount: 1 }, {
-        now: NOW,
-      });
+      const result = reduceIntent(
+        sendAttempted(),
+        { type: "SEND_OBSERVED", outgoingCount: 1 },
+        {
+          now: NOW,
+        },
+      );
       expect(result.intent.phase).toBe("verified");
       expect(result.requiresUserAction).toBe(false);
     });
@@ -112,10 +112,7 @@ describe("communication intent", () => {
 
     it("refuses a send dispatch from every pre-prepared phase", () => {
       for (const phase of ["armed", "navigating", "chat-verified"] as const) {
-        const current = run(intent(), [
-          { type: "NAVIGATED" },
-          { type: "CHAT_VERIFIED" },
-        ]);
+        const current = run(intent(), [{ type: "NAVIGATED" }, { type: "CHAT_VERIFIED" }]);
         const forced = { ...current, phase };
         const result = reduceIntent(forced, { type: "SEND_DISPATCHED", now: NOW }, { now: NOW });
         expect(result.intent.phase).toBe(phase);
@@ -124,9 +121,13 @@ describe("communication intent", () => {
     });
 
     it("ignores every event after a terminal phase", () => {
-      const verified = reduceIntent(sendAttempted(), { type: "SEND_OBSERVED", outgoingCount: 1 }, {
-        now: NOW,
-      }).intent;
+      const verified = reduceIntent(
+        sendAttempted(),
+        { type: "SEND_OBSERVED", outgoingCount: 1 },
+        {
+          now: NOW,
+        },
+      ).intent;
       const events: readonly IntentEvent[] = [
         { type: "NAVIGATED" },
         { type: "CHAT_VERIFIED" },
@@ -147,9 +148,13 @@ describe("communication intent", () => {
       expect(result.intent.phase).toBe("uncertain");
       expect(result.requiresUserAction).toBe(true);
       // And a further dispatch attempt still does nothing.
-      const retry = reduceIntent(result.intent, { type: "SEND_DISPATCHED", now: NOW + 1 }, {
-        now: NOW + 1,
-      });
+      const retry = reduceIntent(
+        result.intent,
+        { type: "SEND_DISPATCHED", now: NOW + 1 },
+        {
+          now: NOW + 1,
+        },
+      );
       expect(retry.intent.phase).toBe("uncertain");
     });
   });
@@ -173,9 +178,13 @@ describe("communication intent", () => {
         { type: "MESSAGE_PREPARED" },
         { type: "SEND_DISPATCHED", now: NOW },
       ]);
-      const result = reduceIntent(started, { type: "SEND_OBSERVED", outgoingCount: 2 }, {
-        now: NOW,
-      });
+      const result = reduceIntent(
+        started,
+        { type: "SEND_OBSERVED", outgoingCount: 2 },
+        {
+          now: NOW,
+        },
+      );
       expect(result.intent.phase).toBe("uncertain");
     });
 
@@ -186,9 +195,13 @@ describe("communication intent", () => {
         { type: "MESSAGE_PREPARED" },
         { type: "SEND_DISPATCHED", now: NOW },
       ]);
-      const result = reduceIntent(started, { type: "SEND_OBSERVED", outgoingCount: 3 }, {
-        now: NOW,
-      });
+      const result = reduceIntent(
+        started,
+        { type: "SEND_OBSERVED", outgoingCount: 3 },
+        {
+          now: NOW,
+        },
+      );
       expect(result.intent.phase).toBe("verified");
     });
   });

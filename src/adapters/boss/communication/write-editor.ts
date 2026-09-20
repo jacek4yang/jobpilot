@@ -23,7 +23,7 @@
  * never-send-twice guard.
  */
 
-import { isContentEditable, hasValueProperty } from "./chat-reader";
+import { hasValueProperty, isContentEditable } from "./chat-reader";
 
 /** Outcome of a write attempt. `false` is a normal, non-throwing result. */
 export interface WriteResult {
@@ -40,7 +40,9 @@ export interface WriteResult {
  * plain assignment, which is still correct for static HTML but may not notify a
  * framework — so that fallback path is reported in the result detail.
  */
-const nativeValueSetter = (element: Element): ((this: unknown, value: string) => void) | undefined => {
+const nativeValueSetter = (
+  element: Element,
+): ((this: unknown, value: string) => void) | undefined => {
   let prototype: object | null = Object.getPrototypeOf(element) as object | null;
   let depth = 0;
   while (prototype !== null && depth < 8) {
@@ -114,7 +116,8 @@ export const writeEditorText = (editor: Element | null, text: string): WriteResu
     return notified
       ? {
           ok: true,
-          detail: setter === undefined ? "written-via-plain-assignment" : "written-via-native-setter",
+          detail:
+            setter === undefined ? "written-via-plain-assignment" : "written-via-native-setter",
         }
       : { ok: false, detail: "value-written-but-event-dispatch-unavailable" };
   }

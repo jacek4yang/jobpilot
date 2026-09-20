@@ -173,9 +173,7 @@ export const createProfile = (input: CreateProfileInput): SearchProfile => ({
   ...(input.experience === undefined ? {} : { experience: input.experience }),
   ...(input.degree === undefined ? {} : { degree: input.degree }),
   ...(input.companyScales === undefined ? {} : { companyScales: input.companyScales }),
-  ...(input.recruiterActivity === undefined
-    ? {}
-    : { recruiterActivity: input.recruiterActivity }),
+  ...(input.recruiterActivity === undefined ? {} : { recruiterActivity: input.recruiterActivity }),
   ...(input.skipUnknownActivity === undefined
     ? {}
     : { skipUnknownActivity: input.skipUnknownActivity }),

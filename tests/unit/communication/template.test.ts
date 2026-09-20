@@ -28,9 +28,7 @@ const job = (overrides: Partial<JobDetail> = {}): JobDetail => ({
   description: "负责后端开发",
   requirements: [],
   skills: ["Rust"],
-  recruiters: [
-    { id: asRecruiterId("zhangsan"), name: "张三", title: "招聘经理" },
-  ],
+  recruiters: [{ id: asRecruiterId("zhangsan"), name: "张三", title: "招聘经理" }],
   capturedAt: NOW,
   ...overrides,
 });

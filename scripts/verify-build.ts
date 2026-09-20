@@ -5,7 +5,7 @@
  * Exits non-zero on any failure so CI cannot publish a broken bundle.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -43,8 +43,7 @@ const readPackageVersion = (): string => {
   return typeof raw.version === "string" ? raw.version : "unknown";
 };
 
-const sha256 = (buffer: Buffer): string =>
-  createHash("sha256").update(buffer).digest("hex");
+const sha256 = (buffer: Buffer): string => createHash("sha256").update(buffer).digest("hex");
 
 // 1. Artifact exists ---------------------------------------------------------
 let source: string;

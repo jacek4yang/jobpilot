@@ -63,16 +63,16 @@ export interface HistoryQuery {
 const matchesText = (record: JobHistoryRecord, needle: string): boolean => {
   const text = needle.trim().toLowerCase();
   if (text.length === 0) return true;
-  return (
-    record.title.toLowerCase().includes(text) || record.company.toLowerCase().includes(text)
-  );
+  return record.title.toLowerCase().includes(text) || record.company.toLowerCase().includes(text);
 };
 
 export interface JobHistory {
   /** Records or updates an entry, preserving `firstSeenAt`. */
-  record(entry: Omit<JobHistoryRecord, "firstSeenAt" | "lastProcessedAt"> & {
-    readonly now: number;
-  }): JobHistoryRecord;
+  record(
+    entry: Omit<JobHistoryRecord, "firstSeenAt" | "lastProcessedAt"> & {
+      readonly now: number;
+    },
+  ): JobHistoryRecord;
   get(jobId: JobId): JobHistoryRecord | undefined;
   /** Job ids that must not be contacted again. */
   blockedJobIds(): ReadonlySet<string>;
@@ -95,12 +95,8 @@ const emptyCounts = (): Record<HistoryOutcome, number> => ({
   uncertain: 0,
 });
 
-export const createJobHistory = (
-  initial: readonly JobHistoryRecord[] = [],
-): JobHistory => {
-  let records = new Map<string, JobHistoryRecord>(
-    initial.map((record) => [record.jobId, record]),
-  );
+export const createJobHistory = (initial: readonly JobHistoryRecord[] = []): JobHistory => {
+  let records = new Map<string, JobHistoryRecord>(initial.map((record) => [record.jobId, record]));
 
   return {
     record(entry) {
@@ -274,10 +270,7 @@ export const emptyStatistics: Statistics = {
 };
 
 /** Derives the contacted count for a day from history, for daily limits. */
-export const contactedSince = (
-  records: readonly JobHistoryRecord[],
-  since: number,
-): number =>
+export const contactedSince = (records: readonly JobHistoryRecord[], since: number): number =>
   records.filter(
     (record) =>
       (record.outcome === "contacted" || record.outcome === "uncertain") &&

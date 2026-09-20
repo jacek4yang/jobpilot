@@ -11,7 +11,9 @@ const NOW = 1_700_000_000_000;
 const platform = asPlatformId("boss");
 const jobId = asJobId("job-1");
 
-const entry = (overrides: Partial<Parameters<ReturnType<typeof createJobHistory>["record"]>[0]> = {}) => ({
+const entry = (
+  overrides: Partial<Parameters<ReturnType<typeof createJobHistory>["record"]>[0]> = {},
+) => ({
   jobId,
   platform,
   title: "Backend Engineer",
@@ -218,7 +220,13 @@ describe("job history", () => {
           lastProcessedAt: NOW,
         },
         { jobId: "b" },
-        { jobId: "c", platform: "boss", outcome: "nonsense", firstSeenAt: NOW, lastProcessedAt: NOW },
+        {
+          jobId: "c",
+          platform: "boss",
+          outcome: "nonsense",
+          firstSeenAt: NOW,
+          lastProcessedAt: NOW,
+        },
         null,
       ]);
       expect(result.records).toHaveLength(1);

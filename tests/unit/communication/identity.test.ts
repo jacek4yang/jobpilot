@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  type ChatIdentity,
   countOutgoingMessages,
   isSameConversation,
-  type ChatIdentity,
   matchChatIdentity,
   normalizeIdentityText,
   normalizeMessageText,
@@ -42,7 +42,10 @@ describe("chat identity matching", () => {
     });
 
     it("rejects when the conversation carries a different job id", () => {
-      const verdict = matchChatIdentity({ jobId: "abc123" }, chat("Backend Engineer", ["other999"]));
+      const verdict = matchChatIdentity(
+        { jobId: "abc123" },
+        chat("Backend Engineer", ["other999"]),
+      );
       expect(verdict.kind).toBe("mismatch");
       if (verdict.kind === "mismatch") expect(verdict.reason).toContain("abc123");
     });
@@ -64,10 +67,7 @@ describe("chat identity matching", () => {
 
   describe("text-only matching", () => {
     it("requires corroboration beyond the title", () => {
-      const verdict = matchChatIdentity(
-        { title: "Backend Engineer" },
-        chat("Backend Engineer"),
-      );
+      const verdict = matchChatIdentity({ title: "Backend Engineer" }, chat("Backend Engineer"));
       expect(verdict.kind).toBe("insufficient");
     });
 

@@ -109,7 +109,10 @@ export interface PanelViewModel {
   readonly running: boolean;
   readonly paused: boolean;
 
-  readonly message?: { readonly tone: "info" | "warn" | "error" | "success"; readonly text: string };
+  readonly message?: {
+    readonly tone: "info" | "warn" | "error" | "success";
+    readonly text: string;
+  };
   readonly blocked?: BlockedView;
   readonly current?: CurrentItemView;
   readonly decisions: readonly PendingDecisionView[];

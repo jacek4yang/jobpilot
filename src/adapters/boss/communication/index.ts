@@ -29,40 +29,40 @@ export {
   isContentEditable,
   isEditorEmpty,
   isFailedOutgoing,
+  type ModalClassification,
+  type RiskEvidence,
   readChatIdentity,
   readCommonPhrasePanelText,
   readEditorText,
   readHeaderText,
   readOutgoingMessageBodies,
-  type ModalClassification,
-  type RiskEvidence,
 } from "./chat-reader";
-
 export {
-  createCommunicationAction,
-  evaluateGuards,
-  findActiveDetailRoot,
-  findConversationRoot,
-  isChatEditorEmpty,
-  readCommonPhrases,
   type ActionOptions,
   type BlockedResult,
   type CommunicationAction,
   type CommunicationActionDeps,
+  createCommunicationAction,
   type DispatchResult,
+  evaluateGuards,
+  findActiveDetailRoot,
+  findConversationRoot,
+  isChatEditorEmpty,
   type ObserveResult,
   type PrepareResult,
+  readCommonPhrases,
 } from "./communication-action";
+export { isPlausibleJobId } from "./job-id";
 
 export {
-  COMMUNICATION_SELECTORS,
   COMMUNICATION_SELECTOR_KEYS,
+  COMMUNICATION_SELECTORS,
+  type CommunicationSelectorKey,
   communicationSelectorEntries,
   isHeuristic,
   normalizeText,
   queryAll,
   queryFirst,
-  type CommunicationSelectorKey,
 } from "./selectors";
 
-export { writeEditorText, type WriteResult } from "./write-editor";
+export { type WriteResult, writeEditorText } from "./write-editor";

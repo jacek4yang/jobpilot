@@ -42,11 +42,7 @@ export type IdentityVerdict =
  * and the same company would normalise two different ways depending on which
  * legal form is displayed.
  */
-const COMPANY_SUFFIXES: readonly string[] = [
-  "股份有限公司",
-  "有限责任公司",
-  "有限公司",
-];
+const COMPANY_SUFFIXES: readonly string[] = ["股份有限公司", "有限责任公司", "有限公司"];
 
 /**
  * Normalises text for identity comparison.
@@ -168,10 +164,7 @@ export const matchChatIdentity = (
  * Used to abort a transaction when the user (or the SPA) moves the chat
  * underneath an in-flight action.
  */
-export const isSameConversation = (
-  previous: ChatIdentity,
-  current: ChatIdentity,
-): boolean => {
+export const isSameConversation = (previous: ChatIdentity, current: ChatIdentity): boolean => {
   const sameIds =
     previous.jobIds.length === 0 ||
     current.jobIds.length === 0 ||
@@ -191,10 +184,7 @@ export const isSameConversation = (
  * Messages that failed to send must be excluded by the caller before calling
  * this, which is why this function takes plain strings.
  */
-export const countOutgoingMessages = (
-  outgoingBodies: readonly string[],
-  text: string,
-): number => {
+export const countOutgoingMessages = (outgoingBodies: readonly string[], text: string): number => {
   const expected = normalizeMessageText(text);
   if (expected.length === 0) return 0;
   return outgoingBodies.filter((body) => normalizeMessageText(body) === expected).length;

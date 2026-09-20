@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ACTIVITY_PREFERENCES,
-  COMPANY_SCALES,
-  createProfile,
-  DEGREE_LEVELS,
-  duplicateProfile,
-  EXPERIENCE_BANDS,
-} from "../../../src/domain/search-profile/profile";
-import {
   isKnownCity,
   listCityNames,
   NATIONWIDE_CITY_CODE,
@@ -15,8 +7,16 @@ import {
   resolveCityCode,
   resolveCityCodes,
 } from "../../../src/adapters/boss/data/city-resolver";
-import { createMemoryLock, DEFAULT_LOCK_TTL_MS } from "../../../src/ports/lock";
+import {
+  ACTIVITY_PREFERENCES,
+  COMPANY_SCALES,
+  createProfile,
+  DEGREE_LEVELS,
+  duplicateProfile,
+  EXPERIENCE_BANDS,
+} from "../../../src/domain/search-profile/profile";
 import type { Clock } from "../../../src/domain/support/shared";
+import { createMemoryLock, DEFAULT_LOCK_TTL_MS } from "../../../src/ports/lock";
 
 const NOW = 1_700_000_000_000;
 

@@ -9,8 +9,9 @@
  * supports it, falling back to a scoped `.jobpilot-root` element. Either way
  * the host page's styles cannot reach in and JobPilot's cannot leak out.
  */
-import type { PanelTab, PanelViewModel, UiCallbacks } from "./view-model";
+
 import { PANEL_CSS } from "./styles";
+import type { PanelTab, PanelViewModel, UiCallbacks } from "./view-model";
 
 export interface PanelOptions {
   readonly document: Document;
@@ -72,9 +73,7 @@ export const createPanel = (options: PanelOptions): Panel => {
   host.style.setProperty("position", "static", "important");
 
   const useShadow = typeof host.attachShadow === "function";
-  const root: ShadowRoot | HTMLElement = useShadow
-    ? host.attachShadow({ mode: "open" })
-    : host;
+  const root: ShadowRoot | HTMLElement = useShadow ? host.attachShadow({ mode: "open" }) : host;
 
   const style = doc.createElement("style");
   style.textContent = PANEL_CSS;

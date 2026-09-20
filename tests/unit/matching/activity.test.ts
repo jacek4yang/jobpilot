@@ -112,9 +112,9 @@ describe("recruiter activity", () => {
     });
 
     it("skips an inactive recruiter even under the loosest preference", () => {
-      expect(
-        evaluateActivity(parseActivityLabel("半年前活跃"), "within_30_days", true).kind,
-      ).toBe("skip");
+      expect(evaluateActivity(parseActivityLabel("半年前活跃"), "within_30_days", true).kind).toBe(
+        "skip",
+      );
     });
 
     it("reports unknown activity distinctly rather than silently passing", () => {

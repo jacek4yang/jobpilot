@@ -10,12 +10,12 @@
 
 import { expect, test } from "@playwright/test";
 import {
-  GUARDED_ORIGIN,
-  HOST_MAPPING_ARGS,
-  MISSING_BUILD_MESSAGE,
   existingFixtures,
+  HOST_MAPPING_ARGS,
   isBuildPresent,
   loadHarness,
+  MISSING_BUILD_MESSAGE,
+  SERVER_ORIGIN,
 } from "./harness";
 
 // Alias the hostname the adapter's guard accepts onto loopback for THIS spec.
@@ -62,17 +62,25 @@ test.describe("fixture harness smoke", () => {
   });
 
   test("serves the built userscript with a JavaScript content type", async ({ request }) => {
-    const response = await request.get(`${GUARDED_ORIGIN}/jobpilot.user.js`, {
-      headers: { Host: "www.zhipin.com" },
-    });
+    // `request` runs in Node, so it cannot use the browser's resolver alias.
+    // The server accepts the loopback Host directly, which is what we want here:
+    // this test is about the *server*, not the browser.
+    const response = await request.get(`${SERVER_ORIGIN}/jobpilot.user.js`);
     expect(response.status()).toBe(200);
     expect(response.headers()["content-type"]).toContain("application/javascript");
   });
 
   test("rejects fixture names that attempt path traversal", async ({ request }) => {
-    const response = await request.get(`${GUARDED_ORIGIN}/fixtures/..%2F..%2Fpackage.json`, {
-      headers: { Host: "www.zhipin.com" },
-    });
+    const response = await request.get(`${SERVER_ORIGIN}/fixtures/..%2F..%2Fpackage.json`);
     expect(response.status()).toBe(404);
+    // The traversal must not have leaked repository content.
+    expect(await response.text()).not.toContain('"name": "jobpilot"');
+  });
+
+  test("rejects an unrecognised Host header", async ({ request }) => {
+    const response = await request.get(`${SERVER_ORIGIN}/health`, {
+      headers: { Host: "evil.example.com" },
+    });
+    expect(response.status()).toBe(421);
   });
 });

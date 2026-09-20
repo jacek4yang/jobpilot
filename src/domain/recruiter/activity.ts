@@ -82,11 +82,21 @@ const LABEL_PATTERNS: readonly {
   },
   {
     pattern: /^(?:近期|最近|长期未|很久未|半年前|一年前)(?:活跃|在线)$/,
-    build: (label) => ({ label, recency: "inactive", days: Number.POSITIVE_INFINITY, online: false }),
+    build: (label) => ({
+      label,
+      recency: "inactive",
+      days: Number.POSITIVE_INFINITY,
+      online: false,
+    }),
   },
   {
     pattern: /^(?:离线|不在线|不活跃)$/,
-    build: (label) => ({ label, recency: "inactive", days: Number.POSITIVE_INFINITY, online: false }),
+    build: (label) => ({
+      label,
+      recency: "inactive",
+      days: Number.POSITIVE_INFINITY,
+      online: false,
+    }),
   },
 ];
 
@@ -104,7 +114,9 @@ const bandForDays = (days: number): ActivityRecency => {
  * Returns `undefined` for anything that is not exactly a known activity label,
  * so prose such as "我们希望你一周内到岗" cannot be mistaken for activity.
  */
-export const parseActivityLabel = (raw: string | undefined | null): RecruiterActivity | undefined => {
+export const parseActivityLabel = (
+  raw: string | undefined | null,
+): RecruiterActivity | undefined => {
   if (raw === undefined || raw === null) return undefined;
   // Collapse internal whitespace: BOSS renders some labels with stray spaces.
   const label = raw.replace(/\s+/g, "").trim();
@@ -143,7 +155,9 @@ export const pickMostConservativeActivity = (
 };
 
 /** Days allowed by each preference. `online` is handled separately. */
-const PREFERENCE_LIMIT_DAYS: Readonly<Record<Exclude<ActivityPreference, "any" | "online">, number>> = {
+const PREFERENCE_LIMIT_DAYS: Readonly<
+  Record<Exclude<ActivityPreference, "any" | "online">, number>
+> = {
   today: 0,
   within_3_days: 3,
   within_7_days: 7,

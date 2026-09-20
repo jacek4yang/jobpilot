@@ -32,10 +32,10 @@
  * `http://127.0.0.1:43117/health`, so both host forms must be served.
  */
 
-import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = 43117;
 const HOST = "127.0.0.1";

@@ -13,8 +13,8 @@
 
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import path from "node:path";
-import { expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 
 /** Port/host the fixture server binds (must match `server.mjs`). */
 export const SERVER_ORIGIN = "http://127.0.0.1:43117";
@@ -94,15 +94,39 @@ export const existingFixtures = (): readonly string[] => KNOWN_FIXTURES.filter(f
 /**
  * Playwright selectors for JobPilot's own mounted UI.
  *
- * Sourced from `src/ui/panel.ts`, which creates a root `div.jobpilot-root`.
- * Kept here so a panel rename is a single-file change.
+ * IMPORTANT — the panel lives in an open Shadow DOM.
+ * `src/ui/panel.ts` creates a host element `div[data-jobpilot-host]`, attaches
+ * `attachShadow({ mode: "open" })`, and renders everything inside it. Playwright's
+ * CSS engine pierces *open* shadow roots for descendant combinators, so the
+ * selectors below work from the page level without explicit shadow traversal.
+ * If a selector ever stops matching, verify against the real shadow tree first —
+ * `panel.ts` was refactored once already (the old `.jobpilot-badge` readout was
+ * replaced by `.jobpilot-dot`), and guessing at class names wastes a CI cycle.
+ *
+ * Panel structure (verified against the built bundle):
+ *   div[data-jobpilot-host]        <- host, `all: initial` to isolate from host CSS
+ *     #shadow-root
+ *       style
+ *       .jobpilot-launcher          <- collapsed-state pill (hidden when expanded)
+ *       .jobpilot-root              <- the panel, `display:flex` when expanded
+ *         .jobpilot-header > .jobpilot-title
+ *         .jobpilot-dot[data-state] <- the state readout
+ *         .jobpilot-tabs > .jobpilot-tab
+ *         .jobpilot-actions > button.jobpilot-btn (Start/Pause/Resume/Skip/Stop)
+ *
+ * A `.jobpilot-hidden` class (`display: none !important`) marks the collapsed
+ * element, so visibility assertions are meaningful.
  */
+export const PANEL_HOST = "[data-jobpilot-host]";
 export const PANEL_ROOT = ".jobpilot-root";
-export const PANEL_BADGE = ".jobpilot-root .jobpilot-badge";
-export const PANEL_MESSAGE = ".jobpilot-root .jobpilot-message";
-export const PANEL_START = '.jobpilot-root button.jobpilot-btn:has-text("Start")';
-export const PANEL_STOP = '.jobpilot-root button.jobpilot-btn:has-text("Stop")';
-export const PANEL_ACTIONS = ".jobpilot-root .jobpilot-actions";
+/** State readout. `data-state` mirrors the controller's state machine. */
+export const PANEL_DOT = ".jobpilot-dot";
+export const PANEL_TITLE = ".jobpilot-title";
+export const PANEL_ACTIONS = ".jobpilot-actions";
+export const PANEL_LAUNCHER = ".jobpilot-launcher";
+export const PANEL_START = '.jobpilot-actions button.jobpilot-btn:has-text("Start")';
+export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn:has-text("Pause")';
+export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn:has-text("Stop")';
 
 /** Panel states that mean "actively driving the page". */
 export const RUNNING_STATES = [
@@ -148,7 +172,7 @@ export interface LoadHarnessOptions {
  * for the userscript's deterministic load signal.
  *
  * Synchronisation uses the `jobpilot:userscript-loaded` event and
- * `expect.poll`, never `waitForTimeout`.
+ * `expect.poll` (in the specs), never `waitForTimeout`.
  */
 export const loadHarness = async (
   page: Page,
@@ -214,13 +238,114 @@ export const loadHarness = async (
  * Waits until JobPilot has mounted its panel, or resolves `false` on timeout.
  *
  * Bootstrap is async (config load -> panel creation), so the panel is not
- * guaranteed to exist the instant the script finishes executing.
+ * guaranteed to exist the instant the script finishes executing. The host
+ * element is the mount signal because it is appended synchronously by
+ * `bootstrap()` once the repository has loaded.
  */
 export const waitForPanel = async (page: Page, timeoutMs = 10_000): Promise<boolean> => {
   try {
-    await page.locator(PANEL_ROOT).first().waitFor({ state: "attached", timeout: timeoutMs });
+    await page.locator(PANEL_HOST).first().waitFor({ state: "attached", timeout: timeoutMs });
     return true;
   } catch {
     return false;
   }
 };
+
+/** A snapshot of the panel's observable state, read through the shadow root. */
+export interface PanelSnapshot {
+  /** Whether the shadow host exists at all. */
+  readonly mounted: boolean;
+  /** `data-state` of the state dot, or null when unmounted. */
+  readonly state: string | null;
+  /** Whether `.jobpilot-root` is rendered (not carrying `.jobpilot-hidden`). */
+  readonly expanded: boolean;
+  /** Button label -> disabled flag, for the action row. */
+  readonly buttons: Readonly<Record<string, boolean>>;
+}
+
+/**
+ * Reads the panel's state directly from the shadow tree.
+ *
+ * Used where a test needs the *value* of the state machine rather than a
+ * visibility assertion, and where going through Playwright's shadow-piercing
+ * CSS would make the intent less obvious.
+ */
+export const readPanelState = async (page: Page): Promise<PanelSnapshot> =>
+  page.evaluate(() => {
+    const host = document.querySelector("[data-jobpilot-host]");
+    const root = host?.shadowRoot ?? null;
+    if (host === null || root === null) {
+      return { mounted: false, state: null, expanded: false, buttons: {} };
+    }
+    const panelEl = root.querySelector(".jobpilot-root");
+    const buttons: Record<string, boolean> = {};
+    for (const button of Array.from(root.querySelectorAll("button.jobpilot-btn"))) {
+      buttons[(button.textContent ?? "").trim()] = (button as HTMLButtonElement).disabled;
+    }
+    return {
+      mounted: true,
+      state: root.querySelector(".jobpilot-dot")?.getAttribute("data-state") ?? null,
+      expanded: panelEl !== null && !panelEl.classList.contains("jobpilot-hidden"),
+      buttons,
+    };
+  });
+
+/**
+ * Installs a capture-phase recorder for every synthetic activation the page sees.
+ *
+ * Must run before the userscript executes (via `addInitScript`) so nothing is
+ * missed. Also patches `HTMLElement.prototype.click` because a programmatic
+ * click would otherwise be indistinguishable from a real one in some flows, and
+ * we want an unmissable record of any automated interaction.
+ *
+ * Returns a reader bound to the page; call it with `reset: true` to clear the
+ * log after a deliberate user action.
+ */
+export const installActivationRecorder = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    const record: Array<{ type: string; target: string }> = [];
+    (globalThis as unknown as { __jobpilotActivations: typeof record }).__jobpilotActivations =
+      record;
+
+    const describe = (target: EventTarget | null): string => {
+      if (!(target instanceof Element)) return String(target);
+      const id = target.id === "" ? "" : `#${target.id}`;
+      const cls =
+        typeof target.className === "string" && target.className.trim() !== ""
+          ? `.${target.className.trim().split(/\s+/).join(".")}`
+          : "";
+      return `${target.tagName.toLowerCase()}${id}${cls}`;
+    };
+
+    for (const type of ["click", "mousedown", "mouseup", "pointerdown", "submit"]) {
+      document.addEventListener(
+        type,
+        (event) => {
+          record.push({ type, target: describe(event.target) });
+        },
+        { capture: true },
+      );
+    }
+
+    const originalClick = HTMLElement.prototype.click;
+    HTMLElement.prototype.click = function patchedClick(this: HTMLElement) {
+      record.push({ type: "HTMLElement.click()", target: describe(this) });
+      return originalClick.call(this);
+    };
+  });
+};
+
+/** Reads (and optionally clears) the activation log installed above. */
+export const readActivations = async (
+  page: Page,
+  options: { reset?: boolean } = {},
+): Promise<ReadonlyArray<{ type: string; target: string }>> =>
+  page.evaluate((reset) => {
+    const log = (
+      globalThis as unknown as { __jobpilotActivations?: Array<{ type: string; target: string }> }
+    ).__jobpilotActivations;
+    if (log === undefined) return [];
+    const snapshot = [...log];
+    if (reset) log.length = 0;
+    return snapshot;
+  }, options.reset ?? false);

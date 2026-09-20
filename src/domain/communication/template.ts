@@ -40,7 +40,11 @@ export interface TemplateContext {
 
 export type RenderResult =
   | { readonly ok: true; readonly text: string; readonly usedVariables: readonly string[] }
-  | { readonly ok: false; readonly reason: "empty" | "missing-variable" | "unknown-variable"; readonly detail: string };
+  | {
+      readonly ok: false;
+      readonly reason: "empty" | "missing-variable" | "unknown-variable";
+      readonly detail: string;
+    };
 
 const VARIABLE_PATTERN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
 
@@ -200,7 +204,8 @@ export const TEMPLATE_PRESETS: readonly TemplatePreset[] = [
   {
     id: "role-specific",
     name: "Role-specific greeting",
-    content: "您好，我看到{{company}}正在招聘{{jobTitle}}，我的经历与该岗位比较匹配，希望有机会详聊。",
+    content:
+      "您好，我看到{{company}}正在招聘{{jobTitle}}，我的经历与该岗位比较匹配，希望有机会详聊。",
     description: "Mentions the role and the company.",
   },
   {

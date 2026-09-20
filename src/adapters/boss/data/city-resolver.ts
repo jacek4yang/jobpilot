@@ -117,7 +117,11 @@ export const resolveCityCode = (input: string): CityResolution => {
 export const resolveCityCodes = (
   inputs: readonly string[],
 ): {
-  readonly resolved: readonly { readonly input: string; readonly code: string; readonly name: string }[];
+  readonly resolved: readonly {
+    readonly input: string;
+    readonly code: string;
+    readonly name: string;
+  }[];
   readonly failed: readonly CityResolution[];
 } => {
   const resolved: { input: string; code: string; name: string }[] = [];
