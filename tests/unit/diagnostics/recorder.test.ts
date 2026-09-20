@@ -15,6 +15,7 @@ import {
   isSessionOpen,
   localDateDirectory,
   newSessionId,
+  sanitizeFileNamePart,
   startSession,
 } from "../../../src/diagnostics/session";
 
@@ -393,5 +394,59 @@ describe("redaction", () => {
     let nested: Record<string, unknown> = { end: true };
     for (let i = 0; i < 20; i += 1) nested = { nested };
     expect(JSON.stringify(redactDiagnostic(nested))).toContain("depth-limit");
+  });
+});
+
+describe("filename safety", () => {
+  /**
+   * Regression: `sanitizeFileNamePart` allowed Windows reserved device names
+   * through unchanged. The bundled name always carries a prefix so this was not
+   * reachable via `bundleFileName`, but the helper's contract is that its
+   * output is a safe path segment, and it was not.
+   */
+  const RESERVED = ["CON", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9", "con", "nul"];
+
+  for (const name of RESERVED) {
+    it(`neutralises the reserved name ${name}`, () => {
+      const sanitized = sanitizeFileNamePart(name);
+      expect(/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(sanitized)).toBe(false);
+    });
+  }
+
+  it("strips path traversal", () => {
+    const sanitized = sanitizeFileNamePart("../../etc/passwd");
+    expect(sanitized).not.toContain("..");
+    expect(sanitized).not.toContain("/");
+    expect(sanitized).not.toContain("\\");
+  });
+
+  it("strips separators and drive letters", () => {
+    expect(sanitizeFileNamePart("C:Windowssystem32")).not.toContain(":");
+    expect(sanitizeFileNamePart("a/b")).not.toContain("/");
+  });
+
+  it("removes leading and trailing dots", () => {
+    // Windows silently trims a trailing dot, so the file would not match the
+    // name the operator was told to expect.
+    expect(sanitizeFileNamePart(".hidden.")).toBe("hidden");
+  });
+
+  it("falls back to a name rather than an empty string", () => {
+    expect(sanitizeFileNamePart("")).toBe("unnamed");
+    // Dots are replaced before trimming, so this yields a safe placeholder
+    // rather than hitting the empty-string fallback. What matters is that it is
+    // a usable, non-empty segment.
+    const dots = sanitizeFileNamePart("...");
+    expect(dots.length).toBeGreaterThan(0);
+    expect(dots).not.toContain(".");
+  });
+
+  it("bounds the length", () => {
+    expect(sanitizeFileNamePart("x".repeat(500)).length).toBeLessThanOrEqual(64);
+  });
+
+  it("leaves an ordinary scenario id alone", () => {
+    expect(sanitizeFileNamePart("T60")).toBe("T60");
+    expect(sanitizeFileNamePart("T100-two-job-batch")).toBe("T100-two-job-batch");
   });
 });

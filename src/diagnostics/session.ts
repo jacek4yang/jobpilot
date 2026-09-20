@@ -73,6 +73,17 @@ export const newSessionId = (now: number, random: () => number = Math.random): s
 };
 
 /**
+ * Windows reserved device names.
+ *
+ * A file called `CON`, `PRN`, `AUX`, `NUL`, `COM1`..`COM9` or `LPT1`..`LPT9`
+ * (with or without an extension) cannot be created on Windows at all. The
+ * bundled filename always carries a prefix, so this is not currently reachable
+ * through `bundleFileName`, but `sanitizeFileNamePart` is a general helper and
+ * its contract is that its output is a safe path segment.
+ */
+const WINDOWS_RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+/**
  * Makes an arbitrary string safe to embed in a filename.
  *
  * Rejects anything outside a conservative allowlist rather than trying to strip
@@ -86,7 +97,11 @@ export const newSessionId = (now: number, random: () => number = Math.random): s
 export const sanitizeFileNamePart = (value: string): string => {
   const cleaned = value.replace(/[^A-Za-z0-9._-]/g, "_").replace(/\.{2,}/g, "_");
   const trimmed = cleaned.replace(/^[.-]+/, "").replace(/[.-]+$/, "");
-  return trimmed.length > 0 ? trimmed.slice(0, 64) : "unnamed";
+  if (trimmed.length === 0) return "unnamed";
+  // A reserved device name becomes usable by suffixing, which is the standard
+  // workaround and keeps the original text recognisable.
+  const safe = WINDOWS_RESERVED.test(trimmed) ? `${trimmed}_file` : trimmed;
+  return safe.slice(0, 64);
 };
 
 /**
