@@ -184,7 +184,16 @@ test.describe("JobPilot panel on a job-list fixture", () => {
 
     // Classifying the page as a CAPTCHA is a *detection* result, not on its own
     // proof that automation stopped — `safety.spec.ts` asserts the stopping.
-    // Here we only pin that detection is wired through to the UI.
-    expect(snapshot.state, "panel must not be running on a CAPTCHA page").toBe("idle");
+    // Here we pin that detection is wired through to the UI.
+    //
+    // The state is now `paused` rather than `idle`, because detecting a
+    // challenge actively blocks and pauses rather than sitting idle. That is
+    // the stronger outcome, and asserting it also proves the detection reached
+    // the panel rather than merely being computed.
+    expect(
+      RUNNING_STATES,
+      `panel must not be running on a CAPTCHA page, was "${snapshot.state}"`,
+    ).not.toContain(snapshot.state);
+    expect(["paused", "blocked", "failed"]).toContain(snapshot.state);
   });
 });

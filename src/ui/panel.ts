@@ -164,12 +164,17 @@ export const createPanel = (options: PanelOptions): Panel => {
   skipBtn.type = "button";
   skipBtn.addEventListener("click", () => callbacks.skipCurrent());
 
+  const recheckBtn = el(doc, "button", "jobpilot-btn", "Re-check");
+  recheckBtn.type = "button";
+  recheckBtn.setAttribute("data-action", "recheck");
+  recheckBtn.addEventListener("click", () => callbacks.recheck());
+
   const stopBtn = el(doc, "button", "jobpilot-btn", "Stop");
   stopBtn.type = "button";
   stopBtn.setAttribute("data-variant", "danger");
   stopBtn.addEventListener("click", () => callbacks.stop());
 
-  actions.append(discoverBtn, startBtn, pauseBtn, resumeBtn, skipBtn, stopBtn);
+  actions.append(discoverBtn, startBtn, pauseBtn, resumeBtn, recheckBtn, skipBtn, stopBtn);
 
   panelEl.append(header, tabBar, body, actions);
   root.append(launcher, panelEl);

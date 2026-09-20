@@ -27,6 +27,8 @@ export interface UiCallbacks {
   readonly start: () => void;
   readonly pause: () => void;
   readonly resume: () => void;
+  /** Step one of human-verification recovery: validate the page, do not resume. */
+  readonly recheck: () => void;
   readonly skipCurrent: () => void;
   readonly stop: () => void;
   readonly setCollapsed: (collapsed: boolean) => void;

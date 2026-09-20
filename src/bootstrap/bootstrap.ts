@@ -25,13 +25,18 @@ import {
 } from "../application/discovery";
 import { evaluateSendGates } from "../application/gates";
 import { createApplicationHistory } from "../application/history";
-import { createVerificationController } from "../application/human-verification";
+import {
+  createVerificationController,
+  VERIFICATION_MESSAGE,
+  type VerificationKind,
+} from "../application/human-verification";
 import { createOrchestrator } from "../application/orchestrator";
 import { toDomainProfile } from "../application/profile-mapping";
 import { createRepository } from "../application/repository";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import { EVENTS } from "../diagnostics/event";
 import { traceStorage } from "../diagnostics/trace";
 import type { CommunicationIntent } from "../domain/communication/intent";
 import { createTemplate } from "../domain/communication/template";
@@ -248,10 +253,87 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
           return;
         }
+        if (verification.isBlocked()) {
+          panel.toast(
+            "warn",
+            "BOSS is asking for manual verification. Complete it, then press Re-check Page.",
+          );
+          return;
+        }
+        deps.recorder.record({
+          level: "info",
+          category: "user-action",
+          event: EVENTS.userStart,
+        });
         controller?.dispatch({ type: "START" });
       },
-      pause: () => controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } }),
-      resume: () => controller?.dispatch({ type: "RESUME" }),
+      recheck: () => {
+        // Step one of the two-step recovery. This VALIDATES and reports; it
+        // never resumes. Resuming is a separate, explicit user action.
+        const pageKind = deps.platform.detectPage();
+        const result = verification.recheck(
+          {
+            pageKind,
+            loginValid: pageKind !== "login-required",
+            riskPresent: pageKind === "captcha" || pageKind === "unknown",
+            expectedRoute:
+              pageKind === "job-list" || pageKind === "job-detail" || pageKind === "empty-result",
+            storageHealthy: tracedStorage.health().healthy,
+            isQueueOwner: isOwner,
+          },
+          deps.clock.now(),
+        );
+        panel.toast(
+          result.result.ok ? "success" : "warn",
+          result.result.ok
+            ? "The page looks safe. Press Resume when you are ready."
+            : result.result.detail,
+        );
+        render();
+      },
+      pause: () => {
+        deps.recorder.record({
+          level: "info",
+          category: "user-action",
+          event: EVENTS.userPause,
+        });
+        controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
+      },
+      resume: () => {
+        // The two-step recovery is enforced HERE, at the only place resume can
+        // be triggered. A challenge disappearing is not sufficient: the user
+        // must have re-checked the page and been told it is safe.
+        const state = verification.state();
+        if (state.phase === "blocked" || state.phase === "still-blocked") {
+          deps.recorder.warnEvent("risk", EVENTS.humanVerificationRecheck, {
+            detail: "resume refused: the page has not been re-checked",
+            phase: state.phase,
+          });
+          panel.toast(
+            "warn",
+            state.phase === "still-blocked"
+              ? `JobPilot cannot resume yet: ${state.lastCheckDetail ?? "a challenge is still present"}.`
+              : "Complete the verification in the page, then press Re-check Page.",
+          );
+          return;
+        }
+        if (state.phase === "ready") {
+          // The user has re-checked and been told it is safe; this press is the
+          // explicit confirmation the flow requires.
+          verification.clear(deps.clock.now());
+          deps.recorder.record({
+            level: "info",
+            category: "user-action",
+            event: EVENTS.userCompletedVerification,
+          });
+        }
+        deps.recorder.record({
+          level: "info",
+          category: "user-action",
+          event: EVENTS.userResume,
+        });
+        controller?.dispatch({ type: "RESUME" });
+      },
       skipCurrent: () => {
         deps.logger.info("panel", "skip requested");
         controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
@@ -620,15 +702,58 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
    * whether JobPilot recognises the page cannot tell whether it is safe to
    * start it.
    */
+  /**
+   * Maps a detected page onto a verification kind.
+   *
+   * Returns undefined for a page JobPilot can work with, so the caller only
+   * blocks on a genuine challenge rather than on every unknown layout.
+   */
+  const verificationKindFor = (kind: string): VerificationKind | undefined => {
+    switch (kind) {
+      case "captcha":
+        return "captcha";
+      case "login-required":
+        return "login-required";
+      case "unknown":
+        return "unknown-modal";
+      default:
+        return undefined;
+    }
+  };
+
   const refreshPageKind = (): void => {
     try {
       const kind = deps.platform.detectPage();
       if (kind === currentPageKind) return;
       currentPageKind = kind;
       deps.logger.debug("bootstrap", "page kind", { kind });
+
+      // Entering a challenge from ANY previous state blocks automation and
+      // stops any running work. This is the entry point for the human
+      // verification flow; without it the controller would never leave
+      // `clear` and the block would only exist in tests.
+      const challenge = verificationKindFor(kind);
+      if (challenge !== undefined) {
+        if (!verification.isBlocked()) {
+          verification.block(challenge, deps.clock.now());
+          controller?.dispatch({
+            type: "PAUSE",
+            reason:
+              challenge === "captcha"
+                ? { kind: "captcha", evidence: "page detected as a CAPTCHA" }
+                : challenge === "login-required"
+                  ? { kind: "login-expired", evidence: "page detected as a login wall" }
+                  : { kind: "unknown-dom", evidence: "page could not be classified" },
+          });
+          panel.toast("warn", `${VERIFICATION_MESSAGE[challenge]} Then press Re-check Page.`);
+        }
+      }
+
       render();
     } catch (error) {
-      deps.logger.error("bootstrap", "page detection failed", { error });
+      deps.recorder.errorEvent("bootstrap", "bootstrap.page_detection_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
