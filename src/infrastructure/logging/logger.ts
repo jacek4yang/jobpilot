@@ -7,9 +7,10 @@
  *   message content can never be persisted, exported or rendered.
  * - Zero telemetry: nothing is ever sent anywhere. The buffer is local-only.
  */
+
+import type { Clock } from "../../domain/support/shared";
 import type { LogEntry, Logger, LogLevel } from "../../ports/logger";
 import { redact } from "../../ports/logger";
-import type { Clock } from "../../domain/support/shared";
 
 export interface LoggerOptions {
   readonly clock: Clock;

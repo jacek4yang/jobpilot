@@ -1,13 +1,13 @@
-import type { Evaluation, RuleContext, RuleEngineConfig } from "../domain/rule";
 import type { RuleEngine } from "../domain/engine";
+import type { Evaluation, RuleContext, RuleEngineConfig } from "../domain/rule";
 import type { Clock, Random } from "../domain/support/shared";
+import { evaluateSessionLimits, nextDelayMs } from "../infrastructure/rate-limit/rate-limiter";
 import type { BlockReason, JobPlatform, PageKind } from "../ports/job-platform";
 import type { Logger } from "../ports/logger";
 import type { Storage } from "../ports/storage";
 import type { Effect } from "./events";
-import type { AutomationContext, PauseReason } from "./state";
 import type { ApplicationHistory } from "./history";
-import { evaluateSessionLimits, nextDelayMs } from "../infrastructure/rate-limit/rate-limiter";
+import type { AutomationContext, PauseReason } from "./state";
 
 /**
  * Collaborators the orchestrator needs. Passed explicitly (constructor-style
@@ -148,7 +148,12 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
           // Fail closed before touching the DOM.
           deps.dispatch({
             type: "BLOCKED",
-            reason: pageKind === "captcha" ? "captcha" : pageKind === "login-required" ? "login-expired" : "unknown-dom",
+            reason:
+              pageKind === "captcha"
+                ? "captcha"
+                : pageKind === "login-required"
+                  ? "login-expired"
+                  : "unknown-dom",
             evidence: `page kind: ${pageKind}`,
           });
           return;
@@ -188,11 +193,7 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
         });
 
         // Record the decision in history before acting on it.
-        deps.history.discover(
-          effect.job.platform,
-          effect.job.id,
-          deps.clock.now(),
-        );
+        deps.history.discover(effect.job.platform, effect.job.id, deps.clock.now());
         deps.history.transition(effect.job.id, "evaluated", {
           now: deps.clock.now(),
           score: evaluation.score,
@@ -233,7 +234,11 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
               deps.dispatch({ type: "APPLY_FAILED", error: outcome.evidence, retryable: false });
               return;
             case "blocked":
-              deps.dispatch({ type: "BLOCKED", reason: outcome.reason, evidence: outcome.evidence });
+              deps.dispatch({
+                type: "BLOCKED",
+                reason: outcome.reason,
+                evidence: outcome.evidence,
+              });
               return;
           }
         } catch (error) {

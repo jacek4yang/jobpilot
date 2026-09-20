@@ -80,29 +80,94 @@ interface ApplyEvidence {
 }
 
 /**
+ * Reports whether an element is actually perceivable to the user.
+ *
+ * `querySelector` happily matches `hidden`, `display:none` and
+ * `aria-hidden="true"` nodes, and real sites routinely keep confirmation
+ * banners in the DOM but hidden. Treating a hidden marker as evidence would
+ * manufacture a false `submitted` / `already-applied`, so hidden nodes are
+ * rejected outright.
+ *
+ * Failure mode: returns `false` when visibility cannot be established, which
+ * downgrades the outcome to `needs-confirmation` — the safe direction.
+ */
+const isVisible = (element: Element): boolean => {
+  if (element.hasAttribute("hidden")) return false;
+  if (element.getAttribute("aria-hidden") === "true") return false;
+
+  // Duck-typed rather than `instanceof HTMLElement`, which is not guaranteed to
+  // exist in non-browser test environments.
+  const inlineStyle = element.getAttribute("style");
+  if (inlineStyle !== null) {
+    const normalized = inlineStyle.replace(/\s+/g, "").toLowerCase();
+    if (normalized.includes("display:none") || normalized.includes("visibility:hidden")) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * Finds the first VISIBLE match for an entry.
+ *
+ * Returns `null` when every candidate either misses or resolves only to hidden
+ * nodes. This is deliberately not `queryFirst`: evidence must be something the
+ * user could actually have seen.
+ */
+const queryVisible = (
+  root: ParentNode,
+  entry: (typeof SELECTORS)["detail"][keyof (typeof SELECTORS)["detail"]],
+): { readonly element: Element; readonly matchedBy: string } | null => {
+  for (const candidate of entry.candidates) {
+    let matches: readonly Element[] = [];
+    try {
+      matches = Array.from(root.querySelectorAll(candidate));
+    } catch {
+      continue;
+    }
+    const visible = matches.find((match) => isVisible(match));
+    if (visible !== undefined) return { element: visible, matchedBy: candidate };
+  }
+  return null;
+};
+
+/**
  * Inspects the DOM for post-click confirmation.
  *
- * Failure mode: returns `{ kind: "none" }` when nothing conclusive is present.
- * "none" is NOT success — the caller maps it to `needs-confirmation`.
+ * Only *visible* markers count. Failure mode: returns `{ kind: "none" }` when
+ * nothing conclusive and visible is present. "none" is NOT success — the caller
+ * maps it to `needs-confirmation`.
  */
 export const readApplyEvidence = (root: ParentNode): ApplyEvidence => {
-  const success = queryFirst(root, SELECTORS.detail.applySuccessMarker);
+  const success = queryVisible(root, SELECTORS.detail.applySuccessMarker);
   if (success !== null) {
-    return { kind: "success", evidence: `matched ${success.matchedBy}` };
+    return { kind: "success", evidence: `visible match on ${success.matchedBy}` };
   }
 
-  const already = queryFirst(root, SELECTORS.detail.alreadyAppliedMarker);
+  const already = queryVisible(root, SELECTORS.detail.alreadyAppliedMarker);
   if (already !== null) {
-    return { kind: "already-applied", evidence: `matched ${already.matchedBy}` };
+    return { kind: "already-applied", evidence: `visible match on ${already.matchedBy}` };
   }
 
-  const dialog = queryFirst(root, SELECTORS.detail.applyDialog);
+  const dialog = queryVisible(root, SELECTORS.detail.applyDialog);
   if (dialog !== null) {
-    return { kind: "dialog", evidence: `matched ${dialog.matchedBy}` };
+    return { kind: "dialog", evidence: `visible match on ${dialog.matchedBy}` };
   }
 
-  return { kind: "none", evidence: "no confirmation marker matched" };
+  return { kind: "none", evidence: "no visible confirmation marker matched" };
 };
+
+/**
+ * Reports whether an element can actually be clicked.
+ *
+ * Checks for a callable `click` property rather than using `instanceof`, so the
+ * probe works across realms and in non-browser test environments.
+ *
+ * Failure mode: returns `false` for anything without a callable `click`, which
+ * blocks the attempt rather than throwing mid-action.
+ */
+const hasClickMethod = (element: Element): element is Element & { click: () => void } =>
+  typeof (element as { click?: unknown }).click === "function";
 
 /** Reads the button's current label, used only for evidence text. */
 const describeButton = (element: Element): string => {
@@ -173,8 +238,9 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
       }
 
       // An already-applied badge means there is nothing to do; this is a safe
-      // terminal state, not a failure.
-      const preExisting = queryFirst(root, SELECTORS.detail.alreadyAppliedMarker);
+      // terminal state, not a failure. Only a VISIBLE badge counts: hidden
+      // badges are commonly pre-rendered and must not suppress a real apply.
+      const preExisting = queryVisible(root, SELECTORS.detail.alreadyAppliedMarker);
       if (preExisting !== null) {
         return {
           outcome: {
@@ -185,8 +251,11 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
         };
       }
 
-      if (!(located.element instanceof HTMLElement)) {
-        return blocked(job, "ambiguous-state", "apply control is not a clickable HTMLElement");
+      // Duck-typed clickability probe. `instanceof HTMLElement` is avoided
+      // because the global constructor is not guaranteed to exist outside a
+      // browser realm (and cross-realm nodes would fail the check anyway).
+      if (!hasClickMethod(located.element)) {
+        return blocked(job, "ambiguous-state", "apply control exposes no click() method");
       }
 
       throwIfAborted(options?.signal);

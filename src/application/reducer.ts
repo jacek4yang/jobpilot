@@ -73,11 +73,7 @@ const clearFields = (
  * control, unknown DOM, ambiguous outcome, watchdog) funnels through here so
  * that the behaviour is uniform and auditable.
  */
-const blockFor = (
-  context: AutomationContext,
-  reason: PauseReason,
-  now: number,
-): ReduceResult => {
+const blockFor = (context: AutomationContext, reason: PauseReason, now: number): ReduceResult => {
   const next = enter(context, "paused", now, {
     pauseReason: reason,
     lastMessage: describePauseReason(reason),
@@ -156,10 +152,11 @@ export const reduce = (
     }
 
     case "STOP": {
-      const stopped = clearFields(
-        enter(context, "idle", now, { lastMessage: "Stopped" }),
-        ["pauseReason", "currentJob", "currentStatus"],
-      );
+      const stopped = clearFields(enter(context, "idle", now, { lastMessage: "Stopped" }), [
+        "pauseReason",
+        "currentJob",
+        "currentStatus",
+      ]);
       return { context: stopped, effects: [{ type: "stop" }, { type: "persist" }] };
     }
 
@@ -170,7 +167,11 @@ export const reduce = (
 
     case "SCAN_COMPLETED": {
       if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      const stats = withStats(context, { scanned: context.stats.scanned + event.summaries.length }, now);
+      const stats = withStats(
+        context,
+        { scanned: context.stats.scanned + event.summaries.length },
+        now,
+      );
       const next = enter(stats, "evaluating", now, {
         queueDepth: event.summaries.length,
         lastMessage:
@@ -277,13 +278,11 @@ export const reduce = (
         currentStatus: "submitted",
         lastMessage: "Submitted — verifying",
       });
-      if (context.currentJob === undefined) return { context: next, effects: [{ type: "persist" }] };
+      if (context.currentJob === undefined)
+        return { context: next, effects: [{ type: "persist" }] };
       return {
         context: next,
-        effects: [
-          { type: "verify-application", job: context.currentJob },
-          { type: "persist" },
-        ],
+        effects: [{ type: "verify-application", job: context.currentJob }, { type: "persist" }],
       };
     }
 

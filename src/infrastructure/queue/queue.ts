@@ -74,7 +74,12 @@ export const createTaskQueue = (): TaskQueue => {
     takeNext(now) {
       const next = tasks.find((task) => task.status === "pending");
       if (next === undefined) return undefined;
-      const updated: Task = { ...next, status: "running", attempts: next.attempts + 1, updatedAt: now };
+      const updated: Task = {
+        ...next,
+        status: "running",
+        attempts: next.attempts + 1,
+        updatedAt: now,
+      };
       tasks = tasks.map((task) => (task.jobId === next.jobId ? updated : task));
       return updated;
     },

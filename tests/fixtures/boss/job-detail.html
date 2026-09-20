@@ -69,13 +69,16 @@
       </div>
 
       <!--
-        Post-click confirmation evidence. Kept present-but-inert here: the apply
-        action unit tests toggle it to exercise both the `submitted` and the
-        `needs-confirmation` branches.
+        Post-click confirmation evidence. Two DISTINCT signals on purpose:
+          - .toast--success is the transient "投递成功" toast
+          - [data-jobpilot-state='applied'] is the persistent "已投递" badge
+        The apply-action unit tests toggle these to exercise the `submitted`,
+        `already-applied` and `needs-confirmation` branches. Both start hidden:
+        `querySelector` matches hidden nodes, so the adapter must ignore them
+        until they are actually shown.
       -->
-      <div class="job-detail__applied-badge" data-jobpilot-state="applied" hidden>
-        已投递
-      </div>
+      <div class="toast--success" role="status" hidden>简历投递成功</div>
+      <div class="job-detail__applied-badge" data-jobpilot-state="applied" hidden>已投递</div>
     </main>
   </body>
 </html>

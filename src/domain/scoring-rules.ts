@@ -1,12 +1,3 @@
-import type { JobDetail } from "./job/job";
-import { normalizeCity } from "./job/location";
-import {
-  type KeywordWeight,
-  type Rule,
-  type RuleEngineConfig,
-  type RuleResult,
-  softScore,
-} from "./rule";
 import {
   alreadyProcessedRule,
   companyBlacklistRule,
@@ -19,9 +10,27 @@ import {
   outsourcingRule,
   salaryRule,
 } from "./hard-filters";
+import type { JobDetail } from "./job/job";
+import { normalizeCity } from "./job/location";
+import {
+  type KeywordWeight,
+  type Rule,
+  type RuleEngineConfig,
+  type RuleResult,
+  softScore,
+} from "./rule";
 
-const hitsFor = (haystack: string, weights: readonly KeywordWeight[]): KeywordWeight[] =>
-  weights.filter((entry) => haystack.includes(entry.keyword.toLowerCase()));
+/**
+ * Finds configured keywords present in a text surface.
+ *
+ * Matching is case-insensitive on BOTH sides: configured keywords are written
+ * by hand in the UI and may be typed in any case, while job text mixes cases
+ * freely ("TypeScript" vs "typescript").
+ */
+const hitsFor = (haystack: string, weights: readonly KeywordWeight[]): KeywordWeight[] => {
+  const normalized = haystack.toLowerCase();
+  return weights.filter((entry) => normalized.includes(entry.keyword.toLowerCase()));
+};
 
 const sumWeights = (hits: readonly KeywordWeight[]): number =>
   hits.reduce((total, hit) => total + hit.weight, 0);
@@ -82,18 +91,23 @@ export const createCityPreferenceRule = (weights: readonly KeywordWeight[]): Rul
 
 /**
  * Rewards salary above the user's own configured minimum.
+ *
  * Bands are relative to `hard.minSalaryK` so the signal tracks the user's
- * baseline rather than a hardcoded market assumption.
+ * baseline rather than a hardcoded market assumption. When no minimum is
+ * configured the rule contributes nothing: inventing a baseline would add a
+ * constant offset to every score and make the absolute score meaningless.
  */
 export const createSalaryQualityRule = (baselineK: number): Rule => ({
   id: "soft.salary-quality",
   kind: "soft",
   evaluate(job: JobDetail): RuleResult {
+    if (baselineK <= 0) {
+      return softScore(this.id, 0, "salary quality: no minimum salary configured");
+    }
     if (!job.salary.parsed || job.salary.min === undefined) {
       return softScore(this.id, 0, "salary unknown");
     }
-    const baseline = baselineK > 0 ? baselineK : 15;
-    const ratio = job.salary.min / baseline;
+    const ratio = job.salary.min / baselineK;
     const rounded = ratio.toFixed(2);
     if (ratio >= 1.6) return softScore(this.id, 12, `salary is well above baseline (${rounded}x)`);
     if (ratio >= 1.2) return softScore(this.id, 8, `salary is above baseline (${rounded}x)`);
@@ -119,7 +133,6 @@ export const createHardRules = (): readonly Rule[] => [
   headhunterRule,
 ];
 
-
 /** Builds the platform-independent soft scoring rule set from user weights. */
 export const createScoringRules = (config: RuleEngineConfig): readonly Rule[] => [
   createTitleKeywordRule(config.scoring.titleKeywords),
@@ -128,4 +141,3 @@ export const createScoringRules = (config: RuleEngineConfig): readonly Rule[] =>
   createCityPreferenceRule(config.scoring.preferredCities),
   createSalaryQualityRule(config.hard.minSalaryK),
 ];
-

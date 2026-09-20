@@ -8,15 +8,15 @@
 import { createBossPlatform } from "../adapters/boss";
 import { GMStorage } from "../adapters/storage/gm-storage";
 import { MemoryStorage } from "../adapters/storage/memory-storage";
-import type { Storage } from "../ports/storage";
-import type { Logger, LogLevel } from "../ports/logger";
-import type { JobPlatform } from "../ports/job-platform";
-import { createLogger } from "../infrastructure/logging/logger";
-import { createRuleEngine } from "../domain/engine";
 import type { JobPilotConfig } from "../config/schema";
 import { toSessionPolicy } from "../config/schema";
-import { mathRandom, systemClock } from "../domain/support/shared";
+import { createRuleEngine } from "../domain/engine";
 import type { Clock, Random } from "../domain/support/shared";
+import { mathRandom, systemClock } from "../domain/support/shared";
+import { createLogger } from "../infrastructure/logging/logger";
+import type { JobPlatform } from "../ports/job-platform";
+import type { Logger, LogLevel } from "../ports/logger";
+import type { Storage } from "../ports/storage";
 
 /** Injected by the build so the panel and diagnostics agree on the version. */
 declare const __JOBPILOT_VERSION__: string | undefined;

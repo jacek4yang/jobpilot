@@ -80,11 +80,7 @@ export interface Evaluation {
   readonly rejections: readonly RuleReason[];
 }
 
-export const rejection = (
-  ruleId: string,
-  message: string,
-  delta = 0,
-): RuleResult => ({
+export const rejection = (ruleId: string, message: string, delta = 0): RuleResult => ({
   ruleId,
   kind: "hard",
   passed: false,

@@ -1,12 +1,12 @@
+import type { Clock } from "../domain/support/shared";
+import type { Watchdog } from "../infrastructure/watchdog/watchdog";
+import type { Logger } from "../ports/logger";
 import type { AutomationEvent, Effect } from "./events";
+import type { ApplicationHistory } from "./history";
+import type { Orchestrator } from "./orchestrator";
+import { reduce } from "./reducer";
 import type { AutomationContext } from "./state";
 import { initialContext, isActive } from "./state";
-import { reduce } from "./reducer";
-import type { Orchestrator } from "./orchestrator";
-import type { ApplicationHistory } from "./history";
-import type { Clock } from "../domain/support/shared";
-import type { Logger } from "../ports/logger";
-import type { Watchdog } from "../infrastructure/watchdog/watchdog";
 
 export interface ControllerOptions {
   readonly clock: Clock;

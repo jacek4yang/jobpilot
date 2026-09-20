@@ -112,7 +112,10 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
         return [];
       }
 
-      const result = parseBossJobList(doc, BOSS_PLATFORM_ID);
+      // The injected location is passed explicitly so relative hrefs resolve
+      // against the real page URL rather than an ambient document, which keeps
+      // job identities stable across routes.
+      const result = parseBossJobList(doc, BOSS_PLATFORM_ID, { baseHref: location.href });
       if (result.skipped > 0) {
         logger.warn("boss.scan", "some job cards were skipped", {
           considered: result.considered,

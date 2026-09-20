@@ -5,18 +5,19 @@
  * migration + validation, so a document written by an older build (or a
  * corrupted one) can never be trusted blindly.
  */
-import type { Storage } from "../ports/storage";
-import type { Logger } from "../ports/logger";
-import type { PersistedRoot } from "../config/persisted";
-import { CURRENT_SCHEMA_VERSION, createDefaultConfig } from "../config/schema";
-import type { JobPilotConfig } from "../config/schema";
+
+import { deserializeHistory } from "../application/history";
 import { migratePersistedRoot } from "../config/migrations";
+import type { PersistedRoot } from "../config/persisted";
+import type { JobPilotConfig } from "../config/schema";
+import { CURRENT_SCHEMA_VERSION, createDefaultConfig } from "../config/schema";
 import { validateConfig } from "../config/validate";
 import type { ApplicationRecord } from "../domain/application/application";
+import { createApplicationRecord } from "../domain/application/application";
 import type { JobId, PlatformId } from "../domain/support/ids";
 import { asJobId } from "../domain/support/ids";
-import { createApplicationRecord } from "../domain/application/application";
-import { deserializeHistory } from "../application/history";
+import type { Logger } from "../ports/logger";
+import type { Storage } from "../ports/storage";
 
 export const STORAGE_KEY = "jobpilot:root:v1";
 
@@ -132,6 +133,6 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
   };
 };
 
-/** Re-exported so the bootstrap does not need to import two modules. */
-export { createApplicationRecord, asJobId };
 export type { JobId, PlatformId };
+/** Re-exported so the bootstrap does not need to import two modules. */
+export { asJobId, createApplicationRecord };

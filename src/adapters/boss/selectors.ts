@@ -216,8 +216,12 @@ export const SELECTORS = {
       note: "Required anchor: without a company name the detail is rejected as unparsable.",
     },
     companyMeta: {
+      // NOTE: these candidates must select the individual meta ITEMS, not the
+      // container. `queryAllFirst` takes the first candidate that matches
+      // anything, so a container selector here would silently collapse every
+      // item into one blob of text.
       candidates: [
-        "[data-jobpilot-field='company-meta']",
+        "[data-jobpilot-field='company-meta'] > li",
         ".job-detail__company-meta .job-detail__meta-item",
       ],
       confidence: UNVERIFIED,

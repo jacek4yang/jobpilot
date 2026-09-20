@@ -83,7 +83,10 @@ export const evaluateRateLimit = (
   if (recent.length < options.maxPerHour) return { allowed: true };
 
   // The earliest timestamp in the window frees a slot when it ages out.
-  const oldest = recent.reduce((min, value) => (value < min ? value : min), Number.POSITIVE_INFINITY);
+  const oldest = recent.reduce(
+    (min, value) => (value < min ? value : min),
+    Number.POSITIVE_INFINITY,
+  );
   if (!Number.isFinite(oldest)) return { allowed: true };
   return { allowed: false, retryAt: oldest + windowMs };
 };

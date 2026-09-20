@@ -1,13 +1,7 @@
 import type { JobDetail } from "./job/job";
 import { normalizeCity } from "./job/location";
 import { formatSalary } from "./job/salary";
-import {
-  hardPass,
-  type Rule,
-  type RuleContext,
-  type RuleResult,
-  rejection,
-} from "./rule";
+import { hardPass, type Rule, type RuleContext, type RuleResult, rejection } from "./rule";
 
 /** Case-insensitive substring search over the job's full text surface. */
 export const jobText = (job: JobDetail): string =>
@@ -64,7 +58,10 @@ export const educationRule: Rule = {
     const match = wanted.includes(job.education);
     return match
       ? hardPass(this.id, `education "${job.education}" is accepted`)
-      : rejection(this.id, `education requirement "${job.education}" is not in [${wanted.join(", ")}]`);
+      : rejection(
+          this.id,
+          `education requirement "${job.education}" is not in [${wanted.join(", ")}]`,
+        );
   },
 };
 
@@ -80,7 +77,10 @@ export const experienceRule: Rule = {
     const match = wanted.includes(job.experience);
     return match
       ? hardPass(this.id, `experience "${job.experience}" is accepted`)
-      : rejection(this.id, `experience requirement "${job.experience}" is not in [${wanted.join(", ")}]`);
+      : rejection(
+          this.id,
+          `experience requirement "${job.experience}" is not in [${wanted.join(", ")}]`,
+        );
   },
 };
 
@@ -99,7 +99,10 @@ export const keywordRule: Rule = {
     if (includeKeywords.length > 0) {
       const found = includeKeywords.filter((keyword) => text.includes(keyword.toLowerCase()));
       if (found.length === 0) {
-        return rejection(this.id, `matches none of the required keywords [${includeKeywords.join(", ")}]`);
+        return rejection(
+          this.id,
+          `matches none of the required keywords [${includeKeywords.join(", ")}]`,
+        );
       }
       return hardPass(this.id, `matches required keyword(s): ${found.join(", ")}`);
     }

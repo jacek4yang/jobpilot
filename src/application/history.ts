@@ -2,9 +2,9 @@ import type { ApplicationRecord, ApplicationStatus } from "../domain/application
 import {
   applyTransition,
   canTransitionTo,
+  createApplicationRecord,
   isSubmissionFinal,
 } from "../domain/application/application";
-import { createApplicationRecord } from "../domain/application/application";
 import type { JobId, PlatformId } from "../domain/support/ids";
 import { asJobId } from "../domain/support/ids";
 
@@ -95,8 +95,16 @@ export const createApplicationHistory = (
       const existing = records.get(jobId);
       if (existing === undefined) return undefined;
 
-      // Never move a confirmed submission backwards, and never re-submit.
-      if (isSubmissionFinal(existing.status) && status !== "failed") return existing;
+      // Once a submission is confirmed the record may only move forward to
+      // `verified`. In particular it must never go back to a pre-submission
+      // state, which is what would allow a duplicate submission.
+      if (existing.status === "submitted" && status !== "verified" && status !== "failed") {
+        return existing;
+      }
+      if (existing.status === "verified" && status !== "verified") {
+        return existing;
+      }
+
       if (!canTransitionTo(existing.status, status)) {
         // Allow the idempotent no-op of re-asserting the current status.
         if (existing.status === status) return existing;
@@ -160,14 +168,20 @@ export const deserializeHistory = (input: unknown): ApplicationRecord[] => {
     const lastError = candidate["lastError"];
 
     records.push({
-      id: typeof candidate["id"] === "string" ? (candidate["id"] as ApplicationRecord["id"]) : createApplicationRecord({ platform, jobId: asJobId(jobId), now: createdAt }).id,
+      id:
+        typeof candidate["id"] === "string"
+          ? (candidate["id"] as ApplicationRecord["id"])
+          : createApplicationRecord({ platform, jobId: asJobId(jobId), now: createdAt }).id,
       jobId: asJobId(jobId),
       platform: platform as ApplicationRecord["platform"],
       status,
       attempts: typeof attempts === "number" && Number.isFinite(attempts) ? attempts : 0,
-      reasons: Array.isArray(reasons) ? reasons.filter((r): r is string => typeof r === "string") : [],
+      reasons: Array.isArray(reasons)
+        ? reasons.filter((r): r is string => typeof r === "string")
+        : [],
       createdAt,
-      updatedAt: typeof updatedAt === "number" && Number.isFinite(updatedAt) ? updatedAt : createdAt,
+      updatedAt:
+        typeof updatedAt === "number" && Number.isFinite(updatedAt) ? updatedAt : createdAt,
       ...(typeof score === "number" && Number.isFinite(score) ? { score } : {}),
       ...(typeof lastError === "string" ? { lastError } : {}),
     });

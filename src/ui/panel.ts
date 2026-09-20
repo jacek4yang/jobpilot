@@ -1,7 +1,7 @@
-import type { LogEntry } from "../ports/logger";
 import type { AutomationContext } from "../application/state";
 import { describePauseReason } from "../application/state";
 import type { ApplicationRecord } from "../domain/application/application";
+import type { LogEntry } from "../ports/logger";
 import { PANEL_CSS } from "./styles";
 
 export type PanelTab = "status" | "queue" | "rules" | "history" | "logs" | "settings";
@@ -35,7 +35,11 @@ export interface SettingsViewModel {
 
 export interface Panel {
   readonly root: HTMLElement;
-  update(context: AutomationContext, history: readonly ApplicationRecord[], logs: readonly LogEntry[]): void;
+  update(
+    context: AutomationContext,
+    history: readonly ApplicationRecord[],
+    logs: readonly LogEntry[],
+  ): void;
   setPageKind(pageKind: string, supported: boolean): void;
   showToast(level: "info" | "warn" | "error", message: string): void;
   setSettings(settings: SettingsViewModel): void;
@@ -262,7 +266,8 @@ export const createPanel = (options: PanelOptions): Panel => {
         "verifying",
         "cooldown",
       ].includes(context.state);
-      const paused = context.state === "paused" || context.state === "blocked" || context.state === "failed";
+      const paused =
+        context.state === "paused" || context.state === "blocked" || context.state === "failed";
       startBtn.disabled = active;
       pauseBtn.disabled = !active;
       resumeBtn.disabled = !paused;

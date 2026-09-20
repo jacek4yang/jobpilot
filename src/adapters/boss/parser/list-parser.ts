@@ -159,6 +159,19 @@ export const parseBossJobCard = (
   };
 };
 
+export interface JobListParseOptions {
+  /**
+   * Absolute URL of the page the cards were read from.
+   *
+   * Relative hrefs are resolved against it so that the same posting always
+   * fingerprints to the same id. When omitted we fall back to the root's own
+   * `ownerDocument.location`, and when that is unavailable the href stays
+   * relative — which is a known source of split identities, so the production
+   * adapter always passes this explicitly.
+   */
+  readonly baseHref?: string;
+}
+
 /**
  * Parses every job card under `root`.
  *
@@ -166,9 +179,13 @@ export const parseBossJobCard = (
  * when nothing is parsable. It does not throw, does not mutate the DOM and does
  * not halt on the first bad card.
  */
-export const parseBossJobList = (root: ParentNode, platformId: string): JobListParseResult => {
+export const parseBossJobList = (
+  root: ParentNode,
+  platformId: string,
+  options: JobListParseOptions = {},
+): JobListParseResult => {
   const cards = resolveCards(root);
-  const baseHref = readBaseHref(root);
+  const baseHref = options.baseHref ?? readBaseHref(root);
 
   const jobs: JobSummary[] = [];
   let skipped = 0;
@@ -196,10 +213,18 @@ const resolveCards = (root: ParentNode): readonly Element[] => {
   return [];
 };
 
-/** Document base URL used to absolutise relative hrefs, when available. */
+/**
+ * Document base URL used to absolutise relative hrefs, when available.
+ *
+ * Failure mode: returns `undefined` when no base can be determined, which makes
+ * card URLs fall back to `canonicalizeUrl`'s relative handling rather than
+ * inventing an origin. Deliberately duck-typed via `ownerDocument` instead of
+ * `instanceof Document`, because the global `Document` constructor is not
+ * guaranteed to exist in non-browser test environments.
+ */
 const readBaseHref = (root: ParentNode): string | undefined => {
-  const doc = root instanceof Document ? root : root.ownerDocument;
-  if (doc === null) return undefined;
-  const href = doc.location?.href;
+  const ownerDocument: Document | null = root.ownerDocument;
+  if (ownerDocument === null) return undefined;
+  const href: string | undefined = ownerDocument.location?.href;
   return href !== undefined && href.length > 0 ? href : undefined;
 };

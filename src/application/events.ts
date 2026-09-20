@@ -1,5 +1,5 @@
-import type { Evaluation } from "../domain/rule";
 import type { JobDetail, JobSummary } from "../domain/job/job";
+import type { Evaluation } from "../domain/rule";
 import type { BlockReason, PageKind } from "../ports/job-platform";
 import type { PauseReason } from "./state";
 

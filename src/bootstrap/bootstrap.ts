@@ -9,20 +9,18 @@
  * controller at a time. A route change disposes the old one before the new
  * one is created, so observers, timers and DOM nodes cannot accumulate.
  */
-import { createRuntimeDeps, createEngineFor, VERSION } from "./container";
-import { createRepository } from "../application/repository";
-import { createApplicationHistory } from "../application/history";
-import { createTaskQueue } from "../infrastructure/queue/queue";
+
 import { createController } from "../application/controller";
+import { createApplicationHistory } from "../application/history";
 import { createOrchestrator } from "../application/orchestrator";
-import {
-  createWatchdog,
-  DEFAULT_WATCHDOG_BUDGETS,
-} from "../infrastructure/watchdog/watchdog";
-import { createPageObserver } from "../infrastructure/observer/page-observer";
-import { createPanel } from "../ui/panel";
-import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import { createRepository } from "../application/repository";
 import type { JobPilotConfig } from "../config/schema";
+import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import { createPageObserver } from "../infrastructure/observer/page-observer";
+import { createTaskQueue } from "../infrastructure/queue/queue";
+import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
+import { createPanel } from "../ui/panel";
+import { createEngineFor, createRuntimeDeps, VERSION } from "./container";
 
 export interface BootstrapResult {
   dispose(): void;
@@ -67,7 +65,10 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         deps.logger.info("panel", "cleared pending queue", { pending: queue.pendingCount() });
       },
       onOpenSettings: () => {
-        panel.showToast("info", "Edit settings by exporting, editing, and re-importing the config.");
+        panel.showToast(
+          "info",
+          "Edit settings by exporting, editing, and re-importing the config.",
+        );
       },
       onExportConfig: () => {
         const json = JSON.stringify(effectiveConfig, null, 2);

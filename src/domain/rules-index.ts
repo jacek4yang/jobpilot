@@ -1,3 +1,5 @@
+export { createRuleEngine, type EvaluateInput, type RuleEngine } from "./engine";
+export { jobText } from "./hard-filters";
 export type {
   Evaluation,
   HardFilterConfig,
@@ -11,6 +13,4 @@ export type {
   ScoringConfig,
 } from "./rule";
 export { hardPass, rejection, softScore } from "./rule";
-export { createRuleEngine, type EvaluateInput, type RuleEngine } from "./engine";
 export { createHardRules, createScoringRules } from "./scoring-rules";
-export { jobText } from "./hard-filters";

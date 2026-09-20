@@ -28,7 +28,7 @@ const MONTHS_RE = /(\d{1,2})\s*薪/;
 const PERIOD_UNIT: Record<string, SalaryPeriod> = {
   "/天": "day",
   "元/天": "day",
-  "每天": "day",
+  每天: "day",
   "/年": "year",
   "元/年": "year",
 };

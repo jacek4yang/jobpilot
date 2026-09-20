@@ -1,16 +1,22 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
     "useIgnoreFile": true
   },
   "files": {
-    "ignore": ["dist", "node_modules", "coverage", "tests/fixtures", "playwright-report", "test-results"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/tests/fixtures",
+      "!**/playwright-report",
+      "!**/test-results"
+    ]
   },
-  "organizeImports": {
-    "enabled": true
-  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -29,7 +35,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noBannedTypes": "error",
         "noExcessiveCognitiveComplexity": {
@@ -45,8 +51,8 @@
       },
       "suspicious": {
         "noExplicitAny": "error",
-        "noConsoleLog": "warn",
-        "noDoubleEquals": "error"
+        "noDoubleEquals": "error",
+        "noConsole": { "level": "warn", "options": { "allow": ["log"] } }
       },
       "style": {
         "useConst": "error",

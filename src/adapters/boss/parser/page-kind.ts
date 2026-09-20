@@ -13,13 +13,13 @@
  * a CAPTCHA page also contains a login link, and an empty-result page also
  * contains a job-list root. Evaluating them out of order would misclassify.
  *
- *     captcha
- *       -> risk-control
- *         -> login-required
- *           -> job-detail
- *             -> job-list
- *               -> empty-result
- *                 -> unsupported
+ *     unsupported-host   (safety gate: checked before ALL structural evidence)
+ *       -> captcha
+ *         -> risk-control
+ *           -> login-required
+ *             -> job-detail
+ *               -> job-list
+ *                 -> empty-result
  *                   -> unknown
  */
 
@@ -71,6 +71,12 @@ export interface PageKindDecision {
  * guess. `"unknown"` and `"unsupported"` are first-class, blocking outcomes.
  */
 export const detectBossPageKindFromSignals = (signals: PageKindSignals): PageKindDecision => {
+  // Host support is checked FIRST, before any structural evidence. A page that
+  // merely *looks* like BOSS (a clone, a mirror, a saved copy served from
+  // another origin) must never be treated as BOSS, because every downstream
+  // action would then run against a document we do not trust at all.
+  if (!signals.supportedHost) return { kind: "unsupported", reason: "unsupported-host" };
+
   if (signals.captcha) return { kind: "captcha", reason: "captcha-guard" };
   if (signals.riskControl) return { kind: "unknown", reason: "risk-control-guard" };
   if (signals.loginRequired) return { kind: "login-required", reason: "login-guard" };
@@ -93,8 +99,6 @@ export const detectBossPageKindFromSignals = (signals: PageKindSignals): PageKin
     return { kind: "empty-result", reason: "zero-cards-with-empty-marker-and-no-list-root" };
   }
 
-  if (!signals.supportedHost) return { kind: "unsupported", reason: "unsupported-host" };
-
   return { kind: "unknown", reason: "no-evidence" };
 };
 
@@ -107,25 +111,25 @@ export const detectBossPageKindFromSignals = (signals: PageKindSignals): PageKin
  * that would remove the cross-check.
  */
 export const classifyBySwitch = (signals: PageKindSignals): PageKindDecision => {
-  const primary: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 = signals.captcha
-    ? 0
-    : signals.riskControl
-      ? 1
-      : signals.loginRequired
-        ? 2
-        : signals.hasJobDetailRoot
-          ? 3
-          : signals.hasJobListRoot
-            ? signals.cardCount > 0
-              ? 4
-              : 5
-            : signals.cardCount > 0
-              ? 4
-              : signals.emptyResultMarker
-                ? 6
-                : signals.supportedHost
-                  ? 7
-                  : 8;
+  const primary: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 = signals.supportedHost
+    ? signals.captcha
+      ? 0
+      : signals.riskControl
+        ? 1
+        : signals.loginRequired
+          ? 2
+          : signals.hasJobDetailRoot
+            ? 3
+            : signals.hasJobListRoot
+              ? signals.cardCount > 0
+                ? 4
+                : 5
+              : signals.cardCount > 0
+                ? 4
+                : signals.emptyResultMarker
+                  ? 6
+                  : 7
+    : 8;
 
   switch (primary) {
     case 0:

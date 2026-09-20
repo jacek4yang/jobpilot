@@ -8,9 +8,7 @@ export interface Recruiter {
   readonly isHeadhunter?: boolean;
 }
 
-export const createRecruiter = (
-  input: Omit<Recruiter, "id"> & { id?: RecruiterId },
-): Recruiter => {
+export const createRecruiter = (input: Omit<Recruiter, "id"> & { id?: RecruiterId }): Recruiter => {
   const id = input.id ?? asRecruiterId(input.name.trim().toLowerCase());
   return {
     id,

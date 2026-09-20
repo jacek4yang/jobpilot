@@ -1,11 +1,11 @@
 import type { JobDetail } from "./job/job";
-import {
-  type Evaluation,
-  type Rule,
-  type RuleContext,
-  type RuleEngineConfig,
-  type RuleReason,
-  type RuleResult,
+import type {
+  Evaluation,
+  Rule,
+  RuleContext,
+  RuleEngineConfig,
+  RuleReason,
+  RuleResult,
 } from "./rule";
 import { createHardRules, createScoringRules } from "./scoring-rules";
 
