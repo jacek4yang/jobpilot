@@ -16,8 +16,7 @@
  */
 
 import type { PersistedRoot } from "./persisted";
-import { CURRENT_SCHEMA_VERSION } from "./schema";
-import { createDefaultConfig } from "./schema";
+import { CURRENT_SCHEMA_VERSION, createDefaultConfig } from "./schema";
 import { isRecord, validateConfig } from "./validate";
 
 export type MigrationResult =
@@ -124,7 +123,10 @@ export const migratePersistedRoot = (input: unknown): MigrationResult => {
   const rawVersion = input["schemaVersion"];
   // A version field that exists but is garbage is a corrupt document: we
   // cannot know whether migrating it would lose data, so we refuse.
-  if (rawVersion !== undefined && (typeof rawVersion !== "number" || !Number.isInteger(rawVersion))) {
+  if (
+    rawVersion !== undefined &&
+    (typeof rawVersion !== "number" || !Number.isInteger(rawVersion))
+  ) {
     return {
       ok: false,
       error: `schemaVersion must be an integer, received ${typeof rawVersion}`,

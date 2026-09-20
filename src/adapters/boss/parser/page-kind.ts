@@ -161,8 +161,10 @@ export const detectBossPageKind = (root: Document, location: Location): PageKind
 
   const signals: PageKindSignals = {
     captcha: queryFirst(root, SELECTORS.guards.captcha) !== null || textHas(root, CAPTCHA_TEXT),
-    riskControl: queryFirst(root, SELECTORS.guards.riskControl) !== null || textHas(root, RISK_TEXT),
-    loginRequired: queryFirst(root, SELECTORS.guards.loginRequired) !== null || textHas(root, LOGIN_TEXT),
+    riskControl:
+      queryFirst(root, SELECTORS.guards.riskControl) !== null || textHas(root, RISK_TEXT),
+    loginRequired:
+      queryFirst(root, SELECTORS.guards.loginRequired) !== null || textHas(root, LOGIN_TEXT),
     hasJobDetailRoot: queryFirst(root, SELECTORS.guards.jobDetailRoot) !== null,
     hasJobListRoot: queryFirst(root, SELECTORS.guards.jobListRoot) !== null,
     cardCount: cardNodes.length,
@@ -191,9 +193,7 @@ const safeQueryAll = (root: ParentNode, candidates: readonly string[]): readonly
     try {
       const found = Array.from(root.querySelectorAll(candidate));
       if (found.length > 0) return found;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return [];
 };

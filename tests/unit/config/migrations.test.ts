@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-
+import type { JobPilotConfig } from "../../../src/config";
 import {
   CURRENT_SCHEMA_VERSION,
   createDefaultConfig,
   isCurrentVersion,
   migratePersistedRoot,
 } from "../../../src/config";
-import type { JobPilotConfig } from "../../../src/config";
 
 /** Realistic history payload — this is the data that must survive migration. */
 const APPLICATIONS = [
@@ -197,9 +196,9 @@ describe("migratePersistedRoot — user data is never destroyed", () => {
     expect(result.root.applications).toEqual(APPLICATIONS);
     expect(result.root.statistics).toEqual(STATISTICS);
     // The corrupt config is replaced by defaults rather than blocking the load.
-    expect(migratedConfig({ schemaVersion: 1, config: "totally not a config" }).automation.mode).toBe(
-      "assist",
-    );
+    expect(
+      migratedConfig({ schemaVersion: 1, config: "totally not a config" }).automation.mode,
+    ).toBe("assist");
   });
 
   it("does not invent a history that was never there", () => {
@@ -264,7 +263,10 @@ describe("migratePersistedRoot — v1 -> v2 field migration", () => {
 
 describe("migratePersistedRoot — v2 -> v3 automation gate", () => {
   it("steps an ungated automatic mode back to assist during migration", () => {
-    const config = migratedConfig({ schemaVersion: 2, config: { automation: { mode: "automatic" } } });
+    const config = migratedConfig({
+      schemaVersion: 2,
+      config: { automation: { mode: "automatic" } },
+    });
     expect(config.automation.acknowledgeRisks).toBe(false);
     expect(config.automation.mode).toBe("assist");
   });
@@ -285,10 +287,12 @@ describe("migratePersistedRoot — v2 -> v3 automation gate", () => {
 
   it("leaves manual and assist untouched", () => {
     expect(
-      migratedConfig({ schemaVersion: 2, config: { automation: { mode: "manual" } } }).automation.mode,
+      migratedConfig({ schemaVersion: 2, config: { automation: { mode: "manual" } } }).automation
+        .mode,
     ).toBe("manual");
     expect(
-      migratedConfig({ schemaVersion: 2, config: { automation: { mode: "assist" } } }).automation.mode,
+      migratedConfig({ schemaVersion: 2, config: { automation: { mode: "assist" } } }).automation
+        .mode,
     ).toBe("assist");
   });
 });

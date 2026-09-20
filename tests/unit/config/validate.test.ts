@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createDefaultConfig,
-  validateConfig,
-  validateConfigJson,
-} from "../../../src/config";
+import { createDefaultConfig, validateConfig, validateConfigJson } from "../../../src/config";
 
 /** Narrowing helper: fails the test with the reported errors when invalid. */
 const expectOk = (input: unknown) => {
@@ -111,9 +107,9 @@ describe("validateConfig — wrong types are errors", () => {
     expect(expectErrors({ automation: { maxRetries: Number.NaN } }).join("\n")).toMatch(
       /finite number/,
     );
-    expect(expectErrors({ automation: { maxRetries: Number.POSITIVE_INFINITY } }).join("\n")).toMatch(
-      /finite number/,
-    );
+    expect(
+      expectErrors({ automation: { maxRetries: Number.POSITIVE_INFINITY } }).join("\n"),
+    ).toMatch(/finite number/);
   });
 
   it("reports a section that is present but not an object", () => {
@@ -177,9 +173,9 @@ describe("validateConfig — range checks", () => {
   });
 
   it("rejects negative session limits", () => {
-    expect(
-      expectErrors({ automation: { maxApplicationsPerSession: -1 } }).join("\n"),
-    ).toMatch(/maxApplicationsPerSession must be >= 0/);
+    expect(expectErrors({ automation: { maxApplicationsPerSession: -1 } }).join("\n")).toMatch(
+      /maxApplicationsPerSession must be >= 0/,
+    );
     expect(expectErrors({ automation: { maxApplicationsPerHour: -3 } }).join("\n")).toMatch(
       /maxApplicationsPerHour must be >= 0/,
     );
@@ -194,7 +190,7 @@ describe("validateConfig — range checks", () => {
     );
   });
 
-  it("allows zero, which is the documented \"no bound\" sentinel", () => {
+  it('allows zero, which is the documented "no bound" sentinel', () => {
     const value = expectOk({
       filters: { minSalaryK: 0, maxSalaryK: 0 },
       automation: { maxApplicationsPerSession: 0, maxApplicationsPerHour: 0, maxRetries: 0 },
@@ -269,7 +265,9 @@ describe("validateConfig — hostile input must never throw", () => {
       cursor["nested"] = next;
       cursor = next;
     }
-    expect(() => validateConfig({ general: nested, automation: nested, filters: [nested] })).not.toThrow();
+    expect(() =>
+      validateConfig({ general: nested, automation: nested, filters: [nested] }),
+    ).not.toThrow();
   });
 
   it("does not throw on a self-referencing object", () => {

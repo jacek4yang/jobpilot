@@ -17,8 +17,13 @@
  */
 
 import { createCompany } from "../../../domain/company/company";
+import type {
+  EducationLevel,
+  ExperienceLevel,
+  JobDetail,
+  JobSummary,
+} from "../../../domain/job/job";
 import { parseLocation } from "../../../domain/job/location";
-import type { JobDetail, EducationLevel, ExperienceLevel, JobSummary } from "../../../domain/job/job";
 import { parseSalary } from "../../../domain/job/salary";
 import { createRecruiter } from "../../../domain/recruiter/recruiter";
 import { queryAllFirst, queryFirst, SELECTORS } from "../selectors";
@@ -128,7 +133,8 @@ const detectStage = (text: string): string | undefined =>
 const IS_SIZE = /(\d+\s*-\s*\d+\s*人|\d+\s*人以上|人以上|规模)/;
 
 /** Returns true when a company meta chip looks like an industry label. */
-const IS_INDUSTRY = /(互联网|电子商务|企业服务|金融|教育|医疗|游戏|人工智能|软件|硬件|汽车|物流|房地产|文化|广告|通信|能源)/;
+const IS_INDUSTRY =
+  /(互联网|电子商务|企业服务|金融|教育|医疗|游戏|人工智能|软件|硬件|汽车|物流|房地产|文化|广告|通信|能源)/;
 
 /** Markers that the posting is outsourcing / dispatch staffing. */
 const OUTSOURCING_MARKERS: readonly string[] = ["外包", "人力外派", "劳务派遣", "驻场"];
@@ -162,7 +168,9 @@ export const parseBossJobDetail = (
     .map((element) => clean(element.textContent))
     .filter((text) => text.length > 0);
 
-  const educationRaw = tagTexts.find((text) => /学历|本科|大专|硕士|博士|中专|高中|不限/.test(text));
+  const educationRaw = tagTexts.find((text) =>
+    /学历|本科|大专|硕士|博士|中专|高中|不限/.test(text),
+  );
   const experienceRaw = tagTexts.find((text) => /经验|应届|年/.test(text));
 
   // Fail closed: a posting without a company, a description, or any

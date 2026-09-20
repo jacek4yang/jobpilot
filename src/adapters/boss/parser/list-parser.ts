@@ -16,12 +16,8 @@
  *     `idIsPlatformNative: false`; it is never given a fabricated native id.
  */
 
+import { canonicalizeUrl, fingerprintJob, type JobSummary } from "../../../domain/job/job";
 import { asPlatformId } from "../../../domain/support/ids";
-import {
-  canonicalizeUrl,
-  fingerprintJob,
-  type JobSummary,
-} from "../../../domain/job/job";
 import { queryFirst, SELECTORS } from "../selectors";
 
 /** Attribute names that may carry a platform-native job id, in priority order. */
@@ -97,7 +93,10 @@ export const readPlatformJobId = (card: Element): string | undefined => {
 };
 
 /** Best-effort absolute URL for a detail link, with tracking params dropped. */
-const readCanonicalUrl = (raw: string | undefined, baseHref: string | undefined): string | undefined => {
+const readCanonicalUrl = (
+  raw: string | undefined,
+  baseHref: string | undefined,
+): string | undefined => {
   if (raw === undefined) return undefined;
   if (baseHref === undefined) return canonicalizeUrl(raw);
   try {
@@ -167,10 +166,7 @@ export const parseBossJobCard = (
  * when nothing is parsable. It does not throw, does not mutate the DOM and does
  * not halt on the first bad card.
  */
-export const parseBossJobList = (
-  root: ParentNode,
-  platformId: string,
-): JobListParseResult => {
+export const parseBossJobList = (root: ParentNode, platformId: string): JobListParseResult => {
   const cards = resolveCards(root);
   const baseHref = readBaseHref(root);
 
@@ -195,9 +191,7 @@ const resolveCards = (root: ParentNode): readonly Element[] => {
     try {
       const found = Array.from(root.querySelectorAll(candidate));
       if (found.length > 0) return found;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return [];
 };

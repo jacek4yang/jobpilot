@@ -28,12 +28,7 @@ import type {
   ScoringConfigSection,
   UiConfig,
 } from "./schema";
-import {
-  createDefaultConfig,
-  isAutomationMode,
-  isPanelPosition,
-  LOG_LEVELS,
-} from "./schema";
+import { createDefaultConfig, isAutomationMode, isPanelPosition, LOG_LEVELS } from "./schema";
 
 export type ValidationResult =
   | { readonly ok: true; readonly value: JobPilotConfig }
@@ -264,7 +259,13 @@ const validateFilters = (
     cities: readStringArray(section, "cities", fallback.cities, report, "filters.cities"),
     minSalaryK,
     maxSalaryK,
-    education: readStringArray(section, "education", fallback.education, report, "filters.education"),
+    education: readStringArray(
+      section,
+      "education",
+      fallback.education,
+      report,
+      "filters.education",
+    ),
     experience: readStringArray(
       section,
       "experience",
@@ -322,9 +323,16 @@ const validateScoring = (
   fallback: ScoringConfigSection,
   report: Report,
 ): ScoringConfigSection => {
-  const baseScore = readNumber(section, "baseScore", fallback.baseScore, report, "scoring.baseScore", {
-    min: 0,
-  });
+  const baseScore = readNumber(
+    section,
+    "baseScore",
+    fallback.baseScore,
+    report,
+    "scoring.baseScore",
+    {
+      min: 0,
+    },
+  );
   const acceptThreshold = readNumber(
     section,
     "acceptThreshold",
@@ -402,9 +410,7 @@ const validateAutomation = (
   // accident: it requires the explicit acknowledgement flag in the same
   // document, and a config file copied from someone else fails closed.
   if (mode === "automatic" && !acknowledgeRisks) {
-    report(
-      "automation.mode \"automatic\" requires automation.acknowledgeRisks to be true",
-    );
+    report('automation.mode "automatic" requires automation.acknowledgeRisks to be true');
   }
 
   const minActionDelayMs = readNumber(
@@ -446,10 +452,17 @@ const validateAutomation = (
       "automation.maxApplicationsPerHour",
       { min: 0, integer: true },
     ),
-    maxRetries: readNumber(section, "maxRetries", fallback.maxRetries, report, "automation.maxRetries", {
-      min: 0,
-      integer: true,
-    }),
+    maxRetries: readNumber(
+      section,
+      "maxRetries",
+      fallback.maxRetries,
+      report,
+      "automation.maxRetries",
+      {
+        min: 0,
+        integer: true,
+      },
+    ),
     minActionDelayMs,
     maxActionDelayMs,
     verifyAfterSubmit: readBoolean(
@@ -524,8 +537,20 @@ const validateUi = (
   return {
     showPanel: readBoolean(section, "showPanel", fallback.showPanel, report, "ui.showPanel"),
     panelPosition,
-    showReasons: readBoolean(section, "showReasons", fallback.showReasons, report, "ui.showReasons"),
-    compactMode: readBoolean(section, "compactMode", fallback.compactMode, report, "ui.compactMode"),
+    showReasons: readBoolean(
+      section,
+      "showReasons",
+      fallback.showReasons,
+      report,
+      "ui.showReasons",
+    ),
+    compactMode: readBoolean(
+      section,
+      "compactMode",
+      fallback.compactMode,
+      report,
+      "ui.compactMode",
+    ),
   };
 };
 
@@ -550,10 +575,17 @@ const validateLogging = (
   if (telemetryEnabled) report("logging.telemetryEnabled must be false; JobPilot has no telemetry");
   return {
     level,
-    maxEntries: readNumber(section, "maxEntries", fallback.maxEntries, report, "logging.maxEntries", {
-      min: 0,
-      integer: true,
-    }),
+    maxEntries: readNumber(
+      section,
+      "maxEntries",
+      fallback.maxEntries,
+      report,
+      "logging.maxEntries",
+      {
+        min: 0,
+        integer: true,
+      },
+    ),
     persistLogs: readBoolean(
       section,
       "persistLogs",
@@ -587,9 +619,21 @@ export const validateConfig = (input: unknown): ValidationResult => {
   }
 
   const value: JobPilotConfig = {
-    general: validateGeneral(sectionOf(root, "general", report, "general"), defaults.general, report),
-    filters: validateFilters(sectionOf(root, "filters", report, "filters"), defaults.filters, report),
-    scoring: validateScoring(sectionOf(root, "scoring", report, "scoring"), defaults.scoring, report),
+    general: validateGeneral(
+      sectionOf(root, "general", report, "general"),
+      defaults.general,
+      report,
+    ),
+    filters: validateFilters(
+      sectionOf(root, "filters", report, "filters"),
+      defaults.filters,
+      report,
+    ),
+    scoring: validateScoring(
+      sectionOf(root, "scoring", report, "scoring"),
+      defaults.scoring,
+      report,
+    ),
     automation: validateAutomation(
       sectionOf(root, "automation", report, "automation"),
       defaults.automation,
@@ -601,7 +645,11 @@ export const validateConfig = (input: unknown): ValidationResult => {
       report,
     ),
     ui: validateUi(sectionOf(root, "ui", report, "ui"), defaults.ui, report),
-    logging: validateLogging(sectionOf(root, "logging", report, "logging"), defaults.logging, report),
+    logging: validateLogging(
+      sectionOf(root, "logging", report, "logging"),
+      defaults.logging,
+      report,
+    ),
   };
 
   if (errors.length > 0) return { ok: false, errors };

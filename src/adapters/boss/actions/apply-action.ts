@@ -19,16 +19,16 @@
  *      single most important rule in this file.
  */
 
+import type { JobDetail, JobSummary } from "../../../domain/job/job";
+import { asJobId } from "../../../domain/support/ids";
+import type { Clock } from "../../../domain/support/shared";
 import type {
   ApplyOptions,
   ApplyResult,
   BlockReason,
   VerificationResult,
 } from "../../../ports/job-platform";
-import type { JobDetail, JobSummary } from "../../../domain/job/job";
 import type { Logger } from "../../../ports/logger";
-import type { Clock } from "../../../domain/support/shared";
-import { asJobId } from "../../../domain/support/ids";
 import { detectCaptcha, detectLoginRequired, detectRiskControl } from "../guards";
 import { queryFirst, SELECTORS } from "../selectors";
 import { throwIfAborted } from "./abort";
@@ -165,7 +165,11 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
       }
 
       if (looksDisabled(located.element)) {
-        return blocked(job, "ambiguous-state", `apply control disabled (${describeButton(located.element)})`);
+        return blocked(
+          job,
+          "ambiguous-state",
+          `apply control disabled (${describeButton(located.element)})`,
+        );
       }
 
       // An already-applied badge means there is nothing to do; this is a safe
@@ -217,12 +221,13 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
             },
             jobId: jobIdOf(job),
           };
-        case "none":
         default:
+          // Includes the explicit "none" case: no marker matched at all.
           return {
             outcome: {
               kind: "needs-confirmation",
-              evidence: "click dispatched but no confirmation marker appeared; outcome is unverified",
+              evidence:
+                "click dispatched but no confirmation marker appeared; outcome is unverified",
             },
             jobId: jobIdOf(job),
           };

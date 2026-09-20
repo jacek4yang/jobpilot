@@ -6,13 +6,9 @@ import type { Storage } from "../../ports/storage";
  * `undefined`, which is what makes this file safe to import under Node.js.
  */
 declare global {
-  // biome-ignore lint/style/noVar: `declare global` requires `var` to attach to globalThis.
   var GM_getValue: ((key: string, defaultValue?: unknown) => unknown) | undefined;
-  // biome-ignore lint/style/noVar: `declare global` requires `var` to attach to globalThis.
   var GM_setValue: ((key: string, value: unknown) => void) | undefined;
-  // biome-ignore lint/style/noVar: `declare global` requires `var` to attach to globalThis.
   var GM_deleteValue: ((key: string) => void) | undefined;
-  // biome-ignore lint/style/noVar: `declare global` requires `var` to attach to globalThis.
   var GM_listValues: (() => string[]) | undefined;
 }
 

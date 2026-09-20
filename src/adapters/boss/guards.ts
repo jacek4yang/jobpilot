@@ -86,7 +86,9 @@ const matchText = (root: ParentNode, needles: readonly string[]): GuardSignal | 
 export const detectCaptcha = (root: ParentNode): GuardSignal => {
   const structural = matchStructure(root, SELECTORS.guards.captcha);
   if (structural !== null) return structural;
-  return matchText(root, ["请完成安全验证", "请完成验证", "滑动验证", "拖动滑块", "captcha"]) ?? CLEAR;
+  return (
+    matchText(root, ["请完成安全验证", "请完成验证", "滑动验证", "拖动滑块", "captcha"]) ?? CLEAR
+  );
 };
 
 /**
@@ -99,7 +101,8 @@ export const detectRiskControl = (root: ParentNode): GuardSignal => {
   const structural = matchStructure(root, SELECTORS.guards.riskControl);
   if (structural !== null) return structural;
   return (
-    matchText(root, ["操作过于频繁", "当前操作存在风险", "访问受限", "安全中心", "risk control"]) ?? CLEAR
+    matchText(root, ["操作过于频繁", "当前操作存在风险", "访问受限", "安全中心", "risk control"]) ??
+    CLEAR
   );
 };
 
@@ -127,7 +130,9 @@ export const detectLoginRequired = (root: ParentNode): GuardSignal => {
 export const detectEmptyResult = (root: ParentNode): GuardSignal => {
   const structural = matchStructure(root, SELECTORS.guards.emptyResult);
   if (structural !== null) return structural;
-  return matchText(root, ["暂无职位", "没有找到相关职位", "换个关键词试试", "无符合条件的职位"]) ?? CLEAR;
+  return (
+    matchText(root, ["暂无职位", "没有找到相关职位", "换个关键词试试", "无符合条件的职位"]) ?? CLEAR
+  );
 };
 
 /**

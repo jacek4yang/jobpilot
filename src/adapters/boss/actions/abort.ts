@@ -33,5 +33,4 @@ export const withinLimit = (signal: AbortSignal | undefined): boolean =>
   signal === undefined || !signal.aborted;
 
 /** True when the signal is present and aborted. */
-export const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal !== undefined && signal.aborted;
+export const isAborted = (signal: AbortSignal | undefined): boolean => signal?.aborted === true;

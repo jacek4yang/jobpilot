@@ -14,8 +14,8 @@
  * hash before it is included. Nothing here reads `document.cookie`.
  */
 
-import { redact, type LogEntry, type Logger } from "../../../ports/logger";
 import type { PageKind } from "../../../ports/job-platform";
+import { type LogEntry, type Logger, redact } from "../../../ports/logger";
 
 /** Diagnostic payload. Field set is fixed deliberately — nothing extra leaks in. */
 export interface BossDiagnosticReport {
@@ -81,7 +81,13 @@ export const isStructuralFailure = (kind: PageKind): boolean =>
   kind === "unknown" || kind === "unsupported";
 
 /** Key names that must never appear in a diagnostic payload. */
-const FORBIDDEN_KEYS: readonly string[] = ["cookie", "token", "authorization", "credential", "chat"];
+const FORBIDDEN_KEYS: readonly string[] = [
+  "cookie",
+  "token",
+  "authorization",
+  "credential",
+  "chat",
+];
 
 /**
  * Builds a redacted diagnostic snapshot.

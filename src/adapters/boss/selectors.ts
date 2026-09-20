@@ -131,7 +131,11 @@ export const SELECTORS = {
       note: "Fixture defines data-jobpilot-card on every card. The itemprop and class candidates are shape guesses about real BOSS markup and may match nothing or too much.",
     },
     link: {
-      candidates: ["a.job-card__link[href]", "[data-jobpilot-link][href]", "a[href*='/job_detail/']"],
+      candidates: [
+        "a.job-card__link[href]",
+        "[data-jobpilot-link][href]",
+        "a[href*='/job_detail/']",
+      ],
       confidence: FIXTURE_ONLY,
       note: "Fixture uses a.job-card__link. The href substring is a durable-looking real-site guess but is unverified.",
     },
@@ -150,7 +154,11 @@ export const SELECTORS = {
       note: "Nested itemprop mirrors real JobPosting microdata shape. Unverified on the live site.",
     },
     salary: {
-      candidates: ["[itemprop='baseSalary']", "[data-jobpilot-field='salary']", ".job-card__salary"],
+      candidates: [
+        "[itemprop='baseSalary']",
+        "[data-jobpilot-field='salary']",
+        ".job-card__salary",
+      ],
       confidence: FIXTURE_ONLY,
       note: "Salary is display-only here: it is always re-parsed through parseSalary, which fails soft.",
     },
@@ -226,10 +234,7 @@ export const SELECTORS = {
       note: "Optional; falls back to an empty string, never to a fabricated summary.",
     },
     requirements: {
-      candidates: [
-        "[data-jobpilot-field='requirements'] li",
-        ".job-detail__requirements li",
-      ],
+      candidates: ["[data-jobpilot-field='requirements'] li", ".job-detail__requirements li"],
       confidence: UNVERIFIED,
       note: "Heuristic. Returns a multi-element list, so it is read with queryAllFirst rather than queryFirst.",
     },
@@ -314,16 +319,16 @@ export const SELECTORS = {
       note: "Fixture uses the data-jobpilot-guard hooks. Real BOSS login surfaces are guessed and may be absent or renamed.",
     },
     loginForm: {
-      candidates: ["form[data-jobpilot-guard='login-form']", "form.login-form", ".login-form__body"],
+      candidates: [
+        "form[data-jobpilot-guard='login-form']",
+        "form.login-form",
+        ".login-form__body",
+      ],
       confidence: FIXTURE_ONLY,
       note: "Used only by the text fallback in detectLoginRequired; never clicked. JobPilot does not log in on the user's behalf.",
     },
     emptyResult: {
-      candidates: [
-        "[data-jobpilot-guard='empty']",
-        ".job-list-empty",
-        "[class*='empty-wrapper']",
-      ],
+      candidates: ["[data-jobpilot-guard='empty']", ".job-list-empty", "[class*='empty-wrapper']"],
       confidence: FIXTURE_ONLY,
       note: "Checked AFTER the list parser has already parsed zero cards, so it can never mask a non-empty list.",
     },
@@ -337,11 +342,7 @@ export const SELECTORS = {
       note: "Positive structural evidence for classifyJobDetail. Its absence keeps classification at 'unknown'.",
     },
     jobListRoot: {
-      candidates: [
-        "[data-jobpilot-list]",
-        "ul.job-list",
-        "[class*='job-list-wrapper']",
-      ],
+      candidates: ["[data-jobpilot-list]", "ul.job-list", "[class*='job-list-wrapper']"],
       confidence: FIXTURE_ONLY,
       note: "Positive structural evidence for classifyJobList. Its absence keeps classification at 'unknown'.",
     },
@@ -431,10 +432,8 @@ export const queryFirstBy = (
  * Resolves the first candidate of an entry that matches, reporting which one
  * won. Returns `null` when none match.
  */
-export const queryFirst = (
-  root: ParentNode,
-  entry: SelectorEntry,
-): LocatedElement | null => queryFirstBy(root, entry, (candidate, scope) => scope.querySelector(candidate));
+export const queryFirst = (root: ParentNode, entry: SelectorEntry): LocatedElement | null =>
+  queryFirstBy(root, entry, (candidate, scope) => scope.querySelector(candidate));
 
 /**
  * Like `queryFirst`, but for targets that legitimately resolve to many nodes

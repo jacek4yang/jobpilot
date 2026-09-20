@@ -6,6 +6,10 @@
  * this directory should reach into the individual modules.
  */
 
+export type { MigrationResult } from "./migrations";
+export { isCurrentVersion, MIGRATION_STEPS, migratePersistedRoot } from "./migrations";
+
+export type { PersistedRoot } from "./persisted";
 export type {
   AutomationConfig,
   AutomationMode,
@@ -30,9 +34,6 @@ export {
   PANEL_POSITIONS,
   toSessionPolicy,
 } from "./schema";
-
-export type { PersistedRoot } from "./persisted";
-
 export type { NumberBounds, ValidationResult } from "./validate";
 export {
   isRecord,
@@ -44,6 +45,3 @@ export {
   validateConfig,
   validateConfigJson,
 } from "./validate";
-
-export type { MigrationResult } from "./migrations";
-export { isCurrentVersion, MIGRATION_STEPS, migratePersistedRoot } from "./migrations";

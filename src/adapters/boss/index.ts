@@ -16,6 +16,8 @@
  *   - an unconfirmed click returns `needs-confirmation`, never `submitted`
  */
 
+import type { JobDetail, JobSummary } from "../../domain/job/job";
+import type { Clock } from "../../domain/support/shared";
 import type {
   ApplyOptions,
   ApplyResult,
@@ -24,11 +26,9 @@ import type {
   ScanOptions,
   VerificationResult,
 } from "../../ports/job-platform";
-import type { JobDetail, JobSummary } from "../../domain/job/job";
 import type { Logger } from "../../ports/logger";
-import type { Clock } from "../../domain/support/shared";
-import { asPlatformId } from "../../domain/support/ids";
 import { isAborted, throwIfAborted } from "./actions/abort";
+import { createApplyAction } from "./actions/apply-action";
 import { parseBossJobDetail } from "./parser/detail-parser";
 import { parseBossJobList } from "./parser/list-parser";
 import { detectBossPageKind } from "./parser/page-kind";
@@ -164,6 +164,6 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   };
 };
 
-export { SELECTORS } from "./selectors";
-export { collectBossDiagnostics, formatBossDiagnostics } from "./diagnostics/boss-diagnostics";
 export type { BossDiagnosticReport } from "./diagnostics/boss-diagnostics";
+export { collectBossDiagnostics, formatBossDiagnostics } from "./diagnostics/boss-diagnostics";
+export { SELECTORS } from "./selectors";
