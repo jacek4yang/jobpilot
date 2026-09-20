@@ -119,14 +119,53 @@ export const existingFixtures = (): readonly string[] => KNOWN_FIXTURES.filter(f
  */
 export const PANEL_HOST = "[data-jobpilot-host]";
 export const PANEL_ROOT = ".jobpilot-root";
-/** State readout. `data-state` mirrors the controller's state machine. */
+/** State readout on the LAUNCHER dot. `data-state` mirrors the state machine. */
 export const PANEL_DOT = ".jobpilot-dot";
+/**
+ * Header chips. NOTE the attribute names differ per chip:
+ *   `.jobpilot-safety-chip[data-safety]`     safe | auto | paused | blocked
+ *   `.jobpilot-page-chip[data-page-kind]`    job-list | job-detail | captcha |
+ *                                            login-required | empty-result | ...
+ *   `.jobpilot-mode-chip`                    text only
+ * Reading `data-state` off a chip will always yield null — that attribute
+ * belongs to the launcher dot.
+ */
+export const PANEL_SAFETY_CHIP = ".jobpilot-safety-chip";
+export const PANEL_PAGE_CHIP = ".jobpilot-page-chip";
+export const PANEL_MODE_CHIP = ".jobpilot-mode-chip";
 export const PANEL_TITLE = ".jobpilot-title";
 export const PANEL_ACTIONS = ".jobpilot-actions";
 export const PANEL_LAUNCHER = ".jobpilot-launcher";
 export const PANEL_START = '.jobpilot-actions button.jobpilot-btn:has-text("Start")';
 export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn:has-text("Pause")';
 export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn:has-text("Stop")';
+
+/**
+ * Page kinds observed from the built userscript, per fixture, on the loopback
+ * harness served from the guard-accepted hostname.
+ *
+ * These were READ OFF the running product, not derived from the fixtures: run
+ * the scratch probe described in README.md if they ever drift. Two results are
+ * counter-intuitive and worth keeping in mind:
+ *   - `unsupported.html` reports `unknown`, NOT `unsupported`. The host IS
+ *     supported (`www.zhipin.com`), so the host gate does not fire and the
+ *     classifier falls through to structural evidence, which finds nothing.
+ *     `unsupported` is only reachable from a NON-BOSS hostname.
+ *   - `risk-page.html` reports `captcha`, because the CAPTCHA guard outranks
+ *     risk-control in the precedence chain in `parser/page-kind.ts`.
+ */
+export const OBSERVED_PAGE_KIND: Readonly<Record<string, string>> = {
+  "job-list.html": "job-list",
+  "job-detail.html": "job-detail",
+  "empty-list.html": "empty-result",
+  "captcha.html": "captcha",
+  "login.html": "login-required",
+  "unsupported.html": "unknown",
+  "risk-page.html": "captcha",
+  // Communication fixtures, observed while probing.
+  "success-modal.html": "job-detail",
+  "chat-conversation.html": "unknown",
+};
 
 /** Panel states that mean "actively driving the page". */
 export const RUNNING_STATES = [
@@ -272,8 +311,12 @@ export const waitForPanel = async (page: Page, timeoutMs = 10_000): Promise<bool
 export interface PanelSnapshot {
   /** Whether the shadow host exists at all. */
   readonly mounted: boolean;
-  /** `data-state` of the state dot, or null when unmounted. */
+  /** `data-state` of the launcher dot, or null when unmounted. */
   readonly state: string | null;
+  /** `data-safety` of the safety chip (safe|auto|paused|blocked), or null. */
+  readonly safety: string | null;
+  /** `data-page-kind` of the page chip (job-list|captcha|...), or null. */
+  readonly pageKind: string | null;
   /** Whether `.jobpilot-root` is rendered (not carrying `.jobpilot-hidden`). */
   readonly expanded: boolean;
   /** Button label -> disabled flag, for the action row. */
@@ -286,13 +329,24 @@ export interface PanelSnapshot {
  * Used where a test needs the *value* of the state machine rather than a
  * visibility assertion, and where going through Playwright's shadow-piercing
  * CSS would make the intent less obvious.
+ *
+ * Note the two distinct attributes: `data-state` lives on the launcher dot,
+ * `data-safety` on the safety chip. Both are read here under separate keys so a
+ * test can never confuse them.
  */
 export const readPanelState = async (page: Page): Promise<PanelSnapshot> =>
   page.evaluate(() => {
     const host = document.querySelector("[data-jobpilot-host]");
     const root = host?.shadowRoot ?? null;
     if (host === null || root === null) {
-      return { mounted: false, state: null, expanded: false, buttons: {} };
+      return {
+        mounted: false,
+        state: null,
+        safety: null,
+        pageKind: null,
+        expanded: false,
+        buttons: {},
+      };
     }
     const panelEl = root.querySelector(".jobpilot-root");
     const buttons: Record<string, boolean> = {};
@@ -302,6 +356,8 @@ export const readPanelState = async (page: Page): Promise<PanelSnapshot> =>
     return {
       mounted: true,
       state: root.querySelector(".jobpilot-dot")?.getAttribute("data-state") ?? null,
+      safety: root.querySelector(".jobpilot-safety-chip")?.getAttribute("data-safety") ?? null,
+      pageKind: root.querySelector(".jobpilot-page-chip")?.getAttribute("data-page-kind") ?? null,
       expanded: panelEl !== null && !panelEl.classList.contains("jobpilot-hidden"),
       buttons,
     };

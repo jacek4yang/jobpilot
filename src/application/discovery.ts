@@ -12,13 +12,12 @@
  *    builds the queue from an explicit selection.
  */
 import type { JobDetail, JobSummary } from "../domain/job/job";
-import type { Logger } from "../ports/logger";
-import type { JobPlatform, PageKind } from "../ports/job-platform";
-import { evaluateStageA, evaluateStageB } from "../domain/matching/two-stage";
-import type { SearchProfile } from "../domain/search-profile/profile";
-import type { RecruiterActivity } from "../domain/recruiter/activity";
-import type { ActivityPreference } from "../domain/search-profile/profile";
 import type { StageReason } from "../domain/matching/two-stage";
+import { evaluateStageA, evaluateStageB } from "../domain/matching/two-stage";
+import type { RecruiterActivity } from "../domain/recruiter/activity";
+import type { ActivityPreference, SearchProfile } from "../domain/search-profile/profile";
+import type { JobPlatform, PageKind } from "../ports/job-platform";
+import type { Logger } from "../ports/logger";
 
 /** A discovered job, with the decision that was made about it. */
 export interface Match {
@@ -54,7 +53,9 @@ export interface DiscoveryDeps {
   /** Resolves a profile's city names to platform city codes. */
   readonly resolveCities: (
     cities: readonly string[],
-  ) => { readonly ok: true; readonly codes: readonly string[] } | { readonly ok: false; readonly city: string; readonly suggestions: readonly string[] };
+  ) =>
+    | { readonly ok: true; readonly codes: readonly string[] }
+    | { readonly ok: false; readonly city: string; readonly suggestions: readonly string[] };
   readonly contactedJobIds: ReadonlySet<string>;
   readonly companyBlacklist: readonly string[];
   readonly titleBlacklist: readonly string[];
@@ -72,12 +73,7 @@ export interface DiscoveryDeps {
 }
 
 /** Pages on which discovery cannot proceed. */
-const BLOCKING_PAGES: readonly PageKind[] = [
-  "captcha",
-  "login-required",
-  "unsupported",
-  "unknown",
-];
+const BLOCKING_PAGES: readonly PageKind[] = ["captcha", "login-required", "unsupported", "unknown"];
 
 export interface DiscoveryService {
   run(profile: SearchProfile): Promise<DiscoveryResult>;

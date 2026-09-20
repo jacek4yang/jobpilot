@@ -3,15 +3,15 @@ import {
   acceptedJobIds,
   acceptedMatches,
   createDiscoveryService,
-  formatReasons,
   type DiscoveryDeps,
+  formatReasons,
 } from "../../../src/application/discovery";
-import { createProfile } from "../../../src/domain/search-profile/profile";
 import type { JobDetail, JobSummary } from "../../../src/domain/job/job";
+import { createProfile } from "../../../src/domain/search-profile/profile";
+import { asCompanyId, asJobId, asPlatformId } from "../../../src/domain/support/ids";
+import { createNullLogger } from "../../../src/infrastructure/logging/logger";
 import type { JobPlatform, PageKind } from "../../../src/ports/job-platform";
 import type { Logger } from "../../../src/ports/logger";
-import { createNullLogger } from "../../../src/infrastructure/logging/logger";
-import { asCompanyId, asJobId, asPlatformId } from "../../../src/domain/support/ids";
 
 const NOW = 1_700_000_000_000;
 
@@ -68,8 +68,14 @@ const recordingPlatform = (
       if (options.failLoad?.has(String(s.id)) === true) throw new Error("detail did not render");
       return detailFor(s);
     },
-    apply: async () => ({ outcome: { kind: "blocked", reason: "unknown-dom", evidence: "n/a" }, jobId: "" }),
-    verifyApplication: async () => ({ outcome: { kind: "indeterminate", evidence: "n/a" }, jobId: "" }),
+    apply: async () => ({
+      outcome: { kind: "blocked", reason: "unknown-dom", evidence: "n/a" },
+      jobId: "",
+    }),
+    verifyApplication: async () => ({
+      outcome: { kind: "indeterminate", evidence: "n/a" },
+      jobId: "",
+    }),
     get loaded() {
       return loaded;
     },
@@ -259,7 +265,12 @@ describe("discovery service", () => {
       const service = createDiscoveryService(
         deps({
           platform,
-          scoring: { baseScore: 10, acceptThreshold: 90, preferredSkills: [], preferredIndustries: [] },
+          scoring: {
+            baseScore: 10,
+            acceptThreshold: 90,
+            preferredSkills: [],
+            preferredIndustries: [],
+          },
         }),
       );
       const result = await service.run(profile());
@@ -288,7 +299,12 @@ describe("discovery service", () => {
           platform,
           activityPreference: "online",
           skipUnknownActivity: true,
-          readActivity: () => ({ label: "半年前活跃", recency: "inactive", days: Number.POSITIVE_INFINITY, online: false }),
+          readActivity: () => ({
+            label: "半年前活跃",
+            recency: "inactive",
+            days: Number.POSITIVE_INFINITY,
+            online: false,
+          }),
         }),
       );
       const result = await service.run(profile());

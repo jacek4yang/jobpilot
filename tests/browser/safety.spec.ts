@@ -29,6 +29,7 @@ import {
   PANEL_DOT,
   PANEL_HOST,
   PANEL_ROOT,
+  PANEL_SAFETY_CHIP,
   PANEL_START,
   PANEL_STOP,
   RUNNING_STATES,
@@ -86,6 +87,16 @@ test.describe("JobPilot fails closed on blocked pages", () => {
           RUNNING_STATES,
           `panel must not be running on ${name}, was "${snapshot.state}"`,
         ).not.toContain(snapshot.state);
+
+        // The safety chip is the user-facing fail-closed indicator and uses its
+        // own attribute (`data-safety`, NOT `data-state`).
+        expect(snapshot.safety, `safety chip should read a known value on ${name}`).not.toBeNull();
+        expect(["safe", "auto", "paused", "blocked"]).toContain(snapshot.safety);
+        expect(snapshot.safety, `must not report 'auto' (running) on ${name}`).not.toBe("auto");
+        await expect(page.locator(PANEL_SAFETY_CHIP).first()).toHaveAttribute(
+          "data-safety",
+          snapshot.safety as string,
+        );
 
         // Stop is disabled: there is nothing running to stop.
         await expect(page.locator(PANEL_STOP).first()).toBeDisabled();

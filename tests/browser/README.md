@@ -86,11 +86,57 @@ no test fails because a fixture is missing.
 
 ### `jobpilot-ui.spec.ts`
 Against `job-list.html`: the panel (`.jobpilot-root`) mounts, renders its title
-and controls, loads in the `idle` state with **Start enabled and Stop disabled**,
-and does not start automating on its own. Also asserts **host-page integrity** —
-the fixture's original `.job-card` and list container are still present and
-visible, and the panel is appended to `<body>` rather than injected into the host
-content.
+and controls, loads in the `idle` state with **Start enabled and Pause/Stop
+disabled**, and does not start automating on its own. Also asserts **host-page
+integrity** — the fixture's original `.job-card` and list container are still
+present and visible, and the panel is mounted in its own shadow host on `<body>`
+rather than injected into the host content.
+
+It also covers page classification end-to-end: `.jobpilot-page-chip` reports
+`data-page-kind="job-list"` for the job-list fixture and `"captcha"` for the
+captcha fixture — the same classifier the unit and integration suites exercise
+under happy-dom, observed here through the real bootstrap path in a browser.
+
+### `probe.mjs` (not a test)
+A diagnostic script, deliberately **not** named `*.spec.ts` so Playwright never
+collects it. Run `node tests/browser/probe.mjs` (server must be up) to print the
+panel's real observable state for every fixture.
+
+Use it **before** writing or changing an assertion. Every expectation in this
+suite was derived by reading these real values. `src/ui/panel.ts` has been
+rewritten more than once, and each rewrite silently invalidated selectors that
+had been inferred from source rather than observed in the DOM.
+
+## Panel structure (observed, not assumed)
+
+The panel mounts in an **open shadow root** at `div[data-jobpilot-host]`.
+Playwright's CSS engine pierces open shadow roots for CSS selectors, so
+`page.locator(".jobpilot-page-chip")` resolves from page level — **verified
+empirically**, not assumed. `readPanelState()` in `harness.ts` reads the same
+values through `shadowRoot` as an independent cross-check.
+
+Attribute names differ per element — reading the wrong one silently yields `null`:
+
+| Element | Attribute | Values |
+| --- | --- | --- |
+| `.jobpilot-dot` (launcher) | `data-state` | `idle`, `scanning`, `paused`, … |
+| `.jobpilot-safety-chip` | `data-safety` | `safe`, `auto`, `paused`, `blocked` |
+| `.jobpilot-page-chip` | `data-page-kind` | `job-list`, `job-detail`, `captcha`, `login-required`, `empty-result`, `unknown` |
+| `.jobpilot-mode-chip` | — | text only |
+
+The panel starts **expanded**; `.jobpilot-launcher` is hidden while expanded.
+
+### Two counter-intuitive classifications
+
+Both observed on the loopback harness served from the guard-accepted hostname:
+
+- **`unsupported.html` reports `unknown`, not `unsupported`.** The host *is*
+  supported (`www.zhipin.com`), so the host gate never fires and the classifier
+  falls through to structural evidence, which finds nothing. `unsupported` is
+  only reachable from a non-BOSS hostname — which
+  `safety.spec.ts` covers separately by loading from `127.0.0.1`.
+- **`risk-page.html` reports `captcha`**, because the CAPTCHA guard outranks
+  risk-control in the precedence chain in `parser/page-kind.ts`.
 
 ### `safety.spec.ts`
 For `captcha.html`, `login.html`, and `unsupported.html`, plus a non-BOSS origin:
@@ -115,11 +161,13 @@ guarantee that `UNSCANNABLE_PAGES` in the orchestrator provides.
   remains unverified.
 - **Actually submitting an application.** No test drives a real apply flow; the
   fixtures for messaging and modals are still being authored by other agents.
-- **Panel page-kind badge text.** `jobpilot-ui.spec.ts` contains a `test.fixme`
-  explaining why: the panel does not expose a stable hook for reading back the
-  detected page kind, and asserting on rendered label copy would be a
-  change-detector. Classification is covered exhaustively by the unit and
-  integration suites against the same fixtures.
+- **Panel page-kind badge text.** The panel now exposes `data-page-kind` on
+  `.jobpilot-page-chip`, so classification IS asserted directly (see
+  `jobpilot-ui.spec.ts`) rather than through rendered label copy. The earlier
+  `test.fixme` that described this gap has been retired now that the hook exists.
+- **The `data-safety` chip's `paused`/`blocked` values under a mid-run fault.**
+  Only the `safe` (idle) value is observed here; the others require driving a run
+  into a fault, which needs the messaging fixtures to be wired to a live flow.
 - **CAPTCHA solving, login automation, or risk-control bypass.** These are
   out of scope by design; the tests assert the opposite.
 

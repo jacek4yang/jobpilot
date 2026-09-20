@@ -17,6 +17,7 @@
 
 import { expect, test } from "@playwright/test";
 import {
+  fixtureExists,
   HOST_MAPPING_ARGS,
   isBuildPresent,
   loadHarness,
@@ -25,8 +26,10 @@ import {
   PANEL_DOT,
   PANEL_HOST,
   PANEL_LAUNCHER,
+  PANEL_PAGE_CHIP,
   PANEL_PAUSE,
   PANEL_ROOT,
+  PANEL_SAFETY_CHIP,
   PANEL_START,
   PANEL_STOP,
   PANEL_TITLE,
@@ -129,25 +132,59 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     expect(await page.evaluate(() => location.hostname)).toBe("www.zhipin.com");
   });
 
-  test.fixme("panel reports page-kind 'job-list' for the fixture", async ({ page }) => {
-    // FIXME — deliberately not enabled; read the reasoning before "fixing" it.
+  test("reports page-kind 'job-list' for the job-list fixture", async ({ page }) => {
+    // The panel exposes the page classification as a machine-readable element:
+    // `.jobpilot-page-chip[data-page-kind]`, set from `panel.setPageKind()`.
     //
-    // `refreshPageKind()` in src/bootstrap/bootstrap.ts calls
-    // `platform.detectPage()` and passes the result to `panel.setPageKind()`.
-    // For `job-list.html` the fixture carries `[data-jobpilot-list="job-list"]`
-    // and `data-jobpilot-card` anchors, so detection yields "job-list".
+    // This test previously carried a `test.fixme` because no such hook existed
+    // and asserting on rendered label copy would have been a change-detector.
+    // The hook now exists, so the fixme is retired.
     //
-    // The panel does not expose that classification through any stable,
-    // documented hook: in the current revision it is surfaced neither as a
-    // data attribute nor as a machine-readable element, only (at most) as
-    // rendered label copy. Asserting on that copy would be a change-detector
-    // that breaks on any wording edit, and would be testing the fixture rather
-    // than the product.
+    // The chip lives inside the shadow root. Playwright's CSS engine pierces
+    // OPEN shadow roots for CSS selectors, so `.jobpilot-page-chip` resolves
+    // from page level — verified empirically before relying on it rather than
+    // assumed. `readPanelState` reads the same value through the shadowRoot as
+    // a cross-check that the two paths agree.
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page), "panel should mount").toBe(true);
+
+    const chip = page.locator(PANEL_PAGE_CHIP).first();
+    await expect(chip).toBeAttached();
+
+    // `toBeAttached` + attribute assertion also proves shadow piercing worked.
+    await expect(chip).toHaveAttribute("data-page-kind", "job-list");
+
+    const snapshot = await readPanelState(page);
+    expect(snapshot.pageKind, "shadowRoot read should agree with the locator").toBe("job-list");
+
+    // The safety chip uses a DIFFERENT attribute (`data-safety`). Asserting it
+    // here pins the distinction so a future edit cannot silently swap them.
+    await expect(page.locator(PANEL_SAFETY_CHIP).first()).toHaveAttribute("data-safety", "safe");
+  });
+
+  test("reports page-kind 'captcha' on the captcha fixture", async ({ page }) => {
+    // End-to-end fail-closed classification: the same classifier that the unit
+    // and integration suites exercise under happy-dom must also produce
+    // "captcha" in a real browser, through the real bootstrap path.
     //
-    // The classification itself IS covered exhaustively by the unit and
-    // integration suites (`tests/integration/boss-page-detection.test.ts` and
-    // the page-kind unit tests) against these same fixtures. Re-enable this
-    // only if the panel gains a documented page-kind readout.
-    await page.goto("http://www.zhipin.com:43117/harness?fixture=job-list.html");
+    // Observed value, not an assumption: the built userscript reports
+    // `data-page-kind="captcha"` for captcha.html.
+    test.skip(!fixtureExists("captcha.html"), "captcha fixture is not present");
+
+    await loadHarness(page, "captcha.html");
+    expect(await waitForPanel(page), "panel should mount").toBe(true);
+
+    await expect(page.locator(PANEL_PAGE_CHIP).first()).toHaveAttribute(
+      "data-page-kind",
+      "captcha",
+    );
+
+    const snapshot = await readPanelState(page);
+    expect(snapshot.pageKind).toBe("captcha");
+
+    // Classifying the page as a CAPTCHA is a *detection* result, not on its own
+    // proof that automation stopped — `safety.spec.ts` asserts the stopping.
+    // Here we only pin that detection is wired through to the UI.
+    expect(snapshot.state, "panel must not be running on a CAPTCHA page").toBe("idle");
   });
 });
