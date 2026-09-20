@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { newestSourceMtime } from "./lib/freshness";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
@@ -206,6 +207,19 @@ if (metadata !== "") {
     fail("build-identity", "no @jobpilot-built marker in the metadata block");
   } else if (Number.isNaN(Date.parse(built))) {
     fail("build-identity", `@jobpilot-built is not a parseable timestamp: "${built}"`);
+  } else {
+    // Freshness matters more for the diagnostic channel than for production:
+    // a stale diagnostic artifact means the operator tests code that is not
+    // the code under review, and every bundle they export is then misleading.
+    const newestSource = newestSourceMtime(join(ROOT, "src"));
+    if (newestSource !== undefined && Date.parse(built) < newestSource) {
+      fail(
+        "artifact-freshness",
+        `diagnostic artifact was built at ${built}, before the newest source change at ${new Date(newestSource).toISOString()}. Re-run \`pnpm build:diagnostic\`.`,
+      );
+    } else {
+      notes.push(`build timestamp: ${built}`);
+    }
   }
 }
 

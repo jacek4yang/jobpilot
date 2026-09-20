@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { newestSourceMtime } from "./lib/freshness";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const DIST = join(ROOT, "dist");
@@ -206,6 +207,40 @@ if (/^\s*import\s+[^"']+from\s+["'][^."'/][^"']*["']/m.test(source)) {
 }
 if (/^\s*export\s+/m.test(source)) {
   fail("no-unresolved-import", "artifact still contains a top-level export statement");
+}
+
+// 10b. Artifact freshness -----------------------------------------------------
+// `emptyOutDir: false` lets both channels share dist/, which means a stale
+// artifact from a previous build survives in place. Without this check,
+// verification would happily pass on an artifact the current source did not
+// produce — the most dangerous kind of false green, because it looks like the
+// build was validated.
+// The minifier keeps the property name but may wrap the value, so the ISO
+// timestamp is matched on its own rather than assuming a literal assignment.
+// This must not be a substring of the *header* metadata; it has to come from
+// the build-time define, which is what proves this artifact's vintage.
+const embeddedBuildTime = /"(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)"/.exec(source)?.[1];
+if (embeddedBuildTime === undefined) {
+  fail(
+    "artifact-freshness",
+    "the artifact does not embed a build timestamp, so staleness cannot be detected",
+  );
+} else {
+  const builtAt = Date.parse(embeddedBuildTime);
+  if (Number.isNaN(builtAt)) {
+    fail("artifact-freshness", `unparseable embedded build timestamp: ${embeddedBuildTime}`);
+  } else {
+    // A build older than the newest source file is stale by definition.
+    const newestSource = newestSourceMtime(join(ROOT, "src"));
+    if (newestSource !== undefined && builtAt < newestSource) {
+      fail(
+        "artifact-freshness",
+        `artifact was built at ${embeddedBuildTime}, before the newest source change at ${new Date(newestSource).toISOString()}. Re-run \`pnpm build\`.`,
+      );
+    } else {
+      notes.push(`build timestamp: ${embeddedBuildTime}`);
+    }
+  }
 }
 
 // 11. Artifact size ----------------------------------------------------------
