@@ -1,0 +1,152 @@
+# JobPilot continuous integration.
+#
+# SAFETY RULE: this workflow must NEVER contact the live zhipin.com site. The
+# browser suite drives a loopback fixture server only (`tests/browser/server.mjs`
+# on 127.0.0.1:43117), and `tests/browser/fixture-smoke.spec.ts` fails the run if
+# any request escapes to a non-loopback host. Do not add a step that reaches the
+# real site.
+#
+# The BOSS adapter is validated against synthetic fixtures only; see
+# `src/adapters/boss/README.md`. A green run here proves the code is internally
+# consistent. It does NOT prove the adapter works on the real site.
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main, master]
+
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref rather than burning two full matrices.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Reads the version from package.json's `packageManager` field
+      # (pnpm@11.9.0), so the pinned toolchain has one source of truth.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Vitest runs under happy-dom and Node. No browser download is needed.
+      - name: Run tests
+        run: pnpm test
+
+  build:
+    name: Build and verify artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build userscript
+        run: pnpm build
+
+      # Asserts grants are least-privilege, exactly one runtime file is emitted,
+      # the userscript @version matches package.json, and no bare imports remain.
+      - name: Verify dist
+        run: pnpm verify:dist
+
+      - name: Upload userscript
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobpilot.user.js
+          path: dist/jobpilot.user.js
+          if-no-files-found: error
+          retention-days: 7
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # The Playwright suite drives the BUILT userscript, so dist/ must exist
+      # before the specs run. Playwright starts the loopback fixture server
+      # itself via `webServer` in playwright.config.ts.
+      - name: Build userscript
+        run: pnpm build
+
+      - name: Run browser tests
+        run: pnpm test:browser
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

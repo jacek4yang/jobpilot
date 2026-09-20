@@ -1,0 +1,109 @@
+# JobPilot release workflow.
+#
+# TAGS ARE SEMVER ONLY: `vMAJOR.MINOR.PATCH` (e.g. `v0.1.0`). Pre-release
+# suffixes (`-beta.1`) are permitted by the glob but the version-equality gate
+# below compares against `package.json` verbatim, so a tag and a package version
+# must match character for character.
+#
+# SAFETY RULE: like CI, this workflow must never contact the live zhipin.com.
+# It runs the same gate as CI, which includes the browser suite against the
+# loopback fixture server.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# `contents: write` is required to create the GitHub Release and attach the
+# artifact. Nothing more is granted — no `packages`, no `id-token`, no `actions`.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Full gate, in the same order as `pnpm check` minus the build steps that
+      # follow separately so a failure is attributable to one stage.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build userscript
+        run: pnpm build
+
+      - name: Verify dist
+        run: pnpm verify:dist
+
+      # A release whose artifact version disagrees with its tag is a
+      # correctness bug: users would install v0.2.0 while the userscript header
+      # says 0.1.0, and update checks would misbehave. Fail loudly instead.
+      - name: Verify tag matches package.json version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${TAG_NAME#v}"
+
+          echo "tag            : ${TAG_NAME}"
+          echo "tag version    : ${TAG_VERSION}"
+          echo "package.json   : ${PACKAGE_VERSION}"
+
+          if [ "${TAG_VERSION}" != "${PACKAGE_VERSION}" ]; then
+            echo "::error::tag ${TAG_NAME} does not match package.json version ${PACKAGE_VERSION}"
+            exit 1
+          fi
+
+          echo "Version gate passed."
+
+      # `sha256sum` is GNU coreutils and is present on ubuntu-latest. Keep the
+      # output format `sha256sum` emits, so the file can be fed straight back to
+      # `sha256sum -c` by a user.
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum jobpilot.user.js > SHA256SUMS
+          cat SHA256SUMS
+          # Prove the checksum file actually verifies before shipping it.
+          sha256sum --check SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "JobPilot ${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --generate-notes \
+            "dist/jobpilot.user.js#jobpilot.user.js" \
+            "dist/SHA256SUMS#SHA256SUMS"

@@ -90,15 +90,43 @@ const readFixture = async (name) => {
   }
 };
 
-/** Reads the built userscript, or `null` when `pnpm build` has not run. */
-const readUserscript = async () => {
+/**
+ * Reads the built userscript, or `null` when `pnpm build` has not run.
+ *
+ * CONSISTENCY: `vite build` rewrites `dist/jobpilot.user.js` in place. If that
+ * happens while the suite is running — which is routine in this repo, where
+ * other agents rebuild concurrently — a naive per-request read can hand a worker
+ * a half-written file, producing confusing "userscript failed to load" failures
+ * that have nothing to do with the code under test.
+ *
+ * So the file is read ONCE at startup and cached for the process lifetime. That
+ * makes every worker in a run see byte-identical bytes. The trade-off is
+ * deliberate and documented in README.md: a rebuild requires restarting the
+ * suite (Playwright does this automatically unless `reuseExistingServer` reuses
+ * a stale server — pass `--reuse-existing-server=false` if in doubt).
+ *
+ * @type {{source: string, readAt: number} | null}
+ */
+let userscriptCache = null;
+
+const loadUserscriptIntoCache = async () => {
   try {
     const info = await stat(USERSCRIPT_PATH);
     if (!info.isFile()) return null;
-    return await readFile(USERSCRIPT_PATH, "utf8");
+    const source = await readFile(USERSCRIPT_PATH, "utf8");
+    // A truncated bundle would not end with the IIFE footer. Refuse to cache a
+    // file that looks mid-write rather than serving it to every worker.
+    if (!source.includes("==UserScript==") || source.length < 1000) return null;
+    return { source, readAt: Date.now() };
   } catch {
     return null;
   }
+};
+
+/** Returns the cached userscript, loading it on first use. */
+const readUserscript = async () => {
+  if (userscriptCache === null) userscriptCache = await loadUserscriptIntoCache();
+  return userscriptCache === null ? null : userscriptCache.source;
 };
 
 /**
@@ -238,9 +266,18 @@ const server = createServer(async (req, res) => {
   send(res, 404, TEXT_HEADERS, "not found");
 });
 
-server.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, async () => {
+  // Warm the userscript cache before the first worker asks for it, so every test
+  // in the run sees the same bytes even if `pnpm build` runs concurrently.
+  const loaded = await loadUserscriptIntoCache();
+  userscriptCache = loaded;
   // eslint-disable-next-line no-console
-  console.log(`[jobpilot-fixtures] listening on http://${HOST}:${PORT}`);
+  console.log(
+    `[jobpilot-fixtures] listening on http://${HOST}:${PORT}` +
+      (loaded === null
+        ? " — WARNING: dist/jobpilot.user.js missing or unreadable; run `pnpm build`"
+        : ` — userscript cached (${loaded.source.length} bytes)`),
+  );
 });
 
 /** Closes the listener so Playwright can stop the webServer without a timeout. */
