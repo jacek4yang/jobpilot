@@ -12,6 +12,7 @@
 
 import { readBossRecruiterActivity } from "../adapters/boss/activity";
 import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
+import { createNavigatorLock } from "../adapters/userscript/navigator-lock";
 import { createController } from "../application/controller";
 import {
   createDiscoveryService,
@@ -28,6 +29,7 @@ import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
+import { DEFAULT_LOCK_TTL_MS } from "../ports/lock";
 import { createPanel } from "../ui/panel";
 import { buildSections } from "../ui/sections";
 import { type PanelViewModel, safetyFromState } from "../ui/view-model";
@@ -162,14 +164,39 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
   }
 
+  // --- Cross-tab ownership ------------------------------------------------
+  // Two BOSS tabs must never drive the same queue. Ownership is taken before
+  // the interactive panel is built, so a tab that does not own execution can
+  // render read-only instead of offering controls that would fight the owner.
+  const lock = createNavigatorLock({ clock: deps.clock });
+  const ownerId = `tab-${Math.random().toString(36).slice(2)}`;
+  const ownership = await lock.acquire({ ownerId, ttlMs: DEFAULT_LOCK_TTL_MS });
+  const isOwner = ownership.ok;
+
+  if (!isOwner) {
+    deps.logger.warn("bootstrap", "another tab owns execution; rendering read-only", {
+      reason: ownership.reason,
+    });
+  }
+
   const panel = createPanel({
     document: globalThis.document,
     version: VERSION,
     callbacks: {
       discover: () => {
+        if (!isOwner) {
+          panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+          return;
+        }
         void runDiscovery();
       },
-      start: () => controller?.dispatch({ type: "START" }),
+      start: () => {
+        if (!isOwner) {
+          panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+          return;
+        }
+        controller?.dispatch({ type: "START" });
+      },
       pause: () => controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } }),
       resume: () => controller?.dispatch({ type: "RESUME" }),
       skipCurrent: () => {
@@ -237,6 +264,22 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
    * The panel is a pure function of this view model, so a rendering bug can be
    * reproduced by constructing the same object in a test.
    */
+  // Renew the lease periodically so a long session does not let another tab
+  // take over mid-run. Cleared on dispose.
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  if (isOwner) {
+    heartbeat = setInterval(
+      () => {
+        void lock.renew({ token: ownerId, ttlMs: DEFAULT_LOCK_TTL_MS }).then((alive) => {
+          if (!alive) {
+            deps.logger.warn("bootstrap", "lost execution ownership");
+          }
+        });
+      },
+      Math.floor(DEFAULT_LOCK_TTL_MS / 3),
+    );
+  }
+
   const render = (): void => {
     if (controller === undefined) return;
     const context = controller.context();
@@ -432,6 +475,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   return {
     dispose() {
+      if (heartbeat !== undefined) clearInterval(heartbeat);
+      if (isOwner) void lock.release(ownerId);
       pageObserver.dispose();
       controller?.dispose();
       watchdog.reset();
