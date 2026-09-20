@@ -128,11 +128,11 @@ export const matchChatIdentity = (
   if (companyMatches) evidence.push("company found in conversation");
   if (recruiterMatches) evidence.push("recruiter found in conversation");
 
-  // With an authoritative id match, that alone is sufficient.
+  // A confirmed job-id match is authoritative: we already returned `mismatch`
+  // above if the ids failed to intersect, so reaching here means the id agreed.
+  // Corroborating text is recorded as evidence but is not required, because
+  // BOSS chat headers do not always repeat the job title.
   if (comparableIds) {
-    if (titleMatches || companyMatches || recruiterMatches) return { kind: "match", evidence };
-    // The id matched, which is strong, but nothing corroborates it. Accept,
-    // because BOSS chat headers do not always repeat the title.
     return { kind: "match", evidence };
   }
 
