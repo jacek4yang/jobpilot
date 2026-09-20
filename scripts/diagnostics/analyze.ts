@@ -440,8 +440,14 @@ const analyzeQueue = (events: readonly DiagnosticEvent[]): Finding[] => {
 
 export interface AnalysisResult {
   readonly findings: readonly Finding[];
-  /** First error-level event, which is usually the cause rather than a symptom. */
-  readonly firstFailure?: DiagnosticEvent;
+  /**
+   * First error-level event, which is usually the cause rather than a symptom.
+   *
+   * Declared `| undefined` because a clean run legitimately has none, and
+   * under `exactOptionalPropertyTypes` an optional property cannot be assigned
+   * an explicit `undefined`.
+   */
+  readonly firstFailure?: DiagnosticEvent | undefined;
   readonly counts: Readonly<Record<string, number>>;
 }
 
