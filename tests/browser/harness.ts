@@ -167,6 +167,9 @@ export interface LoadHarnessOptions {
   readonly waitForUserscript?: boolean;
 }
 
+/** How long to wait for bootstrap to settle before reading collected errors. */
+export const PANEL_SETTLE_TIMEOUT_MS = 5_000;
+
 /**
  * Attaches error collectors, navigates to `/harness?fixture=<name>`, and waits
  * for the userscript's deterministic load signal.
@@ -225,6 +228,20 @@ export const loadHarness = async (
     ).__jobpilotHarness;
     return { loaded: harness?.loaded ?? false, error: harness?.error ?? null };
   });
+
+  if (waitForUserscript && state.loaded) {
+    // The script tag loading is NOT the same as bootstrap finishing: bootstrap
+    // is async (it awaits the storage repository before mounting the panel).
+    // Wait for the panel host to appear so that `pageErrors` collected by the
+    // caller covers the whole of bootstrap, not just module evaluation.
+    // Collection is best-effort: a page where JobPilot correctly declines to
+    // mount is legitimate, so a timeout here is not an error.
+    await page
+      .locator(PANEL_HOST)
+      .first()
+      .waitFor({ state: "attached", timeout: PANEL_SETTLE_TIMEOUT_MS })
+      .catch(() => undefined);
+  }
 
   return {
     pageErrors,

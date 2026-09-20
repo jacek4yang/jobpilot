@@ -72,7 +72,13 @@ confirm the *host* guard also fails closed.
 ### `fixture-smoke.spec.ts`
 Every fixture present on disk renders through the harness, the userscript loads
 and executes, and no uncaught `pageerror` occurs. Also covers server hygiene:
-`/health`, the JS content type, and path-traversal rejection.
+`/health`, the JS content type, path-traversal rejection, and rejection of an
+unrecognised `Host` header.
+
+It also enforces this suite's **hard rule** with a live request listener: any
+request a harness page makes that does not target loopback fails the test. If a
+future edit introduces a real URL, that test breaks loudly rather than silently
+reaching the network.
 
 Fixtures added by other agents (`chat-*.html`, `*-modal.html`, `risk-page.html`)
 are picked up automatically when present and skipped with a reason when absent —

@@ -101,7 +101,11 @@ export const createPanel = (options: PanelOptions): Panel => {
   const modeChip = el(doc, "span", "jobpilot-mode-chip", "assist");
   const safetyChip = el(doc, "span", "jobpilot-safety-chip", "Safe");
   safetyChip.setAttribute("data-safety", "safe");
-  header.append(title, modeChip, safetyChip);
+  // Exposed as a data attribute so the classification is machine-readable
+  // rather than only being rendered as label copy.
+  const pageChip = el(doc, "span", "jobpilot-page-chip", "unknown");
+  pageChip.setAttribute("data-page-kind", "unknown");
+  header.append(title, modeChip, pageChip, safetyChip);
 
   const tabBar = el(doc, "div", "jobpilot-tabs");
   tabBar.setAttribute("role", "tablist");
@@ -230,6 +234,8 @@ export const createPanel = (options: PanelOptions): Panel => {
     render(view) {
       dot.setAttribute("data-state", view.state);
       modeChip.textContent = view.mode;
+      pageChip.textContent = view.pageKind;
+      pageChip.setAttribute("data-page-kind", view.pageKind);
       safetyChip.textContent = view.safetyLabel;
       safetyChip.setAttribute("data-safety", view.safety);
 

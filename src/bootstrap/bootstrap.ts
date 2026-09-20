@@ -141,6 +141,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       safetyLabel: safety.label,
       launcherCount:
         context.queueDepth > 0 ? `${context.sessionApplications}/${context.queueDepth}` : "",
+      pageKind: currentPageKind,
 
       running: [
         "scanning",
@@ -260,9 +261,25 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   // --- SPA lifecycle ------------------------------------------------------
   const pageObserver = createPageObserver(window);
 
+  let currentPageKind = "unknown";
+
+  /**
+   * Re-reads the page classification and repaints.
+   *
+   * The classification is shown in the panel because a user who cannot tell
+   * whether JobPilot recognises the page cannot tell whether it is safe to
+   * start it.
+   */
   const refreshPageKind = (): void => {
-    const kind = deps.platform.detectPage();
-    deps.logger.debug("bootstrap", "page kind", { kind });
+    try {
+      const kind = deps.platform.detectPage();
+      if (kind === currentPageKind) return;
+      currentPageKind = kind;
+      deps.logger.debug("bootstrap", "page kind", { kind });
+      render();
+    } catch (error) {
+      deps.logger.error("bootstrap", "page detection failed", { error });
+    }
   };
 
   pageObserver.onPageChange(() => {

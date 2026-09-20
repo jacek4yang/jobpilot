@@ -105,6 +105,8 @@ export interface PanelViewModel {
   readonly safety: SafetyLevel;
   readonly safetyLabel: string;
   readonly launcherCount: string;
+  /** The page classification the adapter currently reports, e.g. "job-list". */
+  readonly pageKind: string;
 
   readonly running: boolean;
   readonly paused: boolean;

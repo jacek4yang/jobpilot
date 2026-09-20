@@ -100,7 +100,7 @@ export const PANEL_CSS = `
   flex: none;
 }
 .jobpilot-title { font-size: 13px; font-weight: 700; flex: 1; }
-.jobpilot-mode-chip, .jobpilot-safety-chip {
+.jobpilot-mode-chip, .jobpilot-safety-chip, .jobpilot-page-chip {
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 10px;
@@ -115,6 +115,7 @@ export const PANEL_CSS = `
 .jobpilot-safety-chip[data-safety="blocked"] { background: #ffebe9; color: #a40e26; }
 .jobpilot-safety-chip[data-safety="paused"] { background: #fff1c1; color: #7d4e00; }
 .jobpilot-safety-chip[data-safety="safe"] { background: #dafbe1; color: #116329; }
+.jobpilot-page-chip { background: #ddf4ff; color: #0a3069; }
 
 /* --- Tabs --------------------------------------------------------------- */
 .jobpilot-tabs {

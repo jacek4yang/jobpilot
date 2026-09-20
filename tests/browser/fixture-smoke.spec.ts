@@ -83,4 +83,25 @@ test.describe("fixture harness smoke", () => {
     });
     expect(response.status()).toBe(421);
   });
+
+  test("no outbound request leaves the loopback fixture server", async ({ page }) => {
+    // Enforces the suite's hard rule: CI must never depend on the live site.
+    // Every request a harness page makes must target the fixture server. If a
+    // future edit introduces a real URL, this test fails loudly.
+    const external: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      const isLoopback =
+        url.hostname === "127.0.0.1" ||
+        // Aliased to 127.0.0.1 by Chromium's resolver rule; never DNS-resolved.
+        url.hostname === "www.zhipin.com";
+      if (!isLoopback && !url.protocol.startsWith("data") && !url.protocol.startsWith("blob")) {
+        external.push(request.url());
+      }
+    });
+
+    await loadHarness(page, "job-list.html");
+
+    expect(external, "only the local fixture server may be contacted").toEqual([]);
+  });
 });
