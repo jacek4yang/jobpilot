@@ -54,13 +54,14 @@ describe("analyzer transaction correlation", () => {
       expect(finding?.detail).toContain("txn-1");
     });
 
-    it("downgrades to likely when the events carry no transaction id", () => {
-      // Without an id the claim cannot be proven, so it must not be asserted.
+    it("reports unknown when the events carry no transaction id", () => {
+      // Without an id we cannot tell whether these are one transaction or two,
+      // so neither "confirmed" nor "likely" is honest — only "unknown".
       const finding = find(
         [event(1, EVENTS.sendAttempted), event(2, EVENTS.sendAttempted)],
         "transaction.multiple-attempts",
       );
-      expect(finding?.confidence).toBe("likely");
+      expect(finding?.confidence).toBe("unknown");
     });
 
     it("does not flag a single attempt", () => {
@@ -152,6 +153,128 @@ describe("analyzer transaction correlation", () => {
         // A confirmed finding the reader cannot check is not evidence-based.
         expect(violation.evidence.length).toBeGreaterThan(0);
       }
+    });
+  });
+});
+
+/**
+ * Guards against a detector asserting more than it checked.
+ *
+ * Three separate defects lived here: the storage finding claimed a send was
+ * refused without looking, the queue detector reported a legitimate
+ * restore-after-reload as a confirmed duplicate, and claims resting on absent
+ * evidence were labelled `likely` rather than `unknown`.
+ */
+describe("analyzer claims match their evidence", () => {
+  const ev = (
+    sequence: number,
+    name: string,
+    category: string,
+    transactionId?: string,
+  ): DiagnosticEvent => ({
+    sequence,
+    sessionId: "s-test",
+    wallTime: 0,
+    monotonicTime: sequence,
+    level: "info",
+    category: category as DiagnosticEvent["category"],
+    event: name,
+    ...(transactionId === undefined ? {} : { transactionId }),
+  });
+
+  describe("storage failure", () => {
+    it("does not claim a send was refused without checking", () => {
+      const finding = analyzeEvents([ev(1, EVENTS.storageWriteFailed, "storage")]).findings.find(
+        (entry) => entry.id === "health.storage",
+      );
+      // The old text asserted read-only enforcement and then told the reader to
+      // go and verify it, which is the check the claim presumed.
+      expect(finding?.detail).not.toContain("should have entered read-only");
+      expect(finding?.detail).toContain("No send event follows");
+    });
+
+    it("flags the dangerous combination when a send does follow", () => {
+      const finding = analyzeEvents([
+        ev(1, EVENTS.storageWriteFailed, "storage"),
+        ev(2, EVENTS.sendClicked, "communication", "txn-1"),
+      ]).findings.find((entry) => entry.id === "health.storage");
+      expect(finding?.confidence).toBe("confirmed");
+      expect(finding?.title).toContain("send followed");
+    });
+
+    it("ignores a send that happened before the failure", () => {
+      const finding = analyzeEvents([
+        ev(1, EVENTS.sendClicked, "communication", "txn-1"),
+        ev(2, EVENTS.storageWriteFailed, "storage"),
+      ]).findings.find((entry) => entry.id === "health.storage");
+      // Ordering matters: an earlier send is not evidence the gate failed.
+      expect(finding?.detail).toContain("No send event follows");
+    });
+  });
+
+  describe("queue duplicates", () => {
+    const started = (sequence: number) => ({
+      ...ev(sequence, EVENTS.queueItemStarted, "queue"),
+      queueItemId: "j1",
+    });
+
+    it("reports a settled-then-restarted item as confirmed", () => {
+      const completed = { ...ev(2, EVENTS.queueItemCompleted, "queue"), queueItemId: "j1" };
+      const finding = analyzeEvents([started(1), completed, started(3)]).findings.find((entry) =>
+        entry.id.startsWith("queue.duplicate-processing"),
+      );
+      expect(finding?.confidence).toBe("confirmed");
+      expect(finding?.title).toContain("settled");
+    });
+
+    it("downgrades a restart without a settling event to likely", () => {
+      // A restore after a reload legitimately re-starts an interrupted item.
+      const finding = analyzeEvents([started(1), started(2)]).findings.find((entry) =>
+        entry.id.startsWith("queue.duplicate-processing"),
+      );
+      expect(finding?.confidence).toBe("likely");
+      expect(finding?.detail).toContain("restore");
+    });
+
+    it("does not flag a single start", () => {
+      const finding = analyzeEvents([started(1)]).findings.find((entry) =>
+        entry.id.startsWith("queue.duplicate-processing"),
+      );
+      expect(finding).toBeUndefined();
+    });
+  });
+
+  describe("coverage gaps are stated explicitly", () => {
+    it("reports unknown rather than likely when the id is absent", () => {
+      const finding = analyzeEvents([
+        ev(1, EVENTS.sendAttempted, "communication"),
+        ev(2, EVENTS.sendAttempted, "communication"),
+      ]).findings.find((entry) => entry.id.startsWith("transaction.multiple-attempts"));
+      // "likely" would assert a consistency we have not established.
+      expect(finding?.confidence).toBe("unknown");
+    });
+
+    it("emits a coverage finding when communication events lack an id", () => {
+      const finding = analyzeEvents([ev(1, EVENTS.sendAttempted, "communication")]).findings.find(
+        (entry) => entry.id === "transaction.coverage-gap",
+      );
+      expect(finding).toBeDefined();
+      expect(finding?.nextStep).toContain("transactionId");
+    });
+
+    it("does not emit a coverage finding when every event carries an id", () => {
+      const finding = analyzeEvents([
+        ev(1, EVENTS.sendAttempted, "communication", "txn-1"),
+        ev(2, EVENTS.sendClicked, "communication", "txn-1"),
+      ]).findings.find((entry) => entry.id === "transaction.coverage-gap");
+      expect(finding).toBeUndefined();
+    });
+
+    it("does not emit a coverage finding for a bundle with no communication at all", () => {
+      const finding = analyzeEvents([ev(1, EVENTS.routeChanged, "route")]).findings.find(
+        (entry) => entry.id === "transaction.coverage-gap",
+      );
+      expect(finding).toBeUndefined();
     });
   });
 });

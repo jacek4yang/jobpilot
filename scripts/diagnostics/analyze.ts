@@ -177,7 +177,7 @@ const analyzeTransactions = (events: readonly DiagnosticEvent[]): Finding[] => {
       title: "More than one send attempt for one transaction",
       // Without an id the events cannot be proven to belong to one
       // transaction, so the claim is downgraded rather than asserted.
-      confidence: identified ? "confirmed" : "likely",
+      confidence: identified ? "confirmed" : "unknown",
       detail: identified
         ? `Transaction ${transactionId} recorded ${repeated.length} send attempts. At most one is permitted per transaction.`
         : `${repeated.length} send attempts carried no transaction id, so they may or may not belong to one transaction.`,
@@ -201,7 +201,7 @@ const analyzeTransactions = (events: readonly DiagnosticEvent[]): Finding[] => {
     findings.push({
       id: `transaction.mixed-outcome.${transactionId}`,
       title: "Transaction reported more than one terminal outcome",
-      confidence: transactionId === "(no transaction id)" ? "likely" : "confirmed",
+      confidence: transactionId === "(no transaction id)" ? "unknown" : "confirmed",
       detail: `Transaction ${transactionId} reached conflicting terminal states: ${[...outcomes].join(", ")}. Exactly one terminal outcome is expected per transaction.`,
       evidence: [...committed, ...uncertain, ...failed]
         .filter((event) => (event.transactionId ?? "(no transaction id)") === transactionId)
@@ -243,6 +243,28 @@ const analyzeTransactions = (events: readonly DiagnosticEvent[]): Finding[] => {
       evidence: identityRejected.map(seq),
       nextStep:
         "Compare the identity signals in transactions.json against the job: a changed chat header format looks like this.",
+    });
+  }
+
+  // State the detector's own blind spot.
+  //
+  // Every per-transaction claim above relies on `transactionId`. When the
+  // stream carries communication events without one, the analysis degrades
+  // silently: findings still appear, but they cannot be correlated. Saying so
+  // explicitly is the difference between "we found nothing" and "we could not
+  // look", and only one of those is safe to act on.
+  const transactionEvents = ordered.filter((event) => event.event.startsWith("communication."));
+  const unidentified = transactionEvents.filter((event) => event.transactionId === undefined);
+  if (transactionEvents.length > 0 && unidentified.length > 0) {
+    findings.push({
+      id: "transaction.coverage-gap",
+      title: "Some communication events carry no transaction id",
+      // The gap is an observation; its cause is not established.
+      confidence: "likely",
+      detail: `${unidentified.length} of ${transactionEvents.length} communication event(s) have no transactionId, so per-transaction correlation is incomplete. Duplicate-send and mixed-outcome claims cannot be relied on for those events.`,
+      evidence: unidentified.slice(0, 20).map(seq),
+      nextStep:
+        "Check that the runner and the service stamp transactionId on every communication event. Until they do, treat the absence of a duplicate-send finding as unproven rather than as evidence of correctness.",
     });
   }
 
@@ -298,15 +320,42 @@ const analyzeHealth = (events: readonly DiagnosticEvent[]): Finding[] => {
     findByEvent(events, "storage.write.failed"),
   );
   if (storageFailures.length > 0) {
-    findings.push({
-      id: "health.storage",
-      title: "Persistence failed",
-      confidence: "confirmed",
-      detail: `${storageFailures.length} storage operation(s) failed. JobPilot should have entered read-only mode and refused new sends.`,
-      evidence: storageFailures.map(seq),
-      nextStep:
-        "Check storage-summary.json and confirm that no send was attempted after the first failure.",
-    });
+    // The detector must only claim what it checked. It knows storage failed; it
+    // does NOT know whether a send followed, so it looks — rather than
+    // asserting the second half and telling the reader to go and verify it.
+    const firstFailure = storageFailures[0];
+    const sendsAfterFailure =
+      firstFailure === undefined
+        ? []
+        : events.filter(
+            (event) =>
+              event.sequence > firstFailure.sequence &&
+              event.event.startsWith("communication.send."),
+          );
+
+    if (sendsAfterFailure.length > 0) {
+      findings.push({
+        id: "health.storage",
+        title: "Persistence failed and a send followed",
+        // This is the dangerous combination: duplicate-prevention state could
+        // not be recorded, yet a send was attempted anyway.
+        confidence: "confirmed",
+        detail: `${storageFailures.length} storage operation(s) failed, and ${sendsAfterFailure.length} send event(s) followed the first failure at sequence ${firstFailure?.sequence ?? 0}. The storage-health gate did not hold.`,
+        evidence: [...storageFailures.map(seq), ...sendsAfterFailure.map(seq)],
+        nextStep:
+          "This is an invariant violation. Check why the storage-health gate allowed a send after persistence failed.",
+      });
+    } else {
+      findings.push({
+        id: "health.storage",
+        title: "Persistence failed",
+        confidence: "confirmed",
+        // States only what was observed: no send follows the failure.
+        detail: `${storageFailures.length} storage operation(s) failed. No send event follows the first failure, which is the expected fail-closed behaviour.`,
+        evidence: storageFailures.map(seq),
+        nextStep: "Check storage-summary.json for the cause, then confirm storage recovers.",
+      });
+    }
   }
 
   const lockLost = findByEvent(events, "lock.lease.expired").concat(
@@ -443,23 +492,49 @@ const analyzeQueue = (events: readonly DiagnosticEvent[]): Finding[] => {
     });
   }
 
-  const duplicateStarts = new Map<string, number>();
+  // A queue item started more than once is suspicious but NOT on its own proof
+  // of duplicate processing: a restore after a reload legitimately re-starts an
+  // item that was interrupted. What distinguishes the two is whether the item
+  // SETTLED in between — an item that completed and then started again is a
+  // genuine re-run, while one interrupted mid-flight and resumed is normal.
+  const settled = findByEvent(ordered, "queue.item.completed")
+    .concat(
+      findByEvent(ordered, "queue.item.failed"),
+      findByEvent(ordered, "queue.item.skipped"),
+      findByEvent(ordered, "queue.item.blocked"),
+    )
+    .map((event) => event.queueItemId)
+    .filter((id): id is string => id !== undefined);
+
+  const duplicateStarts = new Map<string, DiagnosticEvent[]>();
   for (const event of started) {
     const id = event.queueItemId;
     if (id === undefined) continue;
-    duplicateStarts.set(id, (duplicateStarts.get(id) ?? 0) + 1);
+    const bucket = duplicateStarts.get(id) ?? [];
+    bucket.push(event);
+    duplicateStarts.set(id, bucket);
   }
-  const repeated = [...duplicateStarts.entries()].filter(([, count]) => count > 1);
-  if (repeated.length > 0) {
+
+  for (const [id, restarts] of duplicateStarts) {
+    if (restarts.length <= 1) continue;
+    const reRan = settled.includes(id);
+
     findings.push({
-      id: "queue.duplicate-processing",
-      title: "A queue item was started more than once",
-      confidence: "confirmed",
-      detail: `Item(s) ${repeated.map(([id]) => id).join(", ")} started multiple times, which risks duplicate communication.`,
-      evidence: started
-        .filter((event) => repeated.some(([id]) => id === event.queueItemId))
-        .map(seq),
-      nextStep: "Check the lock timeline: a lost lease allows a second tab to take over mid-item.",
+      id: `queue.duplicate-processing.${id}`,
+      title: reRan
+        ? "A settled queue item was started again"
+        : "A queue item was started more than once",
+      // Only a settled-then-restarted item is provably a re-run. Otherwise the
+      // most likely explanation is a restore, and asserting a fault would send
+      // the reader hunting for duplicate communication that never happened.
+      confidence: reRan ? "confirmed" : "likely",
+      detail: reRan
+        ? `Item ${id} settled and was then started again. That is a genuine re-run and risks duplicate communication.`
+        : `Item ${id} was started ${restarts.length} times without settling in between, which is consistent with a restore after a reload rather than a re-run.`,
+      evidence: restarts.map(seq),
+      nextStep: reRan
+        ? "Check the lock timeline: a lost lease allows a second tab to take over mid-item."
+        : "Check for a queue restore event before treating this as a fault.",
     });
   }
 
