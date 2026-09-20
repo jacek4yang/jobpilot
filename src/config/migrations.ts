@@ -211,6 +211,11 @@ export const migratePersistedRoot = (input: unknown): MigrationResult => {
     // means. We never fabricate a history, and we never discard one.
     applications: current["applications"],
     statistics: current["statistics"],
+    // The in-flight communication transaction is carried through verbatim too.
+    // Dropping it here would be a safety regression, not a data regression: a
+    // lost `send-attempted` intent is indistinguishable from "never sent", and
+    // the runner could then click a second time.
+    ...(current["pendingIntent"] === undefined ? {} : { pendingIntent: current["pendingIntent"] }),
   };
 
   return { ok: true, root, appliedSteps };

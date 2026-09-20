@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { MemoryStorage } from "../../../src/adapters/storage/memory-storage";
 import { createRepository, STORAGE_KEY } from "../../../src/application/repository";
 import { CURRENT_SCHEMA_VERSION } from "../../../src/config/schema";
+import { createIntent, hasSendBeenAttempted } from "../../../src/domain/communication/intent";
+import { asJobId } from "../../../src/domain/support/ids";
 import { createNullLogger } from "../../../src/infrastructure/logging/logger";
 
 const logger = createNullLogger();
@@ -172,5 +174,110 @@ describe("repository", () => {
       expect(loaded.applications).toHaveLength(1);
       expect(loaded.warnings.join(" ")).toContain("malformed");
     });
+  });
+});
+
+describe("in-flight communication transaction", () => {
+  /**
+   * The reload-safety guarantee. The runner commits the point of no return
+   * before clicking and the adapter records the click itself; both must
+   * outlive the page, or a reload between them would permit a second send.
+   */
+  const intent = (overrides: Partial<Parameters<typeof createIntent>[0]> = {}) =>
+    createIntent({
+      id: "intent-1",
+      jobId: asJobId("job-1"),
+      sourceUrl: "https://www.zhipin.com/web/geek/job",
+      messageText: "您好",
+      outgoingBaseline: 0,
+      now: 1_700_000_000_000,
+      ttlMs: 180_000,
+      expectedJobTitle: "后端开发工程师",
+      ...overrides,
+    });
+
+  it("round-trips a committed transaction across a reload", async () => {
+    const storage = new MemoryStorage();
+    const repository = createRepository(storage, logger);
+
+    const loaded = await repository.load();
+    const committed = {
+      ...intent(),
+      phase: "send-attempted" as const,
+      sendAttemptedAt: 1_700_000_000_000,
+    };
+
+    await repository.save({
+      config: loaded.config,
+      applications: [],
+      pendingIntent: committed,
+    });
+
+    const reloaded = await repository.load();
+    expect(reloaded.pendingIntent).toBeDefined();
+    expect(reloaded.pendingIntent?.phase).toBe("send-attempted");
+    expect(reloaded.pendingIntent?.sendAttemptedAt).toBe(1_700_000_000_000);
+  });
+
+  it("preserves clickDispatched, which is what forbids a second click", async () => {
+    const storage = new MemoryStorage();
+    const repository = createRepository(storage, logger);
+    const loaded = await repository.load();
+
+    await repository.save({
+      config: loaded.config,
+      applications: [],
+      pendingIntent: {
+        ...intent(),
+        phase: "send-attempted" as const,
+        sendAttemptedAt: 1_700_000_000_000,
+        clickDispatched: 1_700_000_000_500,
+      },
+    });
+
+    const reloaded = await repository.load();
+    // Without this field surviving, a reload would look like "committed but
+    // never clicked" and the runner could click again.
+    expect(reloaded.pendingIntent?.clickDispatched).toBe(1_700_000_000_500);
+    expect(
+      reloaded.pendingIntent === undefined ? true : hasSendBeenAttempted(reloaded.pendingIntent),
+    ).toBe(true);
+  });
+
+  it("reports no transaction when none was stored", async () => {
+    const repository = createRepository(new MemoryStorage(), logger);
+    const loaded = await repository.load();
+    expect(loaded.pendingIntent).toBeUndefined();
+  });
+
+  it("discards an unreadable transaction rather than guessing at it", async () => {
+    const storage = new MemoryStorage({
+      [STORAGE_KEY]: {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        config: {},
+        applications: [],
+        statistics: {},
+        pendingIntent: { id: "broken", phase: "not-a-phase" },
+      },
+    });
+    const repository = createRepository(storage, logger);
+
+    const loaded = await repository.load();
+    // A half-parsed transaction must never authorise a send, so it is dropped
+    // and the user is told, rather than being reconstructed optimistically.
+    expect(loaded.pendingIntent).toBeUndefined();
+    expect(loaded.warnings.join(" ")).toContain("unreadable");
+  });
+
+  it("omits the field entirely once no transaction is in flight", async () => {
+    const storage = new MemoryStorage();
+    const repository = createRepository(storage, logger);
+    const loaded = await repository.load();
+
+    await repository.save({ config: loaded.config, applications: [], pendingIntent: intent() });
+    await repository.save({ config: loaded.config, applications: [], pendingIntent: undefined });
+
+    const stored = await storage.get<Record<string, unknown>>(STORAGE_KEY);
+    expect("pendingIntent" in (stored ?? {})).toBe(false);
   });
 });

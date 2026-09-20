@@ -14,6 +14,8 @@ import { CURRENT_SCHEMA_VERSION, createDefaultConfig } from "../config/schema";
 import { validateConfig } from "../config/validate";
 import type { ApplicationRecord } from "../domain/application/application";
 import { createApplicationRecord } from "../domain/application/application";
+import type { CommunicationIntent } from "../domain/communication/intent";
+import { deserializeIntent, serializeIntent } from "../domain/communication/intent";
 import type { JobId, PlatformId } from "../domain/support/ids";
 import { asJobId } from "../domain/support/ids";
 import type { Logger } from "../ports/logger";
@@ -39,6 +41,14 @@ export interface LoadResult {
    * read.
    */
   readonly writeBlocked: boolean;
+  /**
+   * The in-flight communication transaction recovered from storage, if any.
+   *
+   * A transaction in `send-attempted` here means a send may already have been
+   * dispatched before the page went away. The caller must resolve it by
+   * observation, never by re-sending.
+   */
+  readonly pendingIntent: CommunicationIntent | undefined;
 }
 
 export interface Repository {
@@ -52,6 +62,8 @@ export interface Repository {
   save(root: {
     config: JobPilotConfig;
     applications: readonly ApplicationRecord[];
+    /** The in-flight transaction, or undefined when none is active. */
+    pendingIntent?: CommunicationIntent | undefined;
   }): Promise<{ readonly saved: boolean; readonly reason?: string }>;
   /** Wipes the persisted document. Used by the "reset" action. */
   clear(): Promise<void>;
@@ -105,6 +117,7 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
           warnings,
           fresh: true,
           writeBlocked: false,
+          pendingIntent: undefined,
         };
       }
 
@@ -128,6 +141,10 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
           warnings,
           fresh: false,
           writeBlocked: true,
+          // The document is unreadable, so we cannot trust anything in it —
+          // including any intent. Reporting none keeps the runner from acting
+          // on a half-parsed transaction; the read-only warning explains why.
+          pendingIntent: undefined,
         };
       }
 
@@ -142,6 +159,15 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
           errors: validated.errors,
         });
         warnings.push(`config invalid: ${validated.errors.join("; ")}`);
+      }
+
+      // Recover the in-flight transaction. `deserializeIntent` validates
+      // strictly and returns undefined for anything it cannot fully parse, so a
+      // corrupt intent is dropped rather than guessed at — which errs toward
+      // asking the user instead of toward an unintended send.
+      const recoveredIntent = deserializeIntent(migrated.root.pendingIntent);
+      if (migrated.root.pendingIntent !== undefined && recoveredIntent === undefined) {
+        warnings.push("a stored communication transaction was unreadable and has been discarded");
       }
 
       const applications = deserializeHistory(migrated.root.applications);
@@ -160,10 +186,11 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
         warnings,
         fresh: false,
         writeBlocked: false,
+        pendingIntent: recoveredIntent,
       };
     },
 
-    async save({ config, applications }) {
+    async save({ config, applications, pendingIntent }) {
       if (writesBlocked) {
         // Silently refusing is deliberate: the caller may be a timer or an
         // effect, and throwing would surface an error the user cannot act on.
@@ -179,6 +206,9 @@ export const createRepository = (storage: Storage, logger: Logger): Repository =
         config,
         applications: serializeApplications(applications),
         statistics: {},
+        // Omitted entirely when there is no transaction, so storage does not
+        // accumulate a stale intent after one completes.
+        ...(pendingIntent === undefined ? {} : { pendingIntent: serializeIntent(pendingIntent) }),
       };
       await storage.set(STORAGE_KEY, root);
       return { saved: true };

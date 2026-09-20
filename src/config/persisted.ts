@@ -22,4 +22,16 @@ export interface PersistedRoot {
   readonly applications: unknown;
   /** Serialised statistics. Same reasoning as `applications`. */
   readonly statistics: unknown;
+  /**
+   * The in-flight communication transaction, when one exists.
+   *
+   * This is the record that makes "never send twice" survive a reload. The
+   * runner stamps the point of no return before clicking, and the adapter
+   * stamps `clickDispatched` when it actually clicks; both must outlive the
+   * page, or a reload between them would permit a second send.
+   *
+   * `undefined` when no transaction is in flight. Same untyped reasoning as
+   * `applications`: the shape is owned by the domain.
+   */
+  readonly pendingIntent?: unknown;
 }

@@ -11,8 +11,10 @@
  */
 
 import { readBossRecruiterActivity } from "../adapters/boss/activity";
+import { createCommunicationAction } from "../adapters/boss/communication";
 import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
 import { createNavigatorLock } from "../adapters/userscript/navigator-lock";
+import { createCommunicationRunner } from "../application/communication-runner";
 import { createController } from "../application/controller";
 import {
   createDiscoveryService,
@@ -27,6 +29,7 @@ import { createRepository } from "../application/repository";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import type { CommunicationIntent } from "../domain/communication/intent";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
@@ -61,6 +64,20 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   // discovered matches — discovery itself never enqueues, which is the central
   // product rule that keeps a search from turning into unattended contact.
   const queue = createTaskQueue();
+
+  // The in-flight communication transaction. Kept in memory for the runner and
+  // written through to storage on every change, so a reload between committing
+  // and clicking — or between clicking and observing — is recoverable.
+  let pendingIntent: CommunicationIntent | undefined = loaded.pendingIntent;
+
+  if (pendingIntent !== undefined) {
+    deps.logger.warn("bootstrap", "recovered an unfinished communication transaction", {
+      jobId: pendingIntent.jobId,
+      phase: pendingIntent.phase,
+      clickDispatched: pendingIntent.clickDispatched ?? null,
+      consequence: "it will be verified, never re-sent",
+    });
+  }
 
   for (const warning of loaded.warnings) {
     deps.logger.warn("bootstrap", warning);
@@ -244,8 +261,35 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   });
 
   const persist = async (): Promise<void> => {
-    await repository.save({ config: effectiveConfig, applications: history.serialize() });
+    await repository.save({
+      config: effectiveConfig,
+      applications: history.serialize(),
+      pendingIntent,
+    });
   };
+
+  const communicationAction = createCommunicationAction({
+    document: globalThis.document,
+    clock: deps.clock,
+    logger: deps.logger,
+  });
+
+  const communicationRunner = createCommunicationRunner({
+    action: communicationAction,
+    logger: deps.logger,
+    clock: deps.clock,
+    persistIntent: async (intent) => {
+      pendingIntent = intent;
+      await persist();
+    },
+    clearIntent: async () => {
+      pendingIntent = undefined;
+      await persist();
+    },
+    // The durable record wins over any caller's in-memory copy, so replaying a
+    // stale intent cannot cause a second click.
+    readPersistedIntent: async () => pendingIntent,
+  });
 
   const orchestrator = createOrchestrator({
     platform: deps.platform,
@@ -503,9 +547,52 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   refreshPageKind();
   render();
 
+  /**
+   * Resolves a transaction that was interrupted by a reload.
+   *
+   * This is the one job the runner must do automatically, and the reason the
+   * intent is persisted at all. If a click was already dispatched, the ONLY
+   * correct action is to look for the message and report what we find — never
+   * to send again. A transaction that had not reached the click is abandoned
+   * safely.
+   */
+  const settleRecoveredTransaction = async (): Promise<void> => {
+    const recovered = pendingIntent;
+    if (recovered === undefined) return;
+
+    if (recovered.phase !== "send-attempted") {
+      // Nothing was clicked, so there is nothing to verify.
+      deps.logger.info("bootstrap", "discarding an uncommitted transaction", {
+        jobId: recovered.jobId,
+        phase: recovered.phase,
+      });
+      await communicationRunner.run(recovered);
+      return;
+    }
+
+    // A click may have gone out. Verify only; the runner refuses to re-send
+    // because it consults the persisted intent first.
+    const outcome = await communicationRunner.run(recovered, { observeTimeoutMs: 6_000 });
+    deps.logger.warn("bootstrap", "resolved an interrupted transaction", {
+      jobId: recovered.jobId,
+      outcome: outcome.kind,
+    });
+    panel.toast(
+      outcome.kind === "sent" ? "success" : "warn",
+      outcome.kind === "sent"
+        ? "Recovered: the earlier message was confirmed sent."
+        : "A message may have been sent. Check the conversation; it will not be re-sent.",
+    );
+  };
+
+  if (pendingIntent !== undefined) {
+    void settleRecoveredTransaction();
+  }
+
   deps.logger.info("bootstrap", "JobPilot ready", {
     version: VERSION,
     mode: effectiveConfig.automation.mode,
+    recoveredTransaction: pendingIntent !== undefined,
   });
 
   return {
