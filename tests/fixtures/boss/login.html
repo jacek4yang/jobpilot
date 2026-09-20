@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests. Used to prove the adapter fails
+  closed (PageKind "login-required") instead of scanning a page behind a login
+  wall. The real BOSS login surface was never inspected.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>登录 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <div class="login-register" data-jobpilot-guard="login-required">
+      <p>登录后查看完整职位信息</p>
+    </div>
+
+    <form class="login-form" data-jobpilot-guard="login-form" action="/login" method="post">
+      <div class="login-form__body">
+        <label for="account">手机号</label>
+        <input id="account" name="account" type="tel" autocomplete="off" />
+        <label for="code">短信验证码</label>
+        <input id="code" name="code" type="text" autocomplete="off" />
+        <button type="submit">登录</button>
+      </div>
+    </form>
+  </body>
+</html>

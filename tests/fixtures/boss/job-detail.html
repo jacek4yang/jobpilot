@@ -1,0 +1,81 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests and deliberately shaped to match
+  src/adapters/boss/selectors.ts. The real BOSS Zhipin detail DOM was never
+  inspected; passing against this file proves parser plumbing only.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>职位详情 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main class="job-detail" data-jobpilot-detail>
+      <h1 class="job-detail__title" itemprop="title">前端开发工程师</h1>
+
+      <div class="job-detail__salary" itemprop="baseSalary">20-35K·14薪</div>
+      <div class="job-detail__location" itemprop="jobLocation">北京·朝阳区·望京</div>
+
+      <div class="job-detail__tags" data-jobpilot-field="job-tags">
+        <span class="job-detail__tag">本科</span>
+        <span class="job-detail__tag">3-5年</span>
+      </div>
+
+      <section class="job-detail__company" itemprop="hiringOrganization">
+        <span class="job-detail__company-name" itemprop="name">未来科技有限公司</span>
+        <ul class="job-detail__company-meta" data-jobpilot-field="company-meta">
+          <li class="job-detail__meta-item">互联网</li>
+          <li class="job-detail__meta-item">已上市</li>
+          <li class="job-detail__meta-item">1000-9999人</li>
+        </ul>
+      </section>
+
+      <section class="job-detail__description" data-jobpilot-field="description">
+        负责公司核心业务系统的前端开发与维护，参与需求评审与技术方案设计。与产品、设计、后端紧密协作，持续优化页面性能与用户体验。
+      </section>
+
+      <ul class="job-detail__requirements" data-jobpilot-field="requirements">
+        <li>本科及以上学历，计算机相关专业，3 年以上前端开发经验；</li>
+        <li>精通 JavaScript / TypeScript，熟悉 React 或 Vue 及其生态；</li>
+        <li>熟悉前端工程化与性能优化，具备良好的代码规范意识；</li>
+        <li>具备良好的沟通能力与团队协作精神。</li>
+      </ul>
+
+      <div class="job-detail__skills" data-jobpilot-field="skills">
+        <span class="job-detail__skill">TypeScript</span>
+        <span class="job-detail__skill">React</span>
+        <span class="job-detail__skill">Webpack</span>
+      </div>
+
+      <div class="job-detail__recruiter">
+        <span class="job-detail__recruiter-name" data-jobpilot-field="recruiter">李思远</span>
+        <span class="job-detail__recruiter-title" data-jobpilot-field="recruiter-title">
+          招聘主管
+        </span>
+      </div>
+
+      <div class="job-detail__actions">
+        <button
+          type="button"
+          class="job-detail__apply"
+          data-jobpilot-action="apply"
+          aria-label="立即沟通"
+        >
+          立即沟通
+        </button>
+      </div>
+
+      <!--
+        Post-click confirmation evidence. Kept present-but-inert here: the apply
+        action unit tests toggle it to exercise both the `submitted` and the
+        `needs-confirmation` branches.
+      -->
+      <div class="job-detail__applied-badge" data-jobpilot-state="applied" hidden>
+        已投递
+      </div>
+    </main>
+  </body>
+</html>

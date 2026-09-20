@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests. Deliberately has NO recognisable
+  BOSS structure at all (no list root, no detail root, no guard markers) so the
+  adapter must fail closed to "unknown"/"unsupported" rather than improvise.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Unrelated Page - synthetic fixture</title>
+  </head>
+  <body>
+    <nav><a href="/">Home</a> | <a href="/about">About</a></nav>
+    <article id="content">
+      <h1>A page that is not a job board</h1>
+      <p>
+        This fixture exists to prove the adapter refuses to act on pages whose
+        structure it does not recognise.
+      </p>
+    </article>
+    <footer>© synthetic fixture</footer>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests. Used to prove the adapter fails
+  closed (PageKind "captcha") and never attempts to solve or bypass a challenge.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>安全验证 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <div class="captcha-container" id="captcha" data-jobpilot-guard="captcha">
+      <p>请完成安全验证</p>
+      <p>拖动滑块完成拼图</p>
+      <div class="captcha-container__slider" role="slider" aria-label="拖动滑块"></div>
+    </div>
+  </body>
+</html>

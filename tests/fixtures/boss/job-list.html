@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests and deliberately shaped to match
+  src/adapters/boss/selectors.ts. The real BOSS Zhipin DOM was never inspected;
+  passing against this file proves parser plumbing only, not real-site support.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>职位列表 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main data-jobpilot-list="job-list">
+      <ul class="job-list">
+        <li class="job-card" data-jobpilot-card data-job-id="boss-1001">
+          <a class="job-card__link" href="/job_detail/boss-1001.html?ka=search-list-1&lid=x9">
+            <h3 class="job-card__title" itemprop="title">前端开发工程师</h3>
+          </a>
+          <span class="job-card__salary" itemprop="baseSalary">20-35K·14薪</span>
+          <span class="job-card__location" itemprop="jobLocation">北京·朝阳区·望京</span>
+          <div class="job-card__company" itemprop="hiringOrganization">
+            <span itemprop="name">未来科技有限公司</span>
+          </div>
+          <div class="job-card__tags">
+            <span class="job-card__tag">本科</span>
+            <span class="job-card__tag">3-5年</span>
+          </div>
+        </li>
+
+        <li class="job-card" data-jobpilot-card data-job-id="boss-1002">
+          <a class="job-card__link" href="/job_detail/boss-1002.html?ka=search-list-2">
+            <h3 class="job-card__title" itemprop="title">高级后端开发工程师（Java）</h3>
+          </a>
+          <span class="job-card__salary" itemprop="baseSalary">30-50K·15薪</span>
+          <span class="job-card__location" itemprop="jobLocation">上海·浦东新区·张江</span>
+          <div class="job-card__company" itemprop="hiringOrganization">
+            <span itemprop="name">云图网络技术有限公司</span>
+          </div>
+          <div class="job-card__tags">
+            <span class="job-card__tag">硕士</span>
+            <span class="job-card__tag">5-10年</span>
+          </div>
+        </li>
+
+        <li class="job-card" data-jobpilot-card data-job-id="boss-1003">
+          <a class="job-card__link" href="/job_detail/boss-1003.html?ka=search-list-3">
+            <h3 class="job-card__title" itemprop="title">资深产品经理</h3>
+          </a>
+          <span class="job-card__salary" itemprop="baseSalary">25-40K</span>
+          <span class="job-card__location" itemprop="jobLocation">深圳·南山区·科技园</span>
+          <div class="job-card__company" itemprop="hiringOrganization">
+            <span itemprop="name">智联数据服务有限公司</span>
+          </div>
+          <div class="job-card__tags">
+            <span class="job-card__tag">本科</span>
+            <span class="job-card__tag">3-5年</span>
+          </div>
+        </li>
+
+        <li class="job-card" data-jobpilot-card data-job-id="boss-1004">
+          <a class="job-card__link" href="/job_detail/boss-1004.html?ka=search-list-4">
+            <h3 class="job-card__title" itemprop="title">应届生招聘 · 数据分析师</h3>
+          </a>
+          <span class="job-card__salary" itemprop="baseSalary">面议</span>
+          <span class="job-card__location" itemprop="jobLocation">杭州·余杭区</span>
+          <div class="job-card__company" itemprop="hiringOrganization">
+            <span itemprop="name">星辰云计算有限公司</span>
+          </div>
+          <div class="job-card__tags">
+            <span class="job-card__tag">本科</span>
+            <span class="job-card__tag">应届生</span>
+          </div>
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>

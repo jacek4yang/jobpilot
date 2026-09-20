@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Hand-authored for JobPilot adapter unit tests. Represents a well-formed search
+  results page that legitimately contains zero postings, so the adapter must
+  report "empty-result" rather than "job-list" or "unknown".
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>暂无职位 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <main data-jobpilot-list="job-list">
+      <div class="job-list-empty" data-jobpilot-guard="empty">
+        <p>暂无职位</p>
+        <p>换个关键词试试吧</p>
+      </div>
+      <ul class="job-list"></ul>
+    </main>
+  </body>
+</html>
