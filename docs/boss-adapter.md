@@ -38,8 +38,9 @@ Three mechanisms keep this honest:
 two non-verified categories and exists only to distinguish "we control this
 fixture" from "we are guessing".
 
-There are **32 selector entries** across the two registries. Of those, the
-`unverified` ones are listed in §2. Everything else is `fixture-only`.
+There are **49 selector entries** across the two registries: 32 in the page
+registry and 17 in the communication registry. Of those, the `unverified` ones
+are listed in §2. Everything else is `fixture-only`.
 
 ---
 
@@ -538,7 +539,7 @@ would send the user to the wrong city's results.
 
 ### 6.1 Provenance
 
-`src/adapters/boss/data/city-codes.ts` holds **377 entries**, each mapping a
+`src/adapters/boss/data/city-codes.ts` holds **374 entries**, each mapping a
 Chinese city name to a 9-digit code.
 
 **Where it came from:** the public city table published in

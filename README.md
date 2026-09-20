@@ -31,7 +31,7 @@ so it comes first.
 | **BOSS adapter: list/detail parsing** | **Fixture-only** | `tests/integration/boss-parser.test.ts`. Same caveat |
 | **BOSS adapter: applying to a job** | **Fixture-only + unverified selectors** | `tests/unit/...` and fixtures only. The live apply flow was never observed |
 | **BOSS adapter: sending a message** | **Fixture-only + unverified selectors** | The real chat DOM, send button, success dialog and failure markers were never inspected |
-| **BOSS city code table** | **Vendored, not verified live** | Derived from a public MIT-licensed table (377 entries); not confirmed against BOSS's own API |
+| **BOSS city code table** | **Vendored, not verified live** | Derived from a public MIT-licensed table (374 entries); not confirmed against BOSS's own API |
 
 **The real BOSS Zhipin DOM was never inspected while writing the BOSS adapter.**
 Every selector in `src/adapters/boss/selectors.ts` carries a `confidence` field
@@ -57,7 +57,7 @@ you intend to help verify it. See [`docs/boss-adapter.md`](docs/boss-adapter.md)
 - Two-stage evaluation. Stage A filters on card data alone, so a rejected job
   never costs a navigation. Stage B opens only survivors and reads the full
   posting.
-- City validation. A city name resolves against a vendored 377-entry BOSS code
+- City validation. A city name resolves against a vendored 374-entry BOSS code
   table or discovery refuses to start. There is no default city — an unknown name
   fails explicitly with suggestions.
 - Every accept and reject carries an ordered rule trace. There is no score
