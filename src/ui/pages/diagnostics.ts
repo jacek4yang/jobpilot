@@ -33,6 +33,10 @@ export interface DiagnosticsViewInput {
   readonly currentTransaction?: string | undefined;
   readonly lastError?: string | undefined;
   readonly lastSelectorFailure?: string | undefined;
+  /** Outcome of the most recent export attempt, rendered until the next one. */
+  readonly exportResult?:
+    | { readonly ok: boolean; readonly fileName?: string; readonly error?: string }
+    | undefined;
 }
 
 export const renderDiagnosticsPage = (
@@ -41,6 +45,10 @@ export const renderDiagnosticsPage = (
   callbacks: DiagnosticsCallbacks,
 ): HTMLElement => {
   const container = el(doc, "div", "jobpilot-page-diagnostics");
+
+  if (input.exportResult !== undefined) {
+    container.append(renderExportResult(doc, input.exportResult));
+  }
 
   const headerCard = el(doc, "div", "jobpilot-card");
   const title = el(doc, "h3", undefined, t("diagnostics.title"));

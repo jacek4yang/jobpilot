@@ -39,6 +39,7 @@ import { createRepository } from "../application/repository";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
+import { createBundleExporter } from "../diagnostics/bundle/exporter";
 import { EVENTS } from "../diagnostics/event";
 import { DEFAULT_EFFECT_BUDGETS, traceOrchestrator } from "../diagnostics/instrument/effect-trace";
 import { fingerprintPage, recordPageFingerprint } from "../diagnostics/instrument/page-fingerprint";
@@ -836,6 +837,50 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Diagnostic bundle export
+  //
+  // The Diagnostics page buttons drive this. The exporter assembles the same
+  // BundleInputs the analyzer consumes, builds the ZIP, and delivers it via
+  // picker-or-download. The result is kept so the next render can show it on
+  // the Diagnostics page; a failed export must never clear diagnostic memory.
+  // -------------------------------------------------------------------------
+  const bundleExporter = createBundleExporter({
+    build: deps.build,
+    recorder: deps.recorder,
+    config: () => effectiveConfig,
+    sections: () => ({
+      "queue.json": queue.snapshot(),
+      ...(pendingIntent === undefined ? {} : { "transactions.json": [pendingIntent] }),
+    }),
+    health: () => ({
+      storageHealthy: tracedStorage.health().healthy,
+      ...(tracedStorage.health().lastFailure === undefined
+        ? {}
+        : { storageFailure: String(tracedStorage.health().lastFailure) }),
+      lockOwner: isOwner ? "this-tab" : "another-tab",
+      humanVerificationEncountered: verification.state().phase !== "clear",
+    }),
+    environment: () => ({
+      url: globalThis.location?.href,
+      userAgent: globalThis.navigator?.userAgent,
+    }),
+    now: () => deps.clock.now(),
+  });
+  let lastExportResult: { ok: boolean; fileName?: string; error?: string } | undefined;
+
+  const runExport = async (): Promise<void> => {
+    const result = await bundleExporter.exportBundle();
+    lastExportResult = result;
+    panel.toast(
+      result.ok ? "success" : "error",
+      result.ok
+        ? `Diagnostic bundle exported: ${result.fileName ?? "bundle"}`
+        : `Export failed: ${result.error ?? "unknown error"} — diagnostic memory kept`,
+    );
+    render();
+  };
+
   const render = (): void => {
     if (controller === undefined) return;
     const context = controller.context();
@@ -1022,6 +1067,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           recorder: deps.recorder,
           verification: verification.state(),
           storageHealth: tracedStorage.health(),
+          exportResult: lastExportResult,
           isQueueOwner: isOwner,
           route: currentPageKind,
           state: context.state,
@@ -1031,25 +1077,44 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         },
         {
           startSession: () => {
+            // The runbook requires a deliberate, named session: the scenario id
+            // is stamped onto every event so a bundle can be attributed to a
+            // matrix row. Prompt like the recovery flows do; a cancel means
+            // "do not start", which must never be treated as a session.
+            const rawId = globalThis.prompt?.(
+              "Scenario ID (exactly as in TEST_MATRIX, e.g. T00):",
+              "T00",
+            );
+            if (rawId === null || rawId === undefined) return;
+            const scenarioId = rawId
+              .trim()
+              .toUpperCase()
+              .replace(/[^A-Z0-9_-]/g, "");
+            if (scenarioId.length === 0) return;
+            const rawName = globalThis.prompt?.("Short scenario name (optional):", "") ?? "";
             const now = deps.clock.now();
             deps.recorder.startSession(
               createDiagnosticSession({
                 id: newSessionId(now, () => deps.random.next()),
-                scenarioId: "MANUAL",
-                scenarioName: "Manual interactive session",
+                scenarioId,
+                scenarioName: rawName.trim(),
                 startedAt: now,
                 build: deps.build,
               }),
             );
-            panel.toast("info", "Started diagnostic session");
+            panel.toast("info", `Started diagnostic session ${scenarioId}`);
             render();
           },
           finishAndExport: () => {
-            panel.toast("info", "Diagnostic session finished");
-            render();
+            // Close the session first so the bundle's manifest carries the
+            // final status, then run the same export path as "Export Now".
+            deps.recorder.finishSession("completed");
+            panel.toast("info", "Diagnostic session finished — exporting bundle…");
+            void runExport();
           },
           exportNow: () => {
-            panel.toast("info", "Exporting diagnostic bundle...");
+            panel.toast("info", "Exporting diagnostic bundle…");
+            void runExport();
           },
           copySessionId: () => {
             if (globalThis.navigator?.clipboard) {
