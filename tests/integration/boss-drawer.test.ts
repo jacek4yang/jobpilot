@@ -138,4 +138,37 @@ describe("boss drawer-first loadJob", () => {
     const jobs = await platform.scanJobs();
     expect(jobs).toHaveLength(4);
   });
+
+  it("aborts instead of returning a stale detail when the signal fires during the drawer wait", async () => {
+    // Regression: a PAUSE/STOP during the drawer-open wait used to fall
+    // through to the navigation fallback. In a real SPA the drawer then
+    // renders, the page type check passes, and loadJob resolves with a
+    // detail the caller has already cancelled — the batch's stale-result
+    // guard swallows it silently, and a browser pause/resume journey can
+    // surface an unrelated "failed" terminal state instead.
+    //
+    // Reproduced here by moving the drawer out of the document and
+    // re-inserting it mid-wait, the way the live SPA renders it after the
+    // card click.
+    const window = loadFixture(DRAWER_FIXTURE);
+    const root = documentOf(window);
+    const platform = createBossPlatform(
+      makeDeps(window, { drawerTimeoutMs: 2_000, drawerPollIntervalMs: 10 }),
+    );
+    const summary = await summary1002(platform);
+    const rootList = root.querySelector(".job-list-container");
+    const drawer = root.querySelector(".job-detail-container");
+    if (drawer === null || rootList === null) {
+      throw new Error("expected the fixture to ship a list container and a drawer node");
+    }
+
+    // The host renders the detail drawer asynchronously: it is absent while
+    // the wait starts, and appears mid-wait — after the abort has fired.
+    drawer.remove();
+    setTimeout(() => rootList.append(drawer), 30);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 15);
+
+    await expect(platform.loadJob(summary, { signal: controller.signal })).rejects.toThrow();
+  });
 });

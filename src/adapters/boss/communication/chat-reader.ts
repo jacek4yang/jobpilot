@@ -19,8 +19,8 @@
  *     mode that would make the adapter send a second message.
  */
 
-import type { ChatIdentity } from "../../../domain/communication/identity";
-import { extractJobIds, isPlausibleJobId } from "./job-id";
+import type { ChatIdentity, JobIdEvidence } from "../../../domain/communication/identity";
+import { extractJobIds } from "./job-id";
 import { COMMUNICATION_SELECTORS, normalizeText, queryAll, queryFirst } from "./selectors";
 
 export { extractJobIds, isPlausibleJobId } from "./job-id";
@@ -172,54 +172,42 @@ const asElement = (node: ParentNode): Element | null => {
   return null;
 };
 
-/**
- * Collects the raw strings inside ONE scope that might identify the job.
- *
- * Scope discipline: the chat root's own attributes and the job link inside it are
- * read first and, when that yields an id, the search does NOT widen — so a
- * recommendation rail or a stale detail pane elsewhere on the page cannot
- * contribute a competing id. Widening only happens when the chat root carried no
- * id at all, in which case the extra candidates are a strictly better fallback
- * than "no evidence".
- *
- * Failure mode: returns `[]` for a root with nothing id-shaped in it.
- */
-const collectIdentityHints = (root: ParentNode, chatRoot: Element | null): readonly string[] => {
-  const attributes = COMMUNICATION_SELECTORS.chatJobIdAttribute.candidates;
+const idsFrom = (value: string, strength: JobIdEvidence["strength"]): JobIdEvidence[] =>
+  extractJobIds([value]).map((id) => ({ id, strength }));
 
-  /** Scope-local hints: this node's own attributes plus the job link inside it. */
-  const hintsWithin = (scope: ParentNode): readonly string[] => {
-    const hints: string[] = [];
+/** Collects identity ids without erasing where each value came from. */
+const collectIdentityEvidence = (
+  root: ParentNode,
+  chatRoot: Element | null,
+): readonly JobIdEvidence[] => {
+  const attributes = COMMUNICATION_SELECTORS.chatJobIdAttribute.candidates;
+  const within = (scope: ParentNode, scopedToChat: boolean): JobIdEvidence[] => {
+    const evidence: JobIdEvidence[] = [];
     const self = asElement(scope);
     if (self !== null) {
       for (const attribute of attributes) {
         const value = self.getAttribute(attribute);
-        if (value !== null) hints.push(value);
+        if (value !== null) {
+          evidence.push(...idsFrom(value, scopedToChat ? "platform" : "page-data"));
+        }
       }
     }
     const link = queryFirst(scope, COMMUNICATION_SELECTORS.jobTitleInChat);
-    if (link !== null) {
-      const href = link.element.getAttribute("href");
-      if (href !== null) hints.push(href);
-    }
+    const href = link?.element.getAttribute("href");
+    if (href !== null && href !== undefined) evidence.push(...idsFrom(href, "canonical-url"));
     for (const element of elementDescendants(scope)) {
       for (const attribute of attributes) {
         const value = element.getAttribute(attribute);
-        if (value !== null) hints.push(value);
+        if (value !== null) evidence.push(...idsFrom(value, "page-data"));
       }
     }
-    return hints;
+    return evidence;
   };
 
-  if (chatRoot === null) return hintsWithin(root);
-
-  const scoped = hintsWithin(chatRoot);
-  if (extractJobIds(scoped).length > 0) return scoped;
-  // No id inside the conversation region. Widening to the whole document is
-  // weaker evidence, so the widened hints are additionally filtered down to the
-  // ones that at least *look* like ids — a page-level `data-job-id` on an
-  // unrelated recommendation card must not become authoritative identity.
-  return [...scoped, ...hintsWithin(root).filter((hint) => isPlausibleJobId(hint))];
+  if (chatRoot === null) return within(root, false);
+  const scoped = within(chatRoot, true);
+  if (scoped.length > 0) return scoped;
+  return within(root, false).map((item) => ({ ...item, strength: "fallback" }));
 };
 
 /**
@@ -239,7 +227,8 @@ export const readChatIdentity = (root: ParentNode): ChatIdentity | null => {
   const scope: ParentNode = chatRoot ?? root;
   if (chatRoot === null && findEditor(root) === null) return null;
 
-  const jobIds = extractJobIds(collectIdentityHints(root, chatRoot));
+  const jobIdEvidence = collectIdentityEvidence(root, chatRoot);
+  const jobIds = [...new Set(jobIdEvidence.map((item) => item.id))];
 
   const header = queryFirst(scope, COMMUNICATION_SELECTORS.chatHeader);
   const title = queryFirst(scope, COMMUNICATION_SELECTORS.jobTitleInChat);
@@ -252,7 +241,7 @@ export const readChatIdentity = (root: ParentNode): ChatIdentity | null => {
   ];
   const text = normalizeText(parts.filter((part) => part.length > 0).join(" "));
 
-  return { jobIds, text };
+  return { jobIds, jobIdEvidence, text };
 };
 
 /**

@@ -63,6 +63,36 @@ describe("chat identity matching", () => {
       const verdict = matchChatIdentity({ jobId: "abc123" }, chat("recruiter header", ["abc123"]));
       expect(verdict.kind).toBe("match");
     });
+
+    it("does not let a weak matching id override a contradictory strong id", () => {
+      const verdict = matchChatIdentity(
+        { jobId: "expected", title: "Backend Engineer", company: "示例科技" },
+        {
+          jobIds: ["expected", "different"],
+          jobIdEvidence: [
+            { id: "different", strength: "platform" },
+            { id: "expected", strength: "fallback" },
+          ],
+          text: "Backend Engineer 示例科技",
+        },
+      );
+      expect(verdict.kind).toBe("mismatch");
+    });
+
+    it("rejects contradictory ids at the same strongest level", () => {
+      const verdict = matchChatIdentity(
+        { jobId: "expected" },
+        {
+          jobIds: ["expected", "different"],
+          jobIdEvidence: [
+            { id: "expected", strength: "canonical-url" },
+            { id: "different", strength: "canonical-url" },
+          ],
+          text: "",
+        },
+      );
+      expect(verdict.kind).toBe("mismatch");
+    });
   });
 
   describe("text-only matching", () => {
@@ -101,6 +131,30 @@ describe("chat identity matching", () => {
 
     it("is insufficient when there is no identity to compare at all", () => {
       expect(matchChatIdentity({}, chat("anything")).kind).toBe("insufficient");
+    });
+
+    it("does not confuse the same recruiter on a different job", () => {
+      const verdict = matchChatIdentity(
+        { title: "Backend Engineer", recruiter: "Recruiter A" },
+        chat("Frontend Engineer Recruiter A"),
+      );
+      expect(verdict.kind).toBe("insufficient");
+    });
+
+    it("does not confuse a different posting at the same company", () => {
+      const verdict = matchChatIdentity(
+        { title: "Backend Engineer", company: "Example Company" },
+        chat("Frontend Engineer Example Company"),
+      );
+      expect(verdict.kind).toBe("insufficient");
+    });
+
+    it("does not confuse the same title at a different company", () => {
+      const verdict = matchChatIdentity(
+        { title: "Backend Engineer", company: "Expected Company" },
+        chat("Backend Engineer Different Company"),
+      );
+      expect(verdict.kind).toBe("insufficient");
     });
   });
 

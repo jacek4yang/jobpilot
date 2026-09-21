@@ -136,4 +136,43 @@ describe("validateSelectionSnapshot", () => {
       ok: true,
     });
   });
+
+  it("keeps selection by identity when the listing is reordered", () => {
+    const second = {
+      id: "job-2",
+      title: "Frontend",
+      companyName: "Example B",
+      url: "/job_detail/job-2",
+    };
+    const both = new Map([...selected, [second.id, second]]);
+    expect(validateSelectionSnapshot(both, href, href, [second, ...selected.values()])).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects the same title and company when the platform job id changes", () => {
+    const strong = new Map([
+      [
+        "fingerprint-1",
+        {
+          id: "fingerprint-1",
+          title: "Backend",
+          companyName: "Example A",
+          platformJobId: "native-1",
+          idIsPlatformNative: true,
+        },
+      ],
+    ]);
+    expect(
+      validateSelectionSnapshot(strong, href, href, [
+        {
+          id: "fingerprint-1",
+          title: "Backend",
+          companyName: "Example A",
+          platformJobId: "native-2",
+          idIsPlatformNative: true,
+        },
+      ]),
+    ).toEqual({ ok: false, reason: "identity-conflict", jobId: "fingerprint-1" });
+  });
 });

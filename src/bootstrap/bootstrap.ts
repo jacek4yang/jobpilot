@@ -183,6 +183,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   // Discovery never enqueues on its own; that is the central product rule.
   let matches: readonly Match[] = [];
   let discoveryNote: string | undefined;
+  let discoveryEpoch = 0;
 
   /**
    * Operator-facing run log: what the batch did, newest first. Surfaced on the
@@ -224,6 +225,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       return;
     }
 
+    const epoch = ++discoveryEpoch;
+    const hrefAtStart = globalThis.location?.href;
     discoveryNote = "正在扫描职位…";
     appendRunLog("开始扫描职位");
     render();
@@ -240,6 +243,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
     try {
       const summaries = await deps.platform.scanJobs({ limit: 50 });
+      if (epoch !== discoveryEpoch || globalThis.location?.href !== hrefAtStart) {
+        discoveryNote = "页面在扫描期间发生变化，结果已丢弃，请重新扫描。";
+        selectedJobIds = new Set();
+        selectionHref = undefined;
+        render();
+        return;
+      }
       matches = summaries.map((summary) => ({
         summary,
         accepted: true,
@@ -273,12 +283,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   // --- Cross-tab ownership ------------------------------------------------
   // Two BOSS tabs must never drive automation at once. Ownership is acquired
-  // lazily on the first scan/start action: an idle background tab must not
-  // monopolise the origin-wide lock and make the tab the user is looking at
-  // appear broken.
+  // only when executable work starts. Discovery and selection are read-only;
+  // taking the origin-wide lock for either would let an idle tab monopolise it.
   const lock = createNavigatorLock({ clock: deps.clock });
   const ownerId = `tab-${Math.random().toString(36).slice(2)}`;
   let isOwner = false;
+  let startRequestPending = false;
+  let startRequestEpoch = 0;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
 
   const startOwnershipHeartbeat = (): void => {
@@ -324,16 +335,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   const panelCallbacks: UiCallbacks = {
     discover: () => {
-      void ensureOwnership().then((owned) => {
-        if (owned) void runDiscovery();
-        else panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
-      });
+      void runDiscovery();
     },
     onToggleMatchSelect: (jobId: string) => {
-      if (!isOwner) {
-        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
-        return;
-      }
       if (controller !== undefined && controller.context().state !== "idle") {
         panel.toast("warn", "批量任务运行期间不能修改选择，请先停止。 ");
         return;
@@ -345,62 +349,81 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       render();
     },
     start: () => {
-      void ensureOwnership().then((owned) => {
-        if (!owned) {
-          panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
-          return;
-        }
-        if (verification.isBlocked()) {
-          panel.toast("warn", "BOSS 需要人工验证。请手动完成验证，然后点「重新检查页面」。");
-          return;
-        }
-        if (controller === undefined || controller.context().state !== "idle") {
-          panel.toast("warn", "当前任务已经在运行。");
-          return;
-        }
-        if (!storageHealth().healthy) {
-          panel.toast("error", "本地持久化不可用，已进入只读模式，不能开始自动沟通。");
-          return;
-        }
-        const selected = new Map<string, SelectedJobIdentity>();
-        for (const match of matches) {
-          const id = String(match.summary.id);
-          if (!selectedJobIds.has(id)) continue;
-          selected.set(id, {
-            id,
-            title: match.summary.title,
-            companyName: match.summary.companyName,
-            ...(match.summary.url === undefined ? {} : { url: match.summary.url }),
-          });
-        }
-        const selection = validateSelectionSnapshot(
-          selected,
-          selectionHref,
-          globalThis.location?.href,
-        );
-        if (!selection.ok) {
-          panel.toast(
-            "warn",
-            selection.reason === "empty"
-              ? "请至少选择一个职位后再开始。"
-              : "当前页面已变化，请重新扫描并选择职位。",
+      if (startRequestPending) {
+        panel.toast("warn", "正在检查运行权限，请勿重复开始。");
+        return;
+      }
+      startRequestPending = true;
+      const requestEpoch = ++startRequestEpoch;
+      void ensureOwnership()
+        .then((owned) => {
+          if (requestEpoch !== startRequestEpoch) {
+            if (owned) releaseOwnership();
+            return;
+          }
+          if (!owned) {
+            panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+            return;
+          }
+          if (verification.isBlocked()) {
+            panel.toast("warn", "BOSS 需要人工验证。请手动完成验证，然后点「重新检查页面」。");
+            return;
+          }
+          if (controller === undefined || controller.context().state !== "idle") {
+            panel.toast("warn", "当前任务已经在运行。");
+            return;
+          }
+          if (!storageHealth().healthy) {
+            panel.toast("error", "本地持久化不可用，已进入只读模式，不能开始自动沟通。");
+            return;
+          }
+          const selected = new Map<string, SelectedJobIdentity>();
+          for (const match of matches) {
+            const id = String(match.summary.id);
+            if (!selectedJobIds.has(id)) continue;
+            selected.set(id, {
+              id,
+              title: match.summary.title,
+              companyName: match.summary.companyName,
+              ...(match.summary.url === undefined ? {} : { url: match.summary.url }),
+              ...(match.summary.platformJobId === undefined
+                ? {}
+                : { platformJobId: match.summary.platformJobId }),
+              idIsPlatformNative: match.summary.idIsPlatformNative,
+            });
+          }
+          const selection = validateSelectionSnapshot(
+            selected,
+            selectionHref,
+            globalThis.location?.href,
           );
-          return;
-        }
-        const contacted = new Set([...history.submittedJobIds()].map(String));
-        if ([...selected.keys()].some((id) => contacted.has(id))) {
-          panel.toast("warn", "选择中包含已经沟通过的职位，请重新扫描。");
-          return;
-        }
-        activeBatchSnapshot = selected;
-        deps.recorder.record({
-          level: "info",
-          category: "user-action",
-          event: EVENTS.userStart,
+          if (!selection.ok) {
+            panel.toast(
+              "warn",
+              selection.reason === "empty"
+                ? "请至少选择一个职位后再开始。"
+                : "当前页面已变化，请重新扫描并选择职位。",
+            );
+            return;
+          }
+          const contacted = new Set([...history.submittedJobIds()].map(String));
+          if ([...selected.keys()].some((id) => contacted.has(id))) {
+            panel.toast("warn", "选择中包含已经沟通过的职位，请重新扫描。");
+            return;
+          }
+          activeBatchSnapshot = selected;
+          deps.recorder.record({
+            level: "info",
+            category: "user-action",
+            event: EVENTS.userStart,
+          });
+          appendRunLog(`开始处理 ${selected.size} 个已选职位`);
+          controller.dispatch({ type: "START" });
+        })
+        .finally(() => {
+          startRequestPending = false;
+          if (controller?.context().state === "idle") releaseOwnership();
         });
-        appendRunLog(`开始处理 ${selected.size} 个已选职位`);
-        controller.dispatch({ type: "START" });
-      });
     },
     recheck: () => {
       void ensureOwnership().then((owned) => {
@@ -431,6 +454,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       });
     },
     pause: () => {
+      startRequestEpoch += 1;
       deps.recorder.record({
         level: "info",
         category: "user-action",
@@ -438,6 +462,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       });
       appendRunLog("暂停运行");
       controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
+      releaseOwnership();
     },
     resume: () => {
       void ensureOwnership().then((owned) => {
@@ -483,6 +508,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
     },
     stop: () => {
+      startRequestEpoch += 1;
       appendRunLog("停止运行");
       controller?.dispatch({ type: "STOP" });
       releaseOwnership();
@@ -937,6 +963,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           title: summary.title,
           companyName: summary.companyName,
           ...(summary.url === undefined ? {} : { url: summary.url }),
+          ...(summary.platformJobId === undefined ? {} : { platformJobId: summary.platformJobId }),
+          idIsPlatformNative: summary.idIsPlatformNative,
         })),
       );
       if (!validation.ok) {
@@ -1046,7 +1074,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const render = (): void => {
     if (controller === undefined) return;
     const context = controller.context();
-    if (context.state === "idle" && context.lastTerminalReason !== undefined) {
+    if (
+      (context.state === "idle" && context.lastTerminalReason !== undefined) ||
+      context.state === "paused" ||
+      context.state === "blocked" ||
+      context.state === "failed"
+    ) {
       releaseOwnership();
     }
     const safety = safetyFromState(context.state, effectiveConfig.automation.mode);
@@ -1325,6 +1358,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const pageObserver = createPageObserver(window);
 
   let currentPageKind = "unknown";
+  let pageEpoch = 0;
+  let routeSettleTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
 
   /**
    * Re-reads the page classification and repaints.
@@ -1506,15 +1542,23 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   };
 
   pageObserver.onPageChange(() => {
-    const before = deps.platform.detectPage();
+    discoveryEpoch += 1;
+    pageEpoch += 1;
+    const epoch = pageEpoch;
+    if (routeSettleTimer !== undefined) clearTimeout(routeSettleTimer);
     // Give the SPA a moment to render the new route's DOM before re-reading it.
-    setTimeout(() => {
+    routeSettleTimer = setTimeout(() => {
+      routeSettleTimer = undefined;
+      if (disposed || epoch !== pageEpoch) return;
       try {
         const after = deps.platform.detectPage();
         refreshPageKind();
-        if (after !== before) {
-          controller?.dispatch({ type: "PAGE_CHANGED", pageKind: after });
-        }
+        // A URL transition is navigation even when both routes classify to the
+        // same kind (for example, one search/list page to another). Suppressing
+        // same-kind transitions would let an active batch continue against a
+        // different listing. The reducer explicitly permits only the expected
+        // contacting -> chat transition; every other active route change stops.
+        controller?.dispatch({ type: "PAGE_CHANGED", pageKind: after });
       } catch (error) {
         deps.logger.error("bootstrap", "page re-detection failed", { error });
       }
@@ -1603,7 +1647,21 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   };
 
   if (pendingIntent !== undefined) {
-    void settleRecoveredTransaction();
+    void ensureOwnership().then(async (owned) => {
+      if (!owned) {
+        panel.toast(
+          "warn",
+          "检测到上次未完成的沟通记录，但另一个标签页正在运行。JobPilot 不会发送，请在该标签页完成核查。",
+        );
+        return;
+      }
+      try {
+        await settleRecoveredTransaction();
+      } finally {
+        // Recovery is observation/cleanup only and never owns a running batch.
+        releaseOwnership();
+      }
+    });
   }
 
   deps.logger.info("bootstrap", "JobPilot ready", {
@@ -1623,6 +1681,11 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     communicationService,
     verification,
     dispose() {
+      disposed = true;
+      startRequestEpoch += 1;
+      pageEpoch += 1;
+      if (routeSettleTimer !== undefined) clearTimeout(routeSettleTimer);
+      routeSettleTimer = undefined;
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (isOwner) void lock.release(ownerId);
       pageObserver.dispose();

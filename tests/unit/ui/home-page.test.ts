@@ -8,8 +8,10 @@
  *   - checking a match row fires onToggleMatchSelect with that job id;
  *   - the discovery note renders under step ①.
  */
+// @vitest-environment happy-dom
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
 import { renderHomePage } from "../../../src/ui/pages/home";
 import type { MatchRowView, UiCallbacks } from "../../../src/ui/view-model";
 
@@ -161,5 +163,38 @@ describe("renderHomePage three-step flow", () => {
     // The log appears after the three-step cards, keeping the flow calm.
     const steps = page.querySelector(".jobpilot-section");
     expect(steps?.querySelector(".jobpilot-step-run-log")).not.toBeNull();
+  });
+
+  it("updates in place without losing checkbox focus or list scroll", async () => {
+    const doc = makeDoc();
+    const callbacks = callbacksWith();
+    const first = renderHomePage(doc, {
+      decisions: [],
+      callbacks,
+      matches: [match("job-a", true), match("job-b", true)],
+    });
+    doc.body.append(first);
+
+    const list = first.querySelector<HTMLElement>(".jobpilot-step-match-list");
+    const checkbox = first.querySelector<HTMLInputElement>('input[data-job-id="job-b"]');
+    if (list === null || checkbox === null) throw new Error("selection controls missing");
+    list.scrollTop = 37;
+    checkbox.focus();
+
+    const second = renderHomePage(doc, {
+      decisions: [],
+      callbacks,
+      discoveryNote: "异步状态已更新",
+      matches: [match("job-a", false), match("job-b", true)],
+    });
+    await nextTick();
+
+    expect(second).toBe(first);
+    expect(first.querySelector('input[data-job-id="job-b"]')).toBe(checkbox);
+    expect(doc.activeElement).toBe(checkbox);
+    expect(list.scrollTop).toBe(37);
+    expect(first.querySelector<HTMLInputElement>('input[data-job-id="job-a"]')?.checked).toBe(
+      false,
+    );
   });
 });

@@ -242,39 +242,7 @@ describe("boss page classification — fail closed", () => {
     );
   });
 
-  /**
-   * KNOWN GAP (tracked, not fixed — this suite must not modify `src/`).
-   *
-   * A well-formed search page that legitimately has zero results and renders
-   * ONLY the empty-result phrase — with no `[data-jobpilot-guard='empty']`
-   * element and no list container — is currently classified `"unknown"`.
-   *
-   * The `emptyResultMarker` signal that drives the `empty-result` branch is
-   * computed at `page-kind.ts` as:
-   *
-   *     queryFirst(root, SELECTORS.guards.emptyResult) !== null
-   *
-   * i.e. from the STRUCTURAL guard only. The visible-text fallback
-   * (`detectEmptyResult`, which does match "暂无职位") is never consulted, even
-   * though the sibling guards for captcha / risk-control / login all OR their
-   * text fallback into the same signal expression.
-   *
-   * Impact: "unknown" is processed by the state machine as a blocked page with
-   * `BlockReason: "unknown-dom"`, so the outcome is still fail-closed — no
-   * automation runs. It is a diagnostics/UX degradation (the user is told the
-   * DOM was unrecognised rather than that the search returned nothing), not a
-   * safety hole. All six checked-in fixtures are unaffected, because
-   * `empty-list.html` does carry the structural marker.
-   *
-   * Expected behaviour: `"empty-result"`. Observed: `"unknown"`.
-   */
-  it.fails("should classify an empty-result phrase with no marker element as empty-result", () => {
+  it("classifies an empty-result phrase with no marker element as empty-result", () => {
     expect(classifyByText("<html><body><p>暂无职位</p></body></html>")).toBe("empty-result");
-  });
-
-  it("still fails closed to unknown for that same page (the safety property)", () => {
-    const kind = classifyByText("<html><body><p>暂无职位</p></body></html>");
-    expect(kind).toBe("unknown");
-    expect(kind).not.toBe("job-list");
   });
 });

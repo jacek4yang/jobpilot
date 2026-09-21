@@ -329,7 +329,9 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
     }
     const verdict = matchChatIdentity(
       {
-        jobId: intent.jobId,
+        ...(intent.expectedPlatformJobId === undefined
+          ? {}
+          : { jobId: intent.expectedPlatformJobId }),
         ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
         ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
         ...(intent.expectedRecruiter === undefined ? {} : { recruiter: intent.expectedRecruiter }),
@@ -375,7 +377,9 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
       if (existing !== null) {
         const verdict = matchChatIdentity(
           {
-            jobId: intent.jobId,
+            ...(intent.expectedPlatformJobId === undefined
+              ? {}
+              : { jobId: intent.expectedPlatformJobId }),
             ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
             ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
             ...(intent.expectedRecruiter === undefined
@@ -430,7 +434,9 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
 
       const verdict = matchChatIdentity(
         {
-          jobId: intent.jobId,
+          ...(intent.expectedPlatformJobId === undefined
+            ? {}
+            : { jobId: intent.expectedPlatformJobId }),
           ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
           ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
           ...(intent.expectedRecruiter === undefined

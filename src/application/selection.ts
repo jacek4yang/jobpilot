@@ -42,6 +42,8 @@ export interface SelectedJobIdentity {
   readonly title: string;
   readonly companyName: string;
   readonly url?: string;
+  readonly platformJobId?: string;
+  readonly idIsPlatformNative?: boolean;
 }
 
 export type SelectionValidation =
@@ -72,7 +74,9 @@ export const validateSelectionSnapshot = (
     if (
       current.title !== expected.title ||
       current.companyName !== expected.companyName ||
-      (current.url !== undefined && expected.url !== undefined && current.url !== expected.url)
+      (current.url !== undefined && expected.url !== undefined && current.url !== expected.url) ||
+      current.platformJobId !== expected.platformJobId ||
+      current.idIsPlatformNative !== expected.idIsPlatformNative
     ) {
       return { ok: false, reason: "identity-conflict", jobId: id };
     }

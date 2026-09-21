@@ -220,7 +220,9 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       // `matchChatIdentity` falls back to title+company, which would accept a
       // different posting at the same company — precisely the conflation the
       // identity rules forbid.
-      jobId: intent.jobId,
+      ...(intent.expectedPlatformJobId === undefined
+        ? {}
+        : { jobId: intent.expectedPlatformJobId }),
       ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
       ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
       ...(intent.expectedRecruiter === undefined ? {} : { recruiter: intent.expectedRecruiter }),
@@ -409,7 +411,9 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       const observed = await deps.action.observeSend(
         intent,
         baseline,
-        options.signal === undefined ? {} : { signal: options.signal },
+        options.signal === undefined
+          ? { maxAttempts: 1 }
+          : { signal: options.signal, maxAttempts: 1 },
       );
 
       if (observed.kind === "blocked") {

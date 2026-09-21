@@ -99,11 +99,13 @@ const urlPathnameOf = (url: string): string | undefined => {
  */
 const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
   const id = String(job.id);
+  const platformJobId = job.platformJobId;
   const urlPath = job.url === undefined ? undefined : urlPathnameOf(job.url);
   for (const card of Array.from(root.querySelectorAll(".job-card-wrap"))) {
     const anchor = card.querySelector("a[href*='/job_detail/']");
     const href = anchor?.getAttribute("href");
     if (href === null || href === undefined) continue;
+    if (platformJobId !== undefined && href.includes(`/job_detail/${platformJobId}`)) return card;
     if (href.includes(`/job_detail/${id}`)) return card;
     if (urlPath !== undefined && href.includes(urlPath)) return card;
   }
@@ -120,7 +122,8 @@ const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
  *     aborted signal — it never falls back to parsing "whatever is there"
  *   - `loadJob()` throws when the detail cannot be parsed or the page is not a
  *     detail page, because a `JobDetail` cannot honestly be fabricated
- *   - `apply()` / `verifyApplication()` delegate to the fail-closed action
+ *   - communication is deliberately absent here; only CommunicationRunner may
+ *     cross the irreversible send boundary
  */
 export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   const { document: doc, location, logger, clock, version } = deps;
@@ -251,9 +254,16 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
       if (card !== null) {
         const drawerDetail = await tryLoadFromDrawer(card, job, options);
         if (drawerDetail !== null) return drawerDetail;
+        // A null here also covers a cancelled wait (the signal aborted while
+        // polling). Falling through would then race the user's PAUSE/STOP:
+        // the drawer opened in the meantime, the page type check passes, and
+        // a stale detail is produced against an aborted operation. Abort
+        // before the navigation fallback.
+        throwIfAborted(options?.signal);
         logger.debug("boss.loadJob", "drawer wait timed out; falling back to navigation");
       }
 
+      throwIfAborted(options?.signal);
       const kind = detectBossPageKind(doc, location);
       if (kind !== "job-detail") {
         throw new Error(

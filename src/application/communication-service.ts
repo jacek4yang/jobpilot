@@ -425,6 +425,7 @@ export const createCommunicationService = (
         now: deps.clock.now(),
         ttlMs: input.ttlMs ?? DEFAULT_TTL_MS,
         expectedJobTitle: job.title,
+        ...(job.platformJobId === undefined ? {} : { expectedPlatformJobId: job.platformJobId }),
         expectedCompany: job.company.name,
         ...(job.recruiters[0]?.name === undefined
           ? {}
@@ -518,12 +519,24 @@ export const createCommunicationService = (
             authorizationChecked = true;
             const persisted = deps.readPersistedIntent();
             const storage = deps.storageHealth();
+            let durableConfirmed = persisted?.id === currentIntent.id;
+            if (durableConfirmed && deps.confirmPersistedIntent !== undefined) {
+              try {
+                durableConfirmed = await deps.confirmPersistedIntent(currentIntent);
+              } catch (error) {
+                durableConfirmed = false;
+                deps.logger.error("communication", "final intent read-back failed", {
+                  error,
+                  jobId,
+                });
+              }
+            }
             const sendGate = evaluateSendGates({
               ...deps.baseGateInput(),
               storage,
               draftPresent: false,
               chatVerified: true,
-              hasPersistedIntent: persisted?.id === currentIntent.id && storage.healthy,
+              hasPersistedIntent: durableConfirmed && storage.healthy,
               sendAlreadyAttempted: persisted !== undefined && isSendCommitted(persisted),
             });
             recordGateOutcome(deps.recorder, "send", sendGate, { jobId, transactionId });

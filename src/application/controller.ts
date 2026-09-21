@@ -102,10 +102,12 @@ export const createController = (options: ControllerOptions): Controller => {
   function dispatch(event: AutomationEvent): void {
     if (disposed) return;
 
-    const expectedChatTransition =
-      event.type === "PAGE_CHANGED" && current.state === "contacting" && event.pageKind === "chat";
+    const expectedPageTransition =
+      event.type === "PAGE_CHANGED" &&
+      ((current.state === "opening" && event.pageKind === "job-detail") ||
+        (current.state === "contacting" && event.pageKind === "chat"));
     if (
-      !expectedChatTransition &&
+      !expectedPageTransition &&
       (event.type === "STOP" ||
         event.type === "PAUSE" ||
         event.type === "PAGE_CHANGED" ||

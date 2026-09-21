@@ -213,6 +213,24 @@ describe("communication service", () => {
       ).toBe(true);
     });
 
+    it("reads the durable prepared intent back immediately before send", async () => {
+      let confirmations = 0;
+      const h = harness({
+        confirmPersistedIntent: async () => {
+          confirmations += 1;
+          return confirmations === 1;
+        },
+      });
+      const result = await h.service.communicate({ job: job() });
+
+      expect(result.kind).toBe("aborted");
+      expect(
+        h.rec
+          .criticalEvents()
+          .some((event) => event.data?.["invariant"] === "NO_SEND_WITHOUT_PERSISTED_INTENT"),
+      ).toBe(true);
+    });
+
     it("does not trust a runner that reports sent without invoking authorization", async () => {
       const h = harness({
         runner: { run: async () => ({ kind: "sent", evidence: "claimed" }) },

@@ -272,6 +272,13 @@ describe("automation state machine", () => {
       expect(effects).toHaveLength(0);
     });
 
+    it("allows the selected card to open its detail drawer while loading", () => {
+      const opening: AutomationContext = { ...startContext(), state: "opening" };
+      const { context, effects } = run(opening, [{ type: "PAGE_CHANGED", pageKind: "job-detail" }]);
+      expect(context.state).toBe("opening");
+      expect(effects).toHaveLength(0);
+    });
+
     it("ignores PAGE_CHANGED while idle rather than pausing pointlessly", () => {
       const { context } = run(initialContext(NOW), [
         { type: "PAGE_CHANGED", pageKind: "job-list" },

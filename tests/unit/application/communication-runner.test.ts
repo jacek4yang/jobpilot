@@ -117,6 +117,26 @@ const runner = (
 };
 
 describe("communication runner", () => {
+  it("compares the raw platform id rather than the internal fingerprint", async () => {
+    const action = makeAction({
+      chat: { jobIds: ["boss-1001"], text: "unneeded when the strong id matches" },
+    });
+    const clock = makeClock();
+    const runner = createCommunicationRunner({
+      action: action.action,
+      logger: createNullLogger(),
+      clock,
+      persistIntent: async () => {},
+      clearIntent: async () => {},
+    });
+
+    const result = await runner.run(
+      intent({ jobId: asJobId("fp_internal_key"), expectedPlatformJobId: "boss-1001" }),
+      { authorizeSend: async () => ({ allowed: true, detail: "ok" }) },
+    );
+    expect(result.kind).toBe("sent");
+    expect(action.calls.dispatch).toBe(1);
+  });
   describe("the happy path", () => {
     it("reports sent only after observing an outgoing message", async () => {
       const clock = makeClock();
@@ -166,6 +186,18 @@ describe("communication runner", () => {
   });
 
   describe("never sends twice", () => {
+    it("re-authorizes immediately before dispatch and honors a late refusal", async () => {
+      const clock = makeClock();
+      const { action, calls } = makeAction({});
+      const outcome = await runner(action, clock).run(intent(), {
+        authorizeSend: async () => ({ allowed: false, detail: "ownership was lost" }),
+      });
+
+      expect(outcome.kind).toBe("aborted");
+      if (outcome.kind === "aborted") expect(outcome.detail).toContain("ownership was lost");
+      expect(calls.dispatch).toBe(0);
+    });
+
     it("calls dispatchSend exactly once per run", async () => {
       const clock = makeClock();
       const { action, calls } = makeAction({});
@@ -456,7 +488,7 @@ describe("composition with the real adapter contract", () => {
   it("actually clicks exactly once when composed end to end", async () => {
     const clock = makeClock();
     const { action, clicks } = adapterShapedAction();
-    const outcome = await runner(action, clock).run(intent());
+    const outcome = await runner(action, clock).run(intent({ expectedPlatformJobId: "job-1" }));
 
     // The defect made this 0 with an `uncertain` outcome.
     expect(clicks).toHaveLength(1);
@@ -502,7 +534,7 @@ describe("identity uses the authoritative job id", () => {
       },
     });
 
-    const outcome = await runner(action, clock).run(intent());
+    const outcome = await runner(action, clock).run(intent({ expectedPlatformJobId: "job-1" }));
 
     // Regression: the runner used to omit jobId, so title+company matched and
     // it would have written into another posting's conversation.
@@ -518,7 +550,7 @@ describe("identity uses the authoritative job id", () => {
       chat: { jobIds: ["job-1"], text: "后端开发工程师 示例科技有限公司" },
     });
 
-    const outcome = await runner(action, clock).run(intent());
+    const outcome = await runner(action, clock).run(intent({ expectedPlatformJobId: "job-1" }));
     expect(outcome.kind).toBe("sent");
     expect(calls.dispatch).toBe(1);
   });

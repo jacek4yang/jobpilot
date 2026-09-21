@@ -369,9 +369,13 @@ export const reduce = (
 
     case "PAGE_CHANGED": {
       if (!isActive(context.state)) return { context, effects: noEffects };
-      // Opening the positively verified chat is the expected route transition
-      // of the communication transaction, not an interruption.
-      if (context.state === "contacting" && event.pageKind === "chat") {
+      // Opening the selected detail drawer and then the positively verified
+      // chat are expected route transitions, not interruptions. The load and
+      // communication layers still validate the exact job/chat identity.
+      if (
+        (context.state === "opening" && event.pageKind === "job-detail") ||
+        (context.state === "contacting" && event.pageKind === "chat")
+      ) {
         return { context, effects: noEffects };
       }
       // A route change mid-action invalidates the page we were driving.

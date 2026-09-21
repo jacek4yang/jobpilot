@@ -322,11 +322,13 @@ describe("communication intent", () => {
         now: NOW,
         ttlMs: TTL,
         expectedJobTitle: "Backend Engineer",
+        expectedPlatformJobId: "platform-123",
         expectedCompany: "Example Corp",
         expectedRecruiter: "Alice",
       });
       const restored = deserializeIntent(serializeIntent(full));
       expect(restored?.expectedJobTitle).toBe("Backend Engineer");
+      expect(restored?.expectedPlatformJobId).toBe("platform-123");
       expect(restored?.expectedCompany).toBe("Example Corp");
       expect(restored?.expectedRecruiter).toBe("Alice");
     });

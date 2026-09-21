@@ -161,7 +161,8 @@ export const classifyBySwitch = (signals: PageKindSignals): PageKindDecision => 
  */
 export const detectBossPageKind = (root: Document, location: Location): PageKind => {
   const cardNodes = safeQueryAll(root, SELECTORS.list.card.candidates);
-  const emptyMarker = queryFirst(root, SELECTORS.guards.emptyResult) !== null;
+  const emptyMarker =
+    queryFirst(root, SELECTORS.guards.emptyResult) !== null || textHas(root, EMPTY_RESULT_TEXT);
 
   const signals: PageKindSignals = {
     captcha: queryFirst(root, SELECTORS.guards.captcha) !== null || textHas(root, CAPTCHA_TEXT),
@@ -184,6 +185,7 @@ export const detectBossPageKind = (root: Document, location: Location): PageKind
 const CAPTCHA_TEXT: readonly string[] = ["请完成安全验证", "请完成验证", "滑动验证", "拖动滑块"];
 const RISK_TEXT: readonly string[] = ["操作过于频繁", "当前操作存在风险", "访问受限"];
 const LOGIN_TEXT: readonly string[] = ["登录后查看", "请先登录", "登录/注册"];
+const EMPTY_RESULT_TEXT: readonly string[] = ["暂无职位", "暂无相关职位", "没有找到相关职位"];
 
 /** Case-insensitive text probe that never throws. */
 const textHas = (root: ParentNode, needles: readonly string[]): boolean => {

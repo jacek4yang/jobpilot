@@ -192,6 +192,7 @@ export const parseBossJobCard = (
     locationRaw,
     salaryRaw,
     ...(url === undefined ? {} : { url }),
+    ...(nativeId === undefined ? {} : { platformJobId: nativeId }),
     idIsPlatformNative: nativeId !== undefined,
   };
 };
