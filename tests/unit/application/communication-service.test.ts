@@ -73,8 +73,12 @@ const harness = (overrides: Partial<CommunicationServiceDeps> = {}): Harness => 
 
   const service = createCommunicationService({
     runner: {
-      run: async (intent) => {
+      run: async (intent, options) => {
         runnerCalls.push(intent);
+        const authorization = await options?.authorizeSend?.(intent);
+        if (authorization !== undefined && !authorization.allowed) {
+          return { kind: "aborted", failure: "USER_INTERRUPTED", detail: authorization.detail };
+        }
         return outcome;
       },
     },
@@ -90,8 +94,6 @@ const harness = (overrides: Partial<CommunicationServiceDeps> = {}): Harness => 
       hourlyLimitReached: false,
       rateLimited: false,
     }),
-    verifyChat: () => ({ verified: true, detail: "job id matched" }),
-    isDraftPresent: () => false,
     outgoingCount: () => 0,
     readPersistedIntent: () => persisted,
     persistIntent: async (intent) => {
@@ -196,44 +198,47 @@ describe("communication service", () => {
         true,
       );
     });
-  });
 
-  describe("no send without a verified chat", () => {
-    it("refuses when the chat cannot be confirmed", async () => {
+    it("re-checks storage immediately before send after navigation", async () => {
       const h = harness({
-        verifyChat: () => ({ verified: false, detail: "identity insufficient" }),
+        storageHealth: () => ({ healthy: false, lastFailure: "write channel lost" }),
       });
       const result = await h.service.communicate({ job: job() });
 
-      expect(result.kind).toBe("refused");
-      expect(h.runnerCalls).toHaveLength(0);
-      // Nothing irreversible happened, so no intent should have been created.
-      expect(h.persisted).toHaveLength(0);
+      expect(result.kind).toBe("aborted");
+      expect(
+        h.rec
+          .criticalEvents()
+          .some((event) => event.data?.["invariant"] === "NO_SEND_WHILE_STORAGE_UNHEALTHY"),
+      ).toBe(true);
     });
 
-    it("logs the chat invariant violation", async () => {
-      const h = harness({ verifyChat: () => ({ verified: false, detail: "mismatch" }) });
-      await h.service.communicate({ job: job() });
-      const violation = h.rec.criticalEvents().find((e) => e.event === "error.invariant_violation");
-      expect(violation?.data?.["invariant"]).toBe("NO_SEND_WITHOUT_VERIFIED_CHAT");
-    });
-  });
-
-  describe("no send with a draft present", () => {
-    it("refuses and leaves the draft alone", async () => {
-      const h = harness({ isDraftPresent: () => true });
+    it("reads the durable prepared intent back immediately before send", async () => {
+      let confirmations = 0;
+      const h = harness({
+        confirmPersistedIntent: async () => {
+          confirmations += 1;
+          return confirmations === 1;
+        },
+      });
       const result = await h.service.communicate({ job: job() });
 
-      expect(result.kind).toBe("refused");
-      expect(h.runnerCalls).toHaveLength(0);
-      expect(h.persisted).toHaveLength(0);
+      expect(result.kind).toBe("aborted");
+      expect(
+        h.rec
+          .criticalEvents()
+          .some((event) => event.data?.["invariant"] === "NO_SEND_WITHOUT_PERSISTED_INTENT"),
+      ).toBe(true);
     });
 
-    it("logs the draft invariant violation", async () => {
-      const h = harness({ isDraftPresent: () => true });
-      await h.service.communicate({ job: job() });
-      const violation = h.rec.criticalEvents().find((e) => e.event === "error.invariant_violation");
-      expect(violation?.data?.["invariant"]).toBe("NO_SEND_WITH_DRAFT_PRESENT");
+    it("does not trust a runner that reports sent without invoking authorization", async () => {
+      const h = harness({
+        runner: { run: async () => ({ kind: "sent", evidence: "claimed" }) },
+      });
+      const result = await h.service.communicate({ job: job() });
+
+      expect(result.kind).toBe("uncertain");
+      expect(h.rec.criticalEvents()).not.toHaveLength(0);
     });
   });
 
@@ -399,9 +404,14 @@ describe("communication service", () => {
 
   describe("gate ordering", () => {
     it("checks the cheapest safety gates before touching the runner", async () => {
-      const spy = vi.fn(() => ({ verified: true, detail: "ok" }));
+      const spy = vi.fn();
       const h = harness({
-        verifyChat: spy,
+        runner: {
+          run: async () => {
+            spy();
+            return { kind: "sent", evidence: "unexpected" };
+          },
+        },
         baseGateInput: () => ({
           mode: "manual",
           humanVerificationActive: false,
@@ -414,7 +424,7 @@ describe("communication service", () => {
       });
 
       await h.service.communicate({ job: job() });
-      // Mode is the first gate, so the chat verification must not have run.
+      // Mode is the first gate, so navigation/runner work must not have run.
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -456,7 +466,6 @@ describe("the contact affordance does not gate the send", () => {
     // absent. This is the normal send state and must not be refused.
     const h = harness({
       resolveCommunicateAction: () => null,
-      verifyChat: () => ({ verified: true, detail: "conversation open" }),
     });
 
     const result = await h.service.communicate({ job: job() });

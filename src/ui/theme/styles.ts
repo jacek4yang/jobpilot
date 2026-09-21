@@ -119,8 +119,7 @@ export const PANEL_CSS = `
 .jobpilot-dot[data-state="evaluating"],
 .jobpilot-dot[data-state="opening"],
 .jobpilot-dot[data-state="validating"],
-.jobpilot-dot[data-state="applying"],
-.jobpilot-dot[data-state="verifying"],
+.jobpilot-dot[data-state="contacting"],
 .jobpilot-dot[data-state="cooldown"],
 .jobpilot-dot[data-state="discovering"],
 .jobpilot-dot[data-state="executing"] { background: var(--jp-primary); }
@@ -609,8 +608,7 @@ export const PANEL_CSS = `
 
 .jobpilot-status-chip[data-status="opening"],
 .jobpilot-status-chip[data-status="checking"],
-.jobpilot-status-chip[data-status="applying"],
-.jobpilot-status-chip[data-status="verifying"],
+.jobpilot-status-chip[data-status="contacting"],
 .jobpilot-status-chip[data-status="running"] {
   background: var(--jp-primary-soft);
   color: var(--jp-primary);

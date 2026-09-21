@@ -91,6 +91,16 @@ export const markClickDispatched = (
 export const hasSendBeenAttempted = (intent: CommunicationIntent): boolean =>
   intent.clickDispatched !== undefined;
 
+/**
+ * True once the durable point of no return was recorded.
+ *
+ * A crash can happen after the browser accepted the click but before
+ * `clickDispatched` is written. Therefore recovery and deduplication must use
+ * this stronger predicate and treat the outcome as uncertain, never send again.
+ */
+export const isSendCommitted = (intent: CommunicationIntent): boolean =>
+  intent.sendAttemptedAt !== undefined;
+
 /** Why the transaction ended, in the failure taxonomy. */
 export type CommunicationFailure =
   | "DOM_CHANGED"
@@ -114,6 +124,8 @@ export interface CommunicationIntent {
 
   /** Identity expectations, used to confirm we are in the right conversation. */
   readonly expectedJobTitle?: string;
+  /** Raw platform id; the local fingerprint in `jobId` must never be compared to chat ids. */
+  readonly expectedPlatformJobId?: string;
   readonly expectedCompany?: string;
   readonly expectedRecruiter?: string;
 
@@ -159,6 +171,7 @@ export interface CreateIntentInput {
   readonly now: number;
   readonly ttlMs: number;
   readonly expectedJobTitle?: string;
+  readonly expectedPlatformJobId?: string;
   readonly expectedCompany?: string;
   readonly expectedRecruiter?: string;
 }
@@ -173,6 +186,9 @@ export const createIntent = (input: CreateIntentInput): CommunicationIntent => (
   createdAt: input.now,
   expiresAt: input.now + input.ttlMs,
   ...(input.expectedJobTitle === undefined ? {} : { expectedJobTitle: input.expectedJobTitle }),
+  ...(input.expectedPlatformJobId === undefined
+    ? {}
+    : { expectedPlatformJobId: input.expectedPlatformJobId }),
   ...(input.expectedCompany === undefined ? {} : { expectedCompany: input.expectedCompany }),
   ...(input.expectedRecruiter === undefined ? {} : { expectedRecruiter: input.expectedRecruiter }),
 });
@@ -362,6 +378,9 @@ export const serializeIntent = (intent: CommunicationIntent): Record<string, unk
   createdAt: intent.createdAt,
   expiresAt: intent.expiresAt,
   ...(intent.expectedJobTitle === undefined ? {} : { expectedJobTitle: intent.expectedJobTitle }),
+  ...(intent.expectedPlatformJobId === undefined
+    ? {}
+    : { expectedPlatformJobId: intent.expectedPlatformJobId }),
   ...(intent.expectedCompany === undefined ? {} : { expectedCompany: intent.expectedCompany }),
   ...(intent.expectedRecruiter === undefined
     ? {}
@@ -417,6 +436,7 @@ export const deserializeIntent = (input: unknown): CommunicationIntent | undefin
   const sendAttemptedAt = raw["sendAttemptedAt"];
   const clickDispatched = raw["clickDispatched"];
   const expectedJobTitle = raw["expectedJobTitle"];
+  const expectedPlatformJobId = raw["expectedPlatformJobId"];
   const expectedCompany = raw["expectedCompany"];
   const expectedRecruiter = raw["expectedRecruiter"];
   const failure = raw["failure"];
@@ -432,6 +452,7 @@ export const deserializeIntent = (input: unknown): CommunicationIntent | undefin
     createdAt,
     expiresAt,
     ...(typeof expectedJobTitle === "string" ? { expectedJobTitle } : {}),
+    ...(typeof expectedPlatformJobId === "string" ? { expectedPlatformJobId } : {}),
     ...(typeof expectedCompany === "string" ? { expectedCompany } : {}),
     ...(typeof expectedRecruiter === "string" ? { expectedRecruiter } : {}),
     ...(typeof sendAttemptedAt === "number" && Number.isFinite(sendAttemptedAt)

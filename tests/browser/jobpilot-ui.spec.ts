@@ -16,6 +16,7 @@
  */
 
 import { expect, test } from "@playwright/test";
+import { CURRENT_SCHEMA_VERSION, createDefaultConfig } from "../../src/config/schema";
 import {
   fixtureExists,
   HOST_MAPPING_ARGS,
@@ -40,7 +41,21 @@ import {
 
 test.use({ launchOptions: { args: HOST_MAPPING_ARGS } });
 
+const finiteBatchRoot = () => {
+  const config = createDefaultConfig();
+  return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    config: {
+      ...config,
+      automation: { ...config.automation, minActionDelayMs: 0, maxActionDelayMs: 0 },
+    },
+    applications: [],
+    statistics: {},
+  };
+};
+
 test.describe("JobPilot panel on a job-list fixture", () => {
+  test.describe.configure({ mode: "serial" });
   test.beforeAll(() => {
     test.skip(!isBuildPresent(), MISSING_BUILD_MESSAGE);
   });
@@ -111,15 +126,15 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     expect(snapshot.expanded, "panel starts expanded").toBe(true);
     expect(RUNNING_STATES).not.toContain(snapshot.state);
 
-    // Assist mode is the default: Start is available, and every action that
-    // would only make sense mid-run is disabled until Start is pressed.
-    expect(snapshot.buttons.Start, "Start should be enabled while idle").toBe(false);
-    expect(snapshot.buttons.Pause, "Pause should be disabled while idle").toBe(true);
-    expect(snapshot.buttons.Resume, "Resume should be disabled while idle").toBe(true);
-    expect(snapshot.buttons.Stop, "Stop should be disabled while idle").toBe(true);
+    // A finite explicit selection is mandatory. Before scanning, Start and all
+    // mid-run controls are disabled.
+    expect(snapshot.buttons["Start-batch"], "Start should require a selection").toBe(true);
+    expect(snapshot.buttons["暂停"], "Pause should be disabled while idle").toBe(true);
+    expect(snapshot.buttons["继续"], "Resume should be disabled while idle").toBe(true);
+    expect(snapshot.buttons["停止"], "Stop should be disabled while idle").toBe(true);
 
     // Cross-check the same facts through the DOM, not just the JS snapshot.
-    await expect(page.locator(PANEL_START).first()).toBeEnabled();
+    await expect(page.locator(PANEL_START).first()).toBeDisabled();
     await expect(page.locator(PANEL_PAUSE).first()).toBeDisabled();
     await expect(page.locator(PANEL_STOP).first()).toBeDisabled();
   });
@@ -208,25 +223,19 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     await expect(page.locator(".jobpilot-safety-chip").first()).toHaveText("安全运行");
 
     // Action buttons in Chinese
-    const startBtn = page.locator('.jobpilot-actions button[data-action="start"]').first();
+    const startBtn = page.locator('button[data-action="start-batch"]').first();
     await expect(startBtn).toBeVisible();
-    await expect(startBtn).toHaveText("开始");
+    await expect(startBtn).toHaveText("开始投递");
 
-    const pauseBtn = page.locator('.jobpilot-actions button[data-action="pause"]').first();
+    const pauseBtn = page.locator('button[data-action="pause-batch"]').first();
     await expect(pauseBtn).toHaveText("暂停");
 
-    const stopBtn = page.locator('.jobpilot-actions button[data-action="stop"]').first();
+    const stopBtn = page.locator('button[data-action="stop-batch"]').first();
     await expect(stopBtn).toHaveText("停止");
 
-    // Tabs in Chinese
-    const tabList = page.locator(".jobpilot-tabs .jobpilot-tab");
-    const tabTexts = await tabList.allTextContents();
-    expect(tabTexts).toEqual(
-      expect.arrayContaining(["首页", "搜索", "匹配", "历史", "规则", "消息", "设置"]),
-    );
-    // The 队列 tab is intentionally hidden while the legacy task queue has no
-    // producer (the Home batch selection replaced it).
-    expect(tabTexts).not.toContain("队列");
+    // Production exposes one operation surface, not a dashboard of dead tabs.
+    await expect(page.locator(".jobpilot-tabs")).toBeHidden();
+    await expect(page.locator('.jobpilot-panel[data-panel="home"]')).toBeVisible();
 
     // Three-step batch flow on Home page. Step ② (选择职位) only renders after
     // a scan has produced matches, so a fresh panel shows ① then ③; the full
@@ -237,47 +246,95 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     await expect(stepTitles.nth(1)).toHaveText("批量投递");
   });
 
-  test("supports smooth tab switching across sections", async ({ page }) => {
+  test("scans the current page into an explicit finite selection", async ({ page }) => {
     await loadHarness(page, "job-list.html");
     expect(await waitForPanel(page)).toBe(true);
 
-    // Initial tab is home
-    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    await page.locator('button[data-action="discover-jobs"]').click();
+    const checkboxes = page.locator(".jobpilot-step-match-row input[type=checkbox]");
+    await expect(checkboxes).toHaveCount(4);
+    await expect(checkboxes.first()).toBeChecked();
+    await expect(page.locator(PANEL_START).first()).toBeEnabled();
+    await expect(page.locator(".jobpilot-step-count")).toContainText("4");
 
-    // Switch to search tab
-    await page.locator('.jobpilot-tab[data-tab="search"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="search"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
-      "data-active",
-      "false",
-    );
+    await checkboxes.first().uncheck();
+    await expect(page.locator(".jobpilot-step-count")).toContainText("3");
+  });
 
-    // Switch to rules tab
-    await page.locator('.jobpilot-tab[data-tab="rules"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="rules"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+  test("read-only scan does not monopolise execution ownership", async ({ page, context }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+    await page.locator('button[data-action="discover-jobs"]').click();
+    await expect(page.locator(".jobpilot-step-match-row input[type=checkbox]")).toHaveCount(4);
 
-    // Switch to messages tab
-    await page.locator('.jobpilot-tab[data-tab="messages"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="messages"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    const other = await context.newPage();
+    await loadHarness(other, "job-list.html");
+    expect(await waitForPanel(other)).toBe(true);
+    await other.locator('button[data-action="discover-jobs"]').click();
+    await expect(other.locator(".jobpilot-step-match-row input[type=checkbox]")).toHaveCount(4);
+    await other.close();
+  });
 
-    // Switch to settings tab
-    await page.locator('.jobpilot-tab[data-tab="settings"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="settings"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+  test("Home updates in place during host DOM churn", async ({ page }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+    await page.locator('button[data-action="discover-jobs"]').click();
+    const checkbox = page.locator('.jobpilot-step-match-row input[type="checkbox"]').nth(1);
+    await checkbox.focus();
+    await page.evaluate(() => {
+      const host = document.querySelector("[data-jobpilot-host]");
+      const box = host?.shadowRoot?.activeElement ?? null;
+      (
+        globalThis as unknown as { __jobpilotFocusedCheckbox?: Element | null }
+      ).__jobpilotFocusedCheckbox = box;
+      const churn = document.createElement("div");
+      churn.dataset["fixtureChurn"] = "1";
+      document.querySelector("#fixture-root")?.append(churn);
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const previous = (globalThis as unknown as { __jobpilotFocusedCheckbox?: Element | null })
+            .__jobpilotFocusedCheckbox;
+          const active = document.querySelector("[data-jobpilot-host]")?.shadowRoot?.activeElement;
+          return previous !== undefined && previous !== null && active === previous;
+        }),
+      )
+      .toBe(true);
+  });
+
+  test("reload recovery clears a durable intent that never reached send", async ({ page }) => {
+    const now = Date.now();
+    const persistedRoot = {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      config: createDefaultConfig(),
+      applications: [],
+      statistics: {},
+      pendingIntent: {
+        id: "txn-reload-before-commit",
+        jobId: "boss-1001",
+        sourceUrl: "/job_detail/boss-1001.html",
+        phase: "armed",
+        messageText: "不会发送的恢复测试消息",
+        outgoingBaseline: 0,
+        createdAt: now,
+        expiresAt: now + 180_000,
+      },
+    };
+    await loadHarness(page, "job-list.html", {
+      gmValues: { "jobpilot:jobpilot:root:v1": JSON.stringify(persistedRoot) },
+    });
+    expect(await waitForPanel(page)).toBe(true);
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const raw = localStorage.getItem("__jobpilot_browser_gm__:jobpilot:jobpilot:root:v1");
+          if (raw === null) return "missing";
+          return Object.hasOwn(JSON.parse(raw) as object, "pendingIntent") ? "pending" : "cleared";
+        }),
+      )
+      .toBe("cleared");
   });
 
   test("supports collapsing to launcher pill and expanding back", async ({ page }) => {
@@ -318,5 +375,241 @@ test.describe("JobPilot panel on a job-list fixture", () => {
       page.locator('.jobpilot-resize-handle[data-resize-handle="s"]').first(),
     ).toBeAttached();
     await expect(page.locator(".jobpilot-resize-indicator").first()).toBeAttached();
+  });
+});
+
+test.describe("built finite-batch production composition", () => {
+  test.beforeAll(() => {
+    test.skip(!isBuildPresent(), MISSING_BUILD_MESSAGE);
+  });
+
+  const loadFinite = async (page: import("@playwright/test").Page, variant = "success") => {
+    await loadHarness(page, "finite-batch-e2e.html", {
+      query: { variant },
+      gmValues: { "jobpilot:jobpilot:root:v1": JSON.stringify(finiteBatchRoot()) },
+    });
+    expect(await waitForPanel(page)).toBe(true);
+    await page.locator('button[data-action="discover-jobs"]').click();
+    await expect(page.locator(".jobpilot-step-match-row input[type=checkbox]")).toHaveCount(2);
+  };
+
+  test("scans, selects two, sends each once and explicitly finishes", async ({ page }) => {
+    await loadFinite(page);
+    await page.locator(PANEL_START).click();
+
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+                .__finiteBatchFixture?.sendClicks ?? -1,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(2);
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
+    const outcome = await page.evaluate(() => {
+      const fixture = (
+        globalThis as unknown as {
+          __finiteBatchFixture?: { sendClicks: number; openedJobs: string[]; sentJobs: string[] };
+        }
+      ).__finiteBatchFixture;
+      const raw = localStorage.getItem("__jobpilot_browser_gm__:jobpilot:jobpilot:root:v1");
+      const applications =
+        raw === null ? [] : (JSON.parse(raw) as { applications?: unknown[] }).applications;
+      return { fixture, applicationCount: applications?.length ?? 0 };
+    });
+    expect(outcome.fixture?.sendClicks).toBe(2);
+    expect(outcome.fixture?.openedJobs).toEqual(["e2e-1001", "e2e-1002"]);
+    expect(outcome.fixture?.sentJobs).toEqual(["e2e-1001", "e2e-1002"]);
+    expect(outcome.applicationCount).toBe(2);
+  });
+
+  test("double Start still runs one finite batch", async ({ page }) => {
+    await loadFinite(page);
+    await page.evaluate(() => {
+      const button = document
+        .querySelector("[data-jobpilot-host]")
+        ?.shadowRoot?.querySelector(
+          'button[data-action="start-batch"]',
+        ) as HTMLButtonElement | null;
+      button?.click();
+      button?.click();
+    });
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+                .__finiteBatchFixture?.sendClicks ?? -1,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(2);
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
+  });
+
+  test("Stop during a pending load cancels before send", async ({ page }) => {
+    await loadFinite(page, "slow-detail");
+    await page.locator(PANEL_START).click();
+    await expect(page.locator(PANEL_STOP)).toBeEnabled();
+    await page.locator(PANEL_STOP).click();
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (globalThis as unknown as { __finiteBatchFixture?: { openedJobs: string[] } })
+                .__finiteBatchFixture?.openedJobs.length ?? 0,
+          ),
+        { timeout: 5_000 },
+      )
+      .toBeGreaterThan(0);
+    expect(
+      await page.evaluate(
+        () =>
+          (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+            .__finiteBatchFixture?.sendClicks ?? -1,
+      ),
+    ).toBe(0);
+  });
+
+  test("rapid Pause and Resume never duplicates a send", async ({ page }) => {
+    await loadFinite(page, "slow-detail");
+    await page.locator(PANEL_START).click();
+    await expect(page.locator(PANEL_PAUSE)).toBeEnabled();
+    // Pause while the first drawer load is still in flight.
+    await page.locator(PANEL_PAUSE).click();
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "paused");
+    // Resume restarts the batch from the top. The invariant under test is NOT
+    // "the batch pauses again" — a healthy resume proceeds and may complete
+    // the batch. It is that the pause/resume race can never produce a
+    // duplicate send and the batch still terminates deterministically.
+    await page.locator('button[data-action="resume-batch"]').click();
+    await expect(page.locator(PANEL_DOT).first()).not.toHaveAttribute("data-state", "paused");
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+                .__finiteBatchFixture?.sendClicks ?? -1,
+          ),
+        { timeout: 30_000 },
+      )
+      .toBeLessThanOrEqual(2);
+    // Every recorded click maps to a distinct job: no double-send.
+    const outcome = await page.evaluate(() => {
+      const fixture = (
+        globalThis as unknown as {
+          __finiteBatchFixture?: { sendClicks: number; sentJobs: string[]; openedJobs: string[] };
+        }
+      ).__finiteBatchFixture;
+      return {
+        clicks: fixture?.sendClicks ?? -1,
+        sent: fixture?.sentJobs ?? [],
+        opened: fixture?.openedJobs ?? [],
+      };
+    });
+    const sentJobs = [...outcome.sent];
+    expect(new Set(sentJobs).size).toBe(sentJobs.length);
+    // The batch terminates rather than rescanning forever.
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute(
+      "data-state",
+      /^(idle|paused|blocked|failed)$/,
+      { timeout: 60_000 },
+    );
+  });
+
+  test("two tabs starting concurrently produce one finite batch", async ({ context, page }) => {
+    await loadFinite(page);
+    const other = await context.newPage();
+    await loadFinite(other);
+
+    await Promise.all([page.locator(PANEL_START).click(), other.locator(PANEL_START).click()]);
+    await expect
+      .poll(
+        async () => {
+          const counts = await Promise.all(
+            [page, other].map((candidate) =>
+              candidate.evaluate(
+                () =>
+                  (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+                    .__finiteBatchFixture?.sendClicks ?? 0,
+              ),
+            ),
+          );
+          return counts.reduce((total, count) => total + count, 0);
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(2);
+    const finalCounts = await Promise.all(
+      [page, other].map((candidate) =>
+        candidate.evaluate(
+          () =>
+            (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+              .__finiteBatchFixture?.sendClicks ?? 0,
+        ),
+      ),
+    );
+    expect(finalCounts.sort()).toEqual([0, 2]);
+    await other.close();
+  });
+
+  for (const failure of [
+    { variant: "wrong-chat", clicks: 0 },
+    { variant: "draft", clicks: 0 },
+    { variant: "captcha", clicks: 0 },
+    { variant: "uncertain", clicks: 1 },
+  ] as const) {
+    test(`${failure.variant} fails closed without a duplicate send`, async ({ page }) => {
+      await loadFinite(page, failure.variant);
+      await page.locator(PANEL_START).click();
+      await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "paused", {
+        timeout: failure.variant === "uncertain" ? 20_000 : 10_000,
+      });
+      const clicks = await page.evaluate(
+        () =>
+          (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+            .__finiteBatchFixture?.sendClicks ?? -1,
+      );
+      expect(clicks).toBe(failure.clicks);
+    });
+  }
+
+  test("storage failure immediately before intent persistence sends zero messages", async ({
+    page,
+  }) => {
+    await loadFinite(page);
+    await page.evaluate(() => {
+      const original = (globalThis as unknown as { GM_setValue: (...args: unknown[]) => unknown })
+        .GM_setValue;
+      let failed = false;
+      Object.defineProperty(globalThis, "GM_setValue", {
+        configurable: true,
+        value: (...args: unknown[]) => {
+          if (!failed) {
+            failed = true;
+            throw new Error("synthetic storage failure");
+          }
+          return original(...args);
+        },
+      });
+    });
+    await page.locator(PANEL_START).click();
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "paused", {
+      timeout: 10_000,
+    });
+    expect(
+      await page.evaluate(
+        () =>
+          (globalThis as unknown as { __finiteBatchFixture?: { sendClicks: number } })
+            .__finiteBatchFixture?.sendClicks ?? -1,
+      ),
+    ).toBe(0);
   });
 });

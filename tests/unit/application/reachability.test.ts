@@ -106,6 +106,28 @@ describe("safety code is reachable from production", () => {
     ).toBe(false);
   });
 
+  it("keeps every critical production-composition edge connected", () => {
+    const bootstrap = readFileSync(join(ROOT, "src/bootstrap/bootstrap.ts"), "utf8");
+    const edges: ReadonlyArray<readonly [RegExp, string]> = [
+      [/createRepository\(tracedStorage\.storage,/, "repository -> traced storage health"],
+      [
+        /createCommunicationRunner\(\{[\s\S]*?action: communicationAction,/,
+        "runner -> BOSS action",
+      ],
+      [
+        /createCommunicationService\(\{[\s\S]*?runner: communicationRunner,/,
+        "service -> sole runner",
+      ],
+      [/platform: platformForRun,/, "finite selected platform -> orchestrator"],
+      [/orchestrator: traceOrchestrator\(orchestrator,/, "diagnostic trace -> controller"],
+      [/createPanel\(\{[\s\S]*?callbacks:/, "production callbacks -> mounted panel"],
+    ];
+
+    for (const [pattern, label] of edges) {
+      expect(pattern.test(bootstrap), `critical production wiring missing: ${label}`).toBe(true);
+    }
+  });
+
   it("finds a meaningful graph rather than an empty set", () => {
     // Guards the scan itself: an empty or one-element set would make every
     // assertion above vacuously true.

@@ -205,7 +205,7 @@ applying · verifying · cooldown · paused · blocked · failed
 ```
 
 `ACTIVE_STATES` is the subset in which work is genuinely in flight
-(`scanning`, `evaluating`, `opening`, `validating`, `applying`, `verifying`). The
+(`scanning`, `evaluating`, `opening`, `validating`, `contacting`, `cooldown`). The
 watchdog only runs while the machine is in one of them.
 
 ### 3.2 The reducer is pure and total
@@ -230,14 +230,13 @@ transaction backwards.
 
 **Events in:** `START`, `PAUSE`, `RESUME`, `STOP`, `SCAN_STARTED`,
 `SCAN_COMPLETED`, `SCAN_FAILED`, `JOB_LOADING`, `JOB_LOADED`, `JOB_LOAD_FAILED`,
-`EVALUATED`, `APPLY_STARTED`, `APPLY_SUBMITTED`, `APPLY_ALREADY_DONE`,
-`APPLY_NEEDS_CONFIRMATION`, `APPLY_FAILED`, `VERIFICATION_CONFIRMED`,
-`VERIFICATION_NEGATIVE`, `VERIFICATION_INDETERMINATE`, `BLOCKED`,
+`EVALUATED`, `CONTACT_STARTED`, `CONTACT_CONFIRMED`, `CONTACT_SKIPPED`,
+`CONTACT_UNCERTAIN`, `BLOCKED`,
 `COOLDOWN_ELAPSED`, `RETRY_ELAPSED`, `QUEUE_CHANGED`, `PAGE_CHANGED`,
 `WATCHDOG_TIMEOUT`, `SESSION_LIMIT_REACHED`, `CLEAR_ERROR`.
 
-**Effects out:** `scan-jobs`, `load-job`, `evaluate-job`, `apply-job`,
-`verify-application`, `schedule-cooldown`, `notify`, `persist`,
+**Effects out:** `scan-jobs`, `load-job`, `evaluate-job`, `contact-job`,
+`schedule-cooldown`, `notify`, `persist`,
 `record-diagnostics`, `stop`.
 
 Both unions end in an exhaustiveness guard, so adding a variant without handling
@@ -257,7 +256,7 @@ stall, session limit and page change all call it. It sets `pauseReason` and
 path means one behaviour to test.
 
 `RESUME` always restarts from `scanning`; the machine never resumes mid-action,
-because a half-completed apply must be re-verified from the top.
+because a half-completed communication must be re-verified from the top.
 
 ### 3.5 Controller: re-entrancy and effect ordering
 

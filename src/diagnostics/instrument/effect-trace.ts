@@ -59,6 +59,9 @@ export const traceOrchestrator = (
   inner: Orchestrator,
   options: EffectTraceOptions,
 ): Orchestrator => ({
+  abortCurrent() {
+    inner.abortCurrent();
+  },
   async runEffect(effect: Effect, context: AutomationContext): Promise<void> {
     const { recorder, now } = options;
     const startedAt = now();
@@ -125,7 +128,6 @@ export const DEFAULT_EFFECT_BUDGETS: Readonly<Record<string, number>> = {
   "scan-jobs": 30_000,
   "load-job": 30_000,
   "evaluate-job": 5_000,
-  "apply-job": 45_000,
-  "verify-application": 30_000,
+  "contact-job": 60_000,
   persist: 5_000,
 };

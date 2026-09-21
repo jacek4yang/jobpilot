@@ -12,7 +12,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "pnpm typecheck:ts && pnpm typecheck:vue",
+    "typecheck:ts": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck:vue": "vue-tsc --noEmit -p tsconfig.json",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -24,6 +26,7 @@
     "verify:dist": "tsx scripts/verify-build.ts",
     "verify:diagnostic": "tsx scripts/verify-diagnostic-build.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm verify:dist && pnpm build:diagnostic && pnpm verify:diagnostic && pnpm diag:selftest",
+    "check:all": "pnpm check && pnpm test:browser",
     "build:diagnostic": "node scripts/run-build.mjs diagnostic",
     "diag:analyze": "tsx scripts/analyze-bundle.ts",
     "diag:compare": "tsx scripts/compare-bundles.ts",
@@ -40,10 +43,11 @@
     "camoufox": "^0.1.19",
     "happy-dom": "20.14.5",
     "tsx": "4.23.15",
-    "typescript": "7.0.2",
+    "typescript": "5.9.3",
     "vite": "7.3.6",
     "vite-plugin-monkey": "7.1.9",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "vue-tsc": "^3.3.11"
   },
   "dependencies": {
     "vue": "^3.5.43"

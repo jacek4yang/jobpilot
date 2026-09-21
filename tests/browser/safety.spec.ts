@@ -140,7 +140,7 @@ test.describe("JobPilot fails closed on blocked pages", () => {
     if (await waitForPanel(page)) {
       const snapshot = await readPanelState(page);
       expect(RUNNING_STATES).not.toContain(snapshot.state);
-      expect(snapshot.buttons.Stop).toBe(true);
+      expect(snapshot.buttons["停止"]).toBe(true);
       await expect(page.locator(PANEL_STOP).first()).toBeDisabled();
     }
 
@@ -165,10 +165,9 @@ test.describe("JobPilot fails closed on blocked pages", () => {
     const dot = page.locator(PANEL_DOT).first();
     await expect(dot).toHaveAttribute("data-state", /idle|paused|blocked|failed/);
 
-    // Press Start, then discard the user's own click so the log contains only
-    // what JobPilot does afterwards.
-    await page.locator(PANEL_START).first().click();
-    await readActivations(page, { reset: true });
+    // With no valid current-page selection, the primary irreversible action is
+    // not merely guarded in a callback: it is unreachable in the UI.
+    await expect(page.locator(PANEL_START).first()).toBeDisabled();
 
     // Wait for the application to settle. If it were going to run, the guards
     // are synchronous so it would have entered a running state immediately;

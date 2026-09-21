@@ -19,16 +19,13 @@
 import type { JobDetail, JobSummary } from "../../domain/job/job";
 import type { Clock } from "../../domain/support/shared";
 import type {
-  ApplyOptions,
-  ApplyResult,
   JobPlatform,
   PageKind,
+  PlatformOperationOptions,
   ScanOptions,
-  VerificationResult,
 } from "../../ports/job-platform";
 import type { Logger } from "../../ports/logger";
 import { isAborted, throwIfAborted } from "./actions/abort";
-import { createApplyAction } from "./actions/apply-action";
 import { parseBossJobDetail, parseBossJobDetailFromDrawer } from "./parser/detail-parser";
 import { parseBossJobList } from "./parser/list-parser";
 import { detectBossPageKind } from "./parser/page-kind";
@@ -102,11 +99,13 @@ const urlPathnameOf = (url: string): string | undefined => {
  */
 const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
   const id = String(job.id);
+  const platformJobId = job.platformJobId;
   const urlPath = job.url === undefined ? undefined : urlPathnameOf(job.url);
   for (const card of Array.from(root.querySelectorAll(".job-card-wrap"))) {
     const anchor = card.querySelector("a[href*='/job_detail/']");
     const href = anchor?.getAttribute("href");
     if (href === null || href === undefined) continue;
+    if (platformJobId !== undefined && href.includes(`/job_detail/${platformJobId}`)) return card;
     if (href.includes(`/job_detail/${id}`)) return card;
     if (urlPath !== undefined && href.includes(urlPath)) return card;
   }
@@ -123,12 +122,11 @@ const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
  *     aborted signal — it never falls back to parsing "whatever is there"
  *   - `loadJob()` throws when the detail cannot be parsed or the page is not a
  *     detail page, because a `JobDetail` cannot honestly be fabricated
- *   - `apply()` / `verifyApplication()` delegate to the fail-closed action
+ *   - communication is deliberately absent here; only CommunicationRunner may
+ *     cross the irreversible send boundary
  */
 export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   const { document: doc, location, logger, clock, version } = deps;
-
-  const applyAction = createApplyAction({ root: doc, clock, logger });
 
   const logDetection = (kind: PageKind): PageKind => {
     logger.debug("boss.detect", "page classified", {
@@ -155,7 +153,7 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   const tryLoadFromDrawer = async (
     card: Element,
     job: JobSummary,
-    options?: ApplyOptions,
+    options?: PlatformOperationOptions,
   ): Promise<JobDetail | null> => {
     // Synthetic clicks must use the document's own Event constructor: the
     // adapter is also exercised under happy-dom, where the global MouseEvent
@@ -246,7 +244,7 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
      * expected to check `detectPage()` first; a null parse means the required
      * anchors were missing, which is a hard stop (`unknown-dom`).
      */
-    async loadJob(job: JobSummary, options?: ApplyOptions): Promise<JobDetail> {
+    async loadJob(job: JobSummary, options?: PlatformOperationOptions): Promise<JobDetail> {
       throwIfAborted(options?.signal);
 
       // Drawer-first: a visible listing card is the fastest, least disruptive
@@ -256,9 +254,16 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
       if (card !== null) {
         const drawerDetail = await tryLoadFromDrawer(card, job, options);
         if (drawerDetail !== null) return drawerDetail;
+        // A null here also covers a cancelled wait (the signal aborted while
+        // polling). Falling through would then race the user's PAUSE/STOP:
+        // the drawer opened in the meantime, the page type check passes, and
+        // a stale detail is produced against an aborted operation. Abort
+        // before the navigation fallback.
+        throwIfAborted(options?.signal);
         logger.debug("boss.loadJob", "drawer wait timed out; falling back to navigation");
       }
 
+      throwIfAborted(options?.signal);
       const kind = detectBossPageKind(doc, location);
       if (kind !== "job-detail") {
         throw new Error(
@@ -273,14 +278,6 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
         );
       }
       return detail;
-    },
-
-    apply(job: JobDetail, options?: ApplyOptions): Promise<ApplyResult> {
-      return applyAction.apply(job, options);
-    },
-
-    verifyApplication(job: JobDetail, options?: ApplyOptions): Promise<VerificationResult> {
-      return applyAction.verifyApplication(job, options);
     },
   };
 };

@@ -79,6 +79,7 @@ export const KNOWN_FIXTURES = [
   "success-modal.html",
   "unknown-modal.html",
   "risk-page.html",
+  "finite-batch-e2e.html",
 ] as const;
 
 /** Path of the fixture on disk (used for existence checks). */
@@ -111,8 +112,7 @@ export const existingFixtures = (): readonly string[] => KNOWN_FIXTURES.filter(f
  *       .jobpilot-root              <- the panel, `display:flex` when expanded
  *         .jobpilot-header > .jobpilot-title
  *         .jobpilot-dot[data-state] <- the state readout
- *         .jobpilot-tabs > .jobpilot-tab
- *         .jobpilot-actions > button.jobpilot-btn (Start/Pause/Resume/Skip/Stop)
+ *         .jobpilot-panel[data-panel="home"] (the single production surface)
  *
  * A `.jobpilot-hidden` class (`display: none !important`) marks the collapsed
  * element, so visibility assertions are meaningful.
@@ -134,11 +134,11 @@ export const PANEL_SAFETY_CHIP = ".jobpilot-safety-chip";
 export const PANEL_PAGE_CHIP = ".jobpilot-page-chip";
 export const PANEL_MODE_CHIP = ".jobpilot-mode-chip";
 export const PANEL_TITLE = ".jobpilot-title";
-export const PANEL_ACTIONS = ".jobpilot-actions";
+export const PANEL_ACTIONS = ".jobpilot-step-actions";
 export const PANEL_LAUNCHER = ".jobpilot-launcher";
-export const PANEL_START = '.jobpilot-actions button.jobpilot-btn[data-action="start"]';
-export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn[data-action="pause"]';
-export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn[data-action="stop"]';
+export const PANEL_START = 'button.jobpilot-btn[data-action="start-batch"]';
+export const PANEL_PAUSE = 'button.jobpilot-btn[data-action="pause-batch"]';
+export const PANEL_STOP = 'button.jobpilot-btn[data-action="stop-batch"]';
 
 /**
  * Page kinds observed from the built userscript, per fixture, on the loopback
@@ -173,8 +173,7 @@ export const RUNNING_STATES = [
   "evaluating",
   "opening",
   "validating",
-  "applying",
-  "verifying",
+  "contacting",
   "cooldown",
 ] as const;
 
@@ -204,6 +203,8 @@ export interface LoadHarnessOptions {
    * `true`; set `false` for pages where the script is expected to be absent.
    */
   readonly waitForUserscript?: boolean;
+  /** Raw GM keys/values to install before the built userscript boots. */
+  readonly gmValues?: Readonly<Record<string, string>>;
 }
 
 /** How long to wait for bootstrap to settle before reading collected errors. */
@@ -221,7 +222,118 @@ export const loadHarness = async (
   fixture: string,
   options: LoadHarnessOptions = {},
 ): Promise<HarnessLoad> => {
-  const { origin = GUARDED_ORIGIN, query = {}, waitForUserscript = true } = options;
+  const { origin = GUARDED_ORIGIN, query = {}, waitForUserscript = true, gmValues = {} } = options;
+
+  // The loopback fixture is intentionally served over plain HTTP while using
+  // the BOSS hostname alias. Chromium therefore does not expose Web Locks
+  // (the alias is not a secure context), although production BOSS HTTPS does.
+  // Install the smallest standards-shaped single-page lock so browser journeys
+  // exercise the production ownership gate instead of failing at a harness
+  // transport limitation. Cross-tab contention is covered with a shared fake
+  // in the navigator-lock unit suite.
+  await page.addInitScript((seed: Readonly<Record<string, string>>) => {
+    // A classic-script harness has no userscript manager. Provide durable,
+    // origin-scoped GM semantics so built-bundle tests cross the real storage
+    // health and intent read-back gates instead of stopping in read-only mode.
+    const gmPrefix = "__jobpilot_browser_gm__:";
+    Object.defineProperties(globalThis, {
+      GM_getValue: {
+        configurable: true,
+        value: (key: string, fallback?: unknown) =>
+          localStorage.getItem(gmPrefix + key) ?? fallback,
+      },
+      GM_setValue: {
+        configurable: true,
+        value: (key: string, value: unknown) => localStorage.setItem(gmPrefix + key, String(value)),
+      },
+      GM_deleteValue: {
+        configurable: true,
+        value: (key: string) => localStorage.removeItem(gmPrefix + key),
+      },
+      GM_listValues: {
+        configurable: true,
+        value: () =>
+          Object.keys(localStorage)
+            .filter((key) => key.startsWith(gmPrefix))
+            .map((key) => key.slice(gmPrefix.length)),
+      },
+    });
+    for (const [key, value] of Object.entries(seed)) {
+      localStorage.setItem(gmPrefix + key, value);
+    }
+
+    if ((navigator as Navigator & { locks?: unknown }).locks !== undefined) return;
+    // localStorage is the only synchronous cross-page channel on this insecure
+    // origin, but a naive check-then-set double-grants when two pages race
+    // (both read null before either writes). Emulate the real atomicity with a
+    // claim → settle → verify round: write a claim carrying a monotonic
+    // timestamp, wait one settle window so any concurrent claim lands, then
+    // re-read; only the EARLIEST claim holds, and it installs its own token as
+    // the lock value. A loser re-checks after the winner's release window.
+    const lockKey = "__jobpilot_browser_web_lock__";
+    const claimKey = "__jobpilot_browser_web_lock_claim__";
+    const settleMs = 60;
+    const held = new Set<string>();
+    addEventListener("beforeunload", () => {
+      const current = localStorage.getItem(lockKey);
+      if (current !== null && held.has(current)) localStorage.removeItem(lockKey);
+      localStorage.removeItem(claimKey);
+    });
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          _options: { readonly ifAvailable: boolean },
+          callback: (lock: object | null) => Promise<void>,
+        ): Promise<void> => {
+          const claim = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+          // An existing LOCK VALUE beats any new claim.
+          if (localStorage.getItem(lockKey) !== null) {
+            await callback(null);
+            return;
+          }
+          localStorage.setItem(claimKey, JSON.stringify({ claim, at: Date.now() }));
+          // Let any concurrent claim from another page land, then verify.
+          await sleep(settleMs);
+          const currentClaim = localStorage.getItem(claimKey);
+          if (currentClaim === null || !currentClaim.includes(claim)) {
+            // Another claim overwrote ours; only the surviving claim may hold.
+            const survivor = (() => {
+              try {
+                const parsed = JSON.parse(localStorage.getItem(claimKey) ?? "null") as {
+                  claim?: string;
+                  at?: number;
+                } | null;
+                return parsed?.claim ?? null;
+              } catch {
+                return null;
+              }
+            })();
+            if (survivor === null || localStorage.getItem(lockKey) !== null) {
+              await callback(null);
+              return;
+            }
+            // Wait for the survivor to install its lock, then lose cleanly.
+            await sleep(settleMs);
+            await callback(null);
+            return;
+          }
+          localStorage.removeItem(claimKey);
+          const token = claim;
+          localStorage.setItem(lockKey, token);
+          held.add(token);
+          try {
+            await callback({ name: "jobpilot-execution" });
+          } finally {
+            held.delete(token);
+            if (localStorage.getItem(lockKey) === token) localStorage.removeItem(lockKey);
+          }
+        },
+      },
+    });
+  }, gmValues);
 
   const pageErrors: Error[] = [];
   const consoleErrors: string[] = [];

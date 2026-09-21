@@ -78,6 +78,12 @@ describe("boss list parsing — job-list.html", () => {
     // Every card in this fixture carries data-job-id, so no id is a pure
     // positional accident and every one is reported as platform-native.
     expect(result.jobs.every((job) => job.idIsPlatformNative)).toBe(true);
+    expect(result.jobs.map((job) => job.platformJobId)).toEqual([
+      "boss-1001",
+      "boss-1002",
+      "boss-1003",
+      "boss-1004",
+    ]);
   });
 
   it("keeps raw salary and location text intact for downstream rules", () => {

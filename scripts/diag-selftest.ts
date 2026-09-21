@@ -43,10 +43,9 @@ import {
 } from "../src/diagnostics/instrument/transaction-trace";
 import { createDiagnosticRecorder } from "../src/diagnostics/recorder";
 import { bundleFileName, newSessionId, startSession } from "../src/diagnostics/session";
-import { traceQueue, traceStorage } from "../src/diagnostics/trace";
+import { traceStorage } from "../src/diagnostics/trace";
 import { createTemplate } from "../src/domain/communication/template";
 import { createNullLogger } from "../src/infrastructure/logging/logger";
-import { createTaskQueue } from "../src/infrastructure/queue/queue";
 import { analyzeBundle } from "./analyze-bundle";
 import { loadBundle } from "./diagnostics/bundle-reader";
 
@@ -140,19 +139,11 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
   // Effects, through the tracing orchestrator.
   let effectClock = 0;
   const tracedOrchestrator = traceOrchestrator(
-    { runEffect: async () => {}, dispose: () => {} },
+    { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
     { recorder, now: () => (effectClock += 12), budgets: DEFAULT_EFFECT_BUDGETS },
   );
   await tracedOrchestrator.runEffect({ type: "persist" }, context);
   await tracedOrchestrator.runEffect({ type: "scan-jobs" }, context);
-
-  // Queue lifecycle, through the tracing queue.
-  const queue = traceQueue(createTaskQueue(), recorder);
-  queue.enqueue({ jobId: "job-42", now });
-  queue.enqueue({ jobId: "job-43", now });
-  queue.enqueue({ jobId: "job-43", now }); // duplicate, must not double-enqueue
-  const taken = queue.takeNext(now);
-  if (taken !== undefined) queue.update(taken.jobId, "success", now);
 
   // Selector outcomes, through the real reporter — including a miss, so the
   // analyzer has something to find.
@@ -236,7 +227,24 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
 
     return createCommunicationService({
       runner: {
-        run: async (intent) => {
+        run: async (intent, runOptions) => {
+          runOptions?.onIdentityChecked?.({ verdict: "match", detail: "self-test chat" });
+          runOptions?.onDraftChecked?.(options.draftPresent ?? false);
+          if (options.draftPresent === true) {
+            return {
+              kind: "aborted",
+              failure: "DRAFT_PRESENT",
+              detail: "self-test draft present",
+            };
+          }
+          const authorization = await runOptions?.authorizeSend?.(intent);
+          if (authorization !== undefined && !authorization.allowed) {
+            return {
+              kind: "aborted",
+              failure: "USER_INTERRUPTED",
+              detail: authorization.detail,
+            };
+          }
           // The real runner commits the point of no return before clicking.
           // Without this the attempt event could never fire and the gate would
           // be asserting something unreachable.
@@ -261,8 +269,6 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
         hourlyLimitReached: false,
         rateLimited: false,
       }),
-      verifyChat: () => ({ verified: true, detail: "conversation open" }),
-      isDraftPresent: () => options.draftPresent ?? false,
       outgoingCount: () => 0,
       readPersistedIntent: () => persisted as never,
       persistIntent,
@@ -378,7 +384,6 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
       "transactions.json": [{ id: "txn-43", phase: "uncertain" }],
       "selector-diagnostics.json": [{ purpose: "detail.applyButton", matched: 0 }],
       "dom-diagnostics.json": [],
-      "queue.json": { tasks: [] },
     },
     health: {
       storageHealthy: false,
@@ -552,7 +557,6 @@ const run = async (): Promise<void> => {
       ["state transitions", [EVENTS.stateTransition]],
       ["effect trace", [EVENTS.effectStarted]],
       ["selector trace", [EVENTS.selectorMatch]],
-      ["queue trace", [EVENTS.queueItemEnqueued]],
       ["storage trace", [EVENTS.storageWriteFailed]],
       ["transaction trace", [EVENTS.intentCreated, EVENTS.sendAttemptPersisted]],
       ["chat identity trace", [EVENTS.identityMatched]],

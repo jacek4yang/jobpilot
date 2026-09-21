@@ -90,12 +90,23 @@ export type ObserveResult =
   | { readonly kind: "unobserved"; readonly detail: string }
   | BlockedResult;
 
+/** Result of resolving the detail-page contact control into the intended chat. */
+export type OpenConversationResult =
+  | { readonly kind: "ready"; readonly identity: ChatIdentity }
+  | { readonly kind: "chat-mismatch"; readonly detail: string }
+  | BlockedResult;
+
 /** The communication action surface handed to the queue runner. */
 export interface CommunicationAction {
   /** The 立即沟通 control, searched only inside an active job-detail root. */
   findCommunicateButton(): LocatedElement | null;
   /** Identity of the conversation currently displayed, or `null`. */
   readCurrentChat(): ChatIdentity | null;
+  /** Opens the selected job's chat and waits for positive identity evidence. */
+  openConversation(
+    intent: CommunicationIntent,
+    options?: ActionOptions,
+  ): Promise<OpenConversationResult>;
   /** Current editor text, or `null` when there is no editor. */
   readEditor(): string | null;
   /** How many delivered outgoing messages carry `text`. */
@@ -125,9 +136,11 @@ export interface ActionOptions {
    */
   readonly signal?: AbortSignal;
   /** Test seam: replaces the default "schedule the next poll" hook. */
-  readonly scheduler?: (run: () => void) => void;
+  readonly scheduler?: (run: () => void, delayMs: number) => void;
   /** How many polls before giving up. Defaults to a small, finite number. */
   readonly maxAttempts?: number;
+  /** Delay between polls. Navigation defaults to 250ms; observation to 0ms. */
+  readonly pollIntervalMs?: number;
 }
 
 /** Page guard evaluation, shared by every method. */
@@ -186,11 +199,11 @@ export const evaluateGuards = (deps: CommunicationActionDeps): GuardOutcome => {
 const isAborted = (signal: AbortSignal | undefined): boolean => signal?.aborted === true;
 
 /** Default poll scheduler: a macrotask, NOT a fixed sleep. */
-const defaultScheduler = (run: () => void): void => {
+const defaultScheduler = (run: () => void, delayMs: number): void => {
   const view = typeof globalThis === "object" ? globalThis : undefined;
   const setTimeoutFn: unknown = view === undefined ? undefined : Reflect.get(view, "setTimeout");
   if (typeof setTimeoutFn === "function") {
-    (setTimeoutFn as (handler: () => void, timeout?: number) => unknown)(run, 0);
+    (setTimeoutFn as (handler: () => void, timeout?: number) => unknown)(run, delayMs);
     return;
   }
   run();
@@ -209,9 +222,14 @@ const defaultScheduler = (run: () => void): void => {
 const pollUntil = async <T>(
   probe: () => T | undefined,
   options: ActionOptions,
+  defaults: { readonly maxAttempts: number; readonly intervalMs: number } = {
+    maxAttempts: 3,
+    intervalMs: 0,
+  },
 ): Promise<T | undefined> => {
   const scheduler = options.scheduler ?? defaultScheduler;
-  const maxAttempts = options.maxAttempts ?? 3;
+  const maxAttempts = options.maxAttempts ?? defaults.maxAttempts;
+  const intervalMs = options.pollIntervalMs ?? defaults.intervalMs;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (isAborted(options.signal)) return undefined;
@@ -219,7 +237,7 @@ const pollUntil = async <T>(
     if (result !== undefined) return result;
     if (attempt === maxAttempts - 1) return undefined;
     await new Promise<void>((resolve) => {
-      scheduler(resolve);
+      scheduler(resolve, intervalMs);
     });
   }
   return undefined;
@@ -311,7 +329,9 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
     }
     const verdict = matchChatIdentity(
       {
-        jobId: intent.jobId,
+        ...(intent.expectedPlatformJobId === undefined
+          ? {}
+          : { jobId: intent.expectedPlatformJobId }),
         ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
         ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
         ...(intent.expectedRecruiter === undefined ? {} : { recruiter: intent.expectedRecruiter }),
@@ -340,6 +360,101 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
 
     readCurrentChat(): ChatIdentity | null {
       return readChatIdentity(root);
+    },
+
+    async openConversation(
+      intent: CommunicationIntent,
+      options: ActionOptions = {},
+    ): Promise<OpenConversationResult> {
+      if (isAborted(options.signal)) return blocked("unknown-dom", "aborted before navigation");
+
+      const guardResult = guard();
+      if (guardResult !== null) return guardResult;
+
+      // Never click away from a conversation that is already open unless it is
+      // positively the intended one. A manually switched chat is a hard stop.
+      const existing = readChatIdentity(root);
+      if (existing !== null) {
+        const verdict = matchChatIdentity(
+          {
+            ...(intent.expectedPlatformJobId === undefined
+              ? {}
+              : { jobId: intent.expectedPlatformJobId }),
+            ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
+            ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
+            ...(intent.expectedRecruiter === undefined
+              ? {}
+              : { recruiter: intent.expectedRecruiter }),
+          },
+          existing,
+        );
+        return verdict.kind === "match"
+          ? { kind: "ready", identity: existing }
+          : {
+              kind: "chat-mismatch",
+              detail:
+                verdict.kind === "mismatch"
+                  ? verdict.reason
+                  : `identity unconfirmed: ${verdict.reason}`,
+            };
+      }
+
+      const detailRoot = findActiveDetailRoot(root);
+      if (detailRoot === null) {
+        return blocked(
+          "selector-missing",
+          "no active job detail with an exact 立即沟通 control was found",
+        );
+      }
+      const located = queryBossFirst(detailRoot, SELECTORS.detail.applyButton);
+      if (located === null || !hasCommunicateLabel(located.element)) {
+        return blocked("selector-missing", "the active detail has no exact 立即沟通 control");
+      }
+      const click: unknown = (located.element as { click?: unknown }).click;
+      if (typeof click !== "function") {
+        return blocked("ambiguous-state", "the 立即沟通 control is not clickable");
+      }
+
+      logger.info("boss.communication", "opening conversation", {
+        jobId: intent.jobId,
+        matchedBy: located.matchedBy,
+      });
+      (located.element as Element & { click: () => void }).click();
+
+      const identity = await pollUntil(() => readChatIdentity(root) ?? undefined, options, {
+        maxAttempts: 40,
+        intervalMs: 250,
+      });
+      if (identity === undefined) {
+        return blocked(
+          "selector-missing",
+          "the conversation did not appear after clicking 立即沟通",
+        );
+      }
+
+      const verdict = matchChatIdentity(
+        {
+          ...(intent.expectedPlatformJobId === undefined
+            ? {}
+            : { jobId: intent.expectedPlatformJobId }),
+          ...(intent.expectedJobTitle === undefined ? {} : { title: intent.expectedJobTitle }),
+          ...(intent.expectedCompany === undefined ? {} : { company: intent.expectedCompany }),
+          ...(intent.expectedRecruiter === undefined
+            ? {}
+            : { recruiter: intent.expectedRecruiter }),
+        },
+        identity,
+      );
+      if (verdict.kind !== "match") {
+        return {
+          kind: "chat-mismatch",
+          detail:
+            verdict.kind === "mismatch"
+              ? verdict.reason
+              : `identity unconfirmed: ${verdict.reason}`,
+        };
+      }
+      return { kind: "ready", identity };
     },
 
     readEditor(): string | null {

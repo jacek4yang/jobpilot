@@ -22,6 +22,7 @@ const makeController = (options: {
     clock: { now: () => NOW },
     logger: createNullLogger(),
     orchestrator: {
+      abortCurrent: () => {},
       runEffect: async (effect: Effect) => {
         const id = `${effect.type}#${tag}`;
         options.onStart(id);

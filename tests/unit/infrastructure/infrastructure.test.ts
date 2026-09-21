@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Clock } from "../../../src/domain/support/shared";
 import { createLogger } from "../../../src/infrastructure/logging/logger";
-import { createTaskQueue } from "../../../src/infrastructure/queue/queue";
 import {
   evaluateRateLimit,
   evaluateSessionLimits,
@@ -30,115 +29,6 @@ const fakeClock = (start = NOW): Clock & { advance: (ms: number) => void } => {
 };
 
 const fixedRandom = (value: number) => ({ next: () => value });
-
-describe("task queue", () => {
-  it("enqueues a pending task", () => {
-    const queue = createTaskQueue();
-    expect(queue.enqueue({ jobId: "a", now: NOW })).toBe(true);
-    expect(queue.pendingCount()).toBe(1);
-  });
-
-  it("refuses to enqueue a duplicate job", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    expect(queue.enqueue({ jobId: "a", now: NOW })).toBe(false);
-    expect(queue.snapshot().tasks).toHaveLength(1);
-  });
-
-  it("refuses to re-enqueue a job that already succeeded", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.takeNext(NOW);
-    queue.update("a", "success", NOW);
-    expect(queue.enqueue({ jobId: "a", now: NOW })).toBe(false);
-    expect(queue.pendingCount()).toBe(0);
-  });
-
-  it("returns undefined when nothing is pending", () => {
-    expect(createTaskQueue().takeNext(NOW)).toBeUndefined();
-  });
-
-  it("marks a taken task as running and counts the attempt", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    const task = queue.takeNext(NOW);
-    expect(task?.status).toBe("running");
-    expect(task?.attempts).toBe(1);
-    expect(queue.takeNext(NOW)).toBeUndefined();
-  });
-
-  it("takes tasks in insertion order", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.enqueue({ jobId: "b", now: NOW });
-    expect(queue.takeNext(NOW)?.jobId).toBe("a");
-    queue.update("a", "success", NOW);
-    expect(queue.takeNext(NOW)?.jobId).toBe("b");
-  });
-
-  it("records a failure reason", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.takeNext(NOW);
-    queue.update("a", "failed", NOW, "boom");
-    expect(queue.snapshot().tasks[0]?.lastError).toBe("boom");
-  });
-
-  it("clears pending tasks but keeps settled ones", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.enqueue({ jobId: "b", now: NOW });
-    queue.takeNext(NOW);
-    queue.update("a", "success", NOW);
-    queue.clearPending();
-    expect(queue.pendingCount()).toBe(0);
-    expect(queue.snapshot().tasks).toHaveLength(1);
-  });
-
-  it("clears everything", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.clear();
-    expect(queue.snapshot().tasks).toHaveLength(0);
-  });
-
-  it("does not remove a running task", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.takeNext(NOW);
-    expect(queue.remove("a")).toBe(false);
-  });
-
-  it("removes a pending task", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    expect(queue.remove("a")).toBe(true);
-    expect(queue.pendingCount()).toBe(0);
-  });
-
-  it("resets a running task to pending when restored after a reload", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    queue.takeNext(NOW);
-    const snapshot = queue.snapshot();
-    expect(snapshot.currentJobId).toBe("a");
-
-    const restored = createTaskQueue();
-    restored.restore(snapshot);
-    // A task interrupted mid-flight has an unknown outcome, so it must be
-    // re-evaluated rather than assumed complete.
-    expect(restored.snapshot().tasks[0]?.status).toBe("pending");
-    expect(restored.pendingCount()).toBe(1);
-  });
-
-  it("reports the current job id only while a task runs", () => {
-    const queue = createTaskQueue();
-    queue.enqueue({ jobId: "a", now: NOW });
-    expect(queue.snapshot().currentJobId).toBeUndefined();
-    queue.takeNext(NOW);
-    expect(queue.snapshot().currentJobId).toBe("a");
-  });
-});
 
 describe("retry", () => {
   it("returns the value on first success", async () => {

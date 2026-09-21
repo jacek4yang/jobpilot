@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><title>Synthetic finite batch</title></head>
+  <body>
+    <!-- Fully synthetic production-composition fixture. No real BOSS data. -->
+    <div class="job-list-container">
+      <div class="job-card-wrap" data-job-id="e2e-1001">
+        <a class="job-name" href="/job_detail/e2e-1001.html">前端开发工程师</a>
+        <span class="job-salary">20-30K</span>
+        <span data-jobpilot-field="company">示例一科技有限公司</span>
+        <span class="company-location">Shanghai</span>
+        <ul class="tag-list"><li>本科</li><li>3-5年</li></ul>
+      </div>
+      <div class="job-card-wrap" data-job-id="e2e-1002">
+        <a class="job-name" href="/job_detail/e2e-1002.html">后端开发工程师</a>
+        <span class="job-salary">25-35K</span>
+        <span data-jobpilot-field="company">示例二科技有限公司</span>
+        <span class="company-location">Beijing</span>
+        <ul class="tag-list"><li>本科</li><li>3-5年</li></ul>
+      </div>
+    </div>
+    <div id="e2e-surface"></div>
+    <script>
+      (() => {
+        const variant = new URLSearchParams(location.search).get("variant") || "success";
+        const jobs = {
+          "e2e-1001": { title: "前端开发工程师", company: "示例一科技有限公司", recruiter: "招聘者甲" },
+          "e2e-1002": { title: "后端开发工程师", company: "示例二科技有限公司", recruiter: "招聘者乙" },
+        };
+        const state = { sendClicks: 0, openedJobs: [], sentJobs: [] };
+        window.__finiteBatchFixture = state;
+        const surface = document.querySelector("#e2e-surface");
+
+        const openChat = (id) => {
+          const job = jobs[id];
+          const observedId = variant === "wrong-chat" ? "e2e-wrong" : id;
+          surface.innerHTML = `
+            <div class="chat-conversation" data-job-id="${observedId}">
+              <div class="chat-header">
+                <span class="recruiter-name">${job.recruiter}</span>
+                <span class="company-name">${job.company}</span>
+                <a class="job-card-title" href="/job_detail/${observedId}.html">${job.title}</a>
+              </div>
+              <ul class="im-list"></ul>
+              <div class="chat-editor">
+                <div id="chat-input" class="chat-input" contenteditable="true">${variant === "draft" ? "用户已有的草稿内容" : ""}</div>
+                <button type="button" class="btn-send">&#21457;&#36865;</button>
+              </div>
+            </div>`;
+          if (variant === "captcha") {
+            const challenge = document.createElement("div");
+            challenge.dataset.jobpilotGuard = "captcha";
+            challenge.textContent = "Please complete security verification";
+            surface.prepend(challenge);
+          }
+          surface.querySelector(".btn-send")?.addEventListener("click", () => {
+            state.sendClicks += 1;
+            state.sentJobs.push(id);
+            if (variant === "uncertain") return;
+            const body = surface.querySelector("#chat-input")?.textContent || "";
+            const bubble = document.createElement("li");
+            bubble.className = "message-item item-myself";
+            const content = document.createElement("div");
+            content.className = "item-message-body";
+            content.textContent = body;
+            bubble.append(content);
+            surface.querySelector(".im-list")?.append(bubble);
+          });
+        };
+
+        const openDetail = (id) => {
+          const job = jobs[id];
+          state.openedJobs.push(id);
+          surface.innerHTML = `
+            <main class="job-detail" data-jobpilot-detail data-job-id="${id}">
+              <h1 class="job-detail__title" itemprop="title">${job.title}</h1>
+              <div class="job-detail__salary" itemprop="baseSalary">${id === "e2e-1001" ? "20-30K" : "25-35K"}</div>
+              <div class="job-detail__location" itemprop="jobLocation">${id === "e2e-1001" ? "Shanghai" : "Beijing"}</div>
+              <div class="job-detail__tags" data-jobpilot-field="job-tags"><span class="job-detail__tag">本科</span><span class="job-detail__tag">3-5年</span></div>
+              <span class="job-detail__company-name" itemprop="name" data-jobpilot-company>${job.company}</span>
+              <section class="job-detail__description" data-jobpilot-field="description">本地测试用的合成职位描述。</section>
+              <div class="job-detail__recruiter"><span class="job-detail__recruiter-name">${job.recruiter}</span></div>
+              <button type="button" class="job-detail__apply" data-jobpilot-action="apply">&#31435;&#21363;&#27807;&#36890;</button>
+            </main>`;
+          surface.querySelector(".job-detail__apply")?.addEventListener("click", () => openChat(id));
+        };
+
+        for (const card of document.querySelectorAll(".job-card-wrap")) {
+          card.addEventListener("click", (event) => {
+            event.preventDefault();
+            if (variant === "slow-detail") {
+              setTimeout(() => openDetail(card.dataset.jobId), 750);
+            } else {
+              openDetail(card.dataset.jobId);
+            }
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

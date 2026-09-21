@@ -5,6 +5,7 @@ import { evaluateSessionLimits, nextDelayMs } from "../infrastructure/rate-limit
 import type { BlockReason, JobPlatform, PageKind } from "../ports/job-platform";
 import type { Logger } from "../ports/logger";
 import type { Storage } from "../ports/storage";
+import type { CommunicationService } from "./communication-service";
 import type { Effect } from "./events";
 import type { ApplicationHistory } from "./history";
 import type { AutomationContext, PauseReason } from "./state";
@@ -15,6 +16,8 @@ import type { AutomationContext, PauseReason } from "./state";
  */
 export interface OrchestratorDeps {
   readonly platform: JobPlatform;
+  /** The single authoritative owner of contact navigation and message send. */
+  readonly communication: Pick<CommunicationService, "communicate">;
   readonly engine: RuleEngine;
   readonly history: ApplicationHistory;
   readonly storage: Storage;
@@ -38,16 +41,13 @@ export interface OrchestratorDeps {
     readonly maxApplicationsPerHour: number;
     readonly maxRetries: number;
   };
-  /**
-   * True when the operator explicitly selected this job for the batch run.
-   * Selection IS the acceptance: a selected job bypasses scoring.
-   */
-  readonly isOperatorSelected: (jobId: string) => boolean;
 }
 
 /** Pending timers created by effects, so they can be cancelled on dispose. */
 export interface Orchestrator {
   runEffect(effect: Effect, context: AutomationContext): Promise<void>;
+  /** Immediately cancels timers and the in-flight DOM/storage operation. */
+  abortCurrent(): void;
   /** Cancels every pending timer. Safe to call repeatedly. */
   dispose(): void;
 }
@@ -98,6 +98,25 @@ const pageKindToPauseReason = (pageKind: PageKind): PauseReason => {
 
 export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
   const timers = new Set<ReturnType<typeof setTimeout>>();
+  let activeOperation: AbortController | undefined;
+
+  const beginOperation = (): AbortController => {
+    activeOperation?.abort();
+    const operation = new AbortController();
+    activeOperation = operation;
+    return operation;
+  };
+
+  const finishOperation = (operation: AbortController): void => {
+    if (activeOperation === operation) activeOperation = undefined;
+  };
+
+  const abortCurrent = (): void => {
+    activeOperation?.abort();
+    activeOperation = undefined;
+    for (const timer of timers) clearTimeout(timer);
+    timers.clear();
+  };
 
   const schedule = (delayMs: number, action: () => void): void => {
     const timer = setTimeout(() => {
@@ -148,6 +167,7 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
   const runEffect = async (effect: Effect, context: AutomationContext): Promise<void> => {
     switch (effect.type) {
       case "scan-jobs": {
+        const operation = beginOperation();
         const pageKind = deps.platform.detectPage();
         if (UNSCANNABLE_PAGES.includes(pageKind)) {
           // Fail closed before touching the DOM.
@@ -161,13 +181,16 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
                   : "unknown-dom",
             evidence: `page kind: ${pageKind}`,
           });
+          finishOperation(operation);
           return;
         }
 
         try {
-          const summaries = await deps.platform.scanJobs({ limit: 50 });
+          const summaries = await deps.platform.scanJobs({ limit: 50, signal: operation.signal });
+          if (operation.signal.aborted) return;
           deps.dispatch({ type: "SCAN_COMPLETED", summaries, skipped: 0 });
         } catch (error) {
+          if (operation.signal.aborted) return;
           deps.logger.error("orchestrator", "scan failed", { error });
           deps.dispatch({
             type: "SCAN_FAILED",
@@ -175,22 +198,27 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
             pageKind,
           });
         }
+        finishOperation(operation);
         return;
       }
 
       case "load-job": {
+        const operation = beginOperation();
         try {
           // Enter `opening` before touching the platform so the watchdog and
           // the UI observe the load, not just its result.
           deps.dispatch({ type: "JOB_LOADING", summary: effect.summary });
-          const detail = await deps.platform.loadJob(effect.summary);
+          const detail = await deps.platform.loadJob(effect.summary, { signal: operation.signal });
+          if (operation.signal.aborted) return;
           deps.dispatch({ type: "JOB_LOADED", job: detail });
         } catch (error) {
+          if (operation.signal.aborted) return;
           deps.dispatch({
             type: "JOB_LOAD_FAILED",
             error: error instanceof Error ? error.message : String(error),
           });
         }
+        finishOperation(operation);
         return;
       }
 
@@ -199,25 +227,13 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
           job: effect.job,
           context: ruleContext(),
         });
-
-        // The operator's explicit selection is acceptance: it bypasses scoring
-        // entirely. The manual reason is appended so the recorded decision
-        // stays explainable.
-        const evaluation: Evaluation = deps.isOperatorSelected(String(effect.job.id))
-          ? {
-              ...engineEvaluation,
-              accepted: true,
-              reasons: [
-                ...engineEvaluation.reasons,
-                {
-                  ruleId: "manual.select",
-                  kind: "soft",
-                  delta: 0,
-                  message: "手动选择（勾选）",
-                },
-              ],
-            }
-          : engineEvaluation;
+        // Every job reaching this effect came from the operator's frozen
+        // current-page selection. Selection authorises proceeding past soft
+        // preference scoring, but never past a hard rejection.
+        const evaluation: Evaluation =
+          !engineEvaluation.accepted && engineEvaluation.rejections.length === 0
+            ? { ...engineEvaluation, accepted: true }
+            : engineEvaluation;
 
         // Record the decision in history before acting on it.
         deps.history.discover(effect.job.platform, effect.job.id, deps.clock.now());
@@ -236,29 +252,35 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
         // In assist/automatic mode an accepted job proceeds after a delay.
         if (evaluation.accepted && checkSessionPolicy(context)) {
           const delay = nextDelayMs(deps.delayPolicy, deps.random);
-          schedule(delay, () => deps.dispatch({ type: "APPLY_STARTED", job: effect.job }));
+          schedule(delay, () => deps.dispatch({ type: "CONTACT_STARTED", job: effect.job }));
         }
         return;
       }
 
-      case "apply-job": {
+      case "contact-job": {
+        const operation = beginOperation();
         try {
-          const result = await deps.platform.apply(effect.job);
-          const outcome = result.outcome;
+          const outcome = await deps.communication.communicate({
+            job: effect.job,
+            signal: operation.signal,
+          });
+          if (operation.signal.aborted && outcome.kind !== "uncertain") return;
 
           switch (outcome.kind) {
-            case "submitted":
-              deps.dispatch({ type: "APPLY_SUBMITTED", evidence: outcome.evidence });
+            case "sent":
+              deps.history.transition(effect.job.id, "submitted", { now: deps.clock.now() });
+              deps.history.transition(effect.job.id, "verified", { now: deps.clock.now() });
+              deps.dispatch({ type: "CONTACT_CONFIRMED", evidence: outcome.evidence });
               return;
-            case "already-applied":
-              deps.dispatch({ type: "APPLY_ALREADY_DONE", evidence: outcome.evidence });
+            case "uncertain":
+              deps.dispatch({ type: "CONTACT_UNCERTAIN", evidence: outcome.detail });
               return;
-            case "needs-confirmation":
-              // Ambiguous: never retry, always escalate to the user.
-              deps.dispatch({ type: "APPLY_NEEDS_CONFIRMATION", evidence: outcome.evidence });
-              return;
-            case "rejected-by-form":
-              deps.dispatch({ type: "APPLY_FAILED", error: outcome.evidence, retryable: false });
+            case "aborted":
+              deps.dispatch({
+                type: "BLOCKED",
+                reason: "ambiguous-state",
+                evidence: outcome.detail,
+              });
               return;
             case "blocked":
               deps.dispatch({
@@ -267,41 +289,22 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
                 evidence: outcome.evidence,
               });
               return;
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          deps.logger.error("orchestrator", "apply threw", { error: message });
-          // An exception during apply leaves the outcome unknown: fail closed.
-          deps.dispatch({ type: "APPLY_NEEDS_CONFIRMATION", evidence: `exception: ${message}` });
-        }
-        return;
-      }
-
-      case "verify-application": {
-        try {
-          const result = await deps.platform.verifyApplication(effect.job);
-          switch (result.outcome.kind) {
-            case "confirmed":
-              deps.history.transition(effect.job.id, "submitted", { now: deps.clock.now() });
-              deps.history.transition(effect.job.id, "verified", { now: deps.clock.now() });
-              deps.dispatch({ type: "VERIFICATION_CONFIRMED", evidence: result.outcome.evidence });
-              return;
-            case "not-applied":
-              deps.dispatch({ type: "VERIFICATION_NEGATIVE", evidence: result.outcome.evidence });
-              return;
-            case "indeterminate":
+            case "refused":
               deps.dispatch({
-                type: "VERIFICATION_INDETERMINATE",
-                evidence: result.outcome.evidence,
+                type: "BLOCKED",
+                reason: "ambiguous-state",
+                evidence: outcome.message,
               });
               return;
           }
         } catch (error) {
-          deps.dispatch({
-            type: "VERIFICATION_INDETERMINATE",
-            evidence: error instanceof Error ? error.message : String(error),
-          });
+          if (operation.signal.aborted) return;
+          const message = error instanceof Error ? error.message : String(error);
+          deps.logger.error("orchestrator", "communication threw", { error: message });
+          // An exception during communication leaves the outcome unknown.
+          deps.dispatch({ type: "CONTACT_UNCERTAIN", evidence: `exception: ${message}` });
         }
+        finishOperation(operation);
         return;
       }
 
@@ -326,8 +329,7 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
       }
 
       case "stop": {
-        // Nothing to tear down here: the runtime owns the abort controller and
-        // stops the watchdog when the machine leaves an active state.
+        abortCurrent();
         return;
       }
 
@@ -341,9 +343,9 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
 
   return {
     runEffect,
+    abortCurrent,
     dispose() {
-      for (const timer of timers) clearTimeout(timer);
-      timers.clear();
+      abortCurrent();
     },
   };
 };

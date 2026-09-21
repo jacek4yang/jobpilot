@@ -38,6 +38,8 @@ export interface RuntimeDeps {
   readonly recorder: DiagnosticRecorder;
   readonly platform: JobPlatform;
   readonly storage: Storage;
+  /** False for the in-memory fallback; irreversible actions require durability. */
+  readonly durableStorage: boolean;
   readonly logger: Logger;
   readonly clock: Clock;
   readonly random: Random;
@@ -109,7 +111,18 @@ export const createRuntimeDeps = (config: JobPilotConfig): RuntimeDeps => {
     version: VERSION,
   });
 
-  return { build, recorder, platform, storage, logger, clock, random, config, version: VERSION };
+  return {
+    build,
+    recorder,
+    platform,
+    storage,
+    durableStorage: storageAvailable,
+    logger,
+    clock,
+    random,
+    config,
+    version: VERSION,
+  };
 };
 
 /** Builds the rule engine from the loaded configuration. */

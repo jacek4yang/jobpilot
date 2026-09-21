@@ -19,8 +19,6 @@ import {
   reduceWithTrace,
 } from "../../../src/diagnostics/instrument/state-trace";
 import { createDiagnosticRecorder } from "../../../src/diagnostics/recorder";
-import { traceQueue } from "../../../src/diagnostics/trace";
-import { createTaskQueue } from "../../../src/infrastructure/queue/queue";
 
 const NOW = 1_700_000_000_000;
 
@@ -134,7 +132,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 10) },
     );
 
@@ -153,7 +151,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 25) },
     );
     await traced.runEffect(effect("persist"), initialContext(NOW));
@@ -165,6 +163,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     const traced = traceOrchestrator(
       {
+        abortCurrent: () => {},
         runEffect: async () => {
           throw new Error("boom");
         },
@@ -182,6 +181,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     const traced = traceOrchestrator(
       {
+        abortCurrent: () => {},
         runEffect: async () => {
           const error = new Error("aborted");
           error.name = "AbortError";
@@ -204,7 +204,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 5_000), budgets: { persist: 1_000 } },
     );
     await traced.runEffect(effect("persist"), initialContext(NOW));
@@ -212,7 +212,7 @@ describe("effect tracing", () => {
   });
 
   it("ships budgets for every common effect", () => {
-    for (const name of ["scan-jobs", "load-job", "evaluate-job", "apply-job"]) {
+    for (const name of ["scan-jobs", "load-job", "evaluate-job", "contact-job"]) {
       expect(DEFAULT_EFFECT_BUDGETS[name]).toBeGreaterThan(0);
     }
   });
@@ -386,61 +386,5 @@ describe("page fingerprinting", () => {
         regionSelectors: ["[[["],
       }),
     ).not.toThrow();
-  });
-});
-
-describe("queue tracing", () => {
-  /**
-   * Regression: `traceQueue` used `Object.assign(inner, traced)`, which replaced
-   * the inner queue's own methods with the traced wrappers. `inner.enqueue` then
-   * became the wrapper calling itself, producing a stack overflow on first use.
-   *
-   * The tracing must delegate to the ORIGINAL methods, leaving the inner queue
-   * untouched.
-   */
-  it("does not recurse when the underlying queue is used", () => {
-    const inner = createTaskQueue();
-    const traced = traceQueue(inner, recorder());
-
-    expect(() => traced.enqueue({ jobId: "a", now: NOW })).not.toThrow();
-    expect(traced.pendingCount()).toBe(1);
-  });
-
-  it("leaves the inner queue functional and unmutated", () => {
-    const inner = createTaskQueue();
-    const traced = traceQueue(inner, recorder());
-
-    traced.enqueue({ jobId: "a", now: NOW });
-
-    // The inner queue must still work directly: it was not replaced.
-    expect(() => inner.enqueue({ jobId: "b", now: NOW })).not.toThrow();
-    expect(inner.pendingCount()).toBe(2);
-  });
-
-  it("records the enqueue and the duplicate rejection", () => {
-    const rec = recorder();
-    const traced = traceQueue(createTaskQueue(), rec);
-
-    traced.enqueue({ jobId: "a", now: NOW });
-    traced.enqueue({ jobId: "a", now: NOW });
-
-    expect(rec.events().some((e) => e.event === EVENTS.queueItemEnqueued)).toBe(true);
-    expect(rec.events().some((e) => e.event === "queue.item.duplicate")).toBe(true);
-  });
-
-  it("records the take, the update and the clear", () => {
-    const rec = recorder();
-    const traced = traceQueue(createTaskQueue(), rec);
-
-    traced.enqueue({ jobId: "a", now: NOW });
-    const task = traced.takeNext(NOW);
-    expect(task?.jobId).toBe("a");
-    if (task !== undefined) traced.update(task.jobId, "success", NOW);
-    traced.clearPending();
-
-    const names = rec.events().map((e) => e.event);
-    expect(names).toContain(EVENTS.queueItemStarted);
-    expect(names).toContain(EVENTS.queueItemCompleted);
-    expect(names).toContain(EVENTS.queueCleared);
   });
 });

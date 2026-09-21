@@ -16,14 +16,8 @@ import type {
 import { el } from "./components/chips";
 import { renderHistoryPage } from "./pages/history";
 import { renderHomePage } from "./pages/home";
-import { renderJobsWorkspacePage } from "./pages/jobs-workspace";
 import { renderMatchesPage } from "./pages/matches";
-import { renderMessagesPage } from "./pages/messages";
-import { renderPipelinePage } from "./pages/pipeline";
 import { renderQueuePage } from "./pages/queue";
-import { renderRulesPage } from "./pages/rules";
-import { renderSearchPage } from "./pages/search";
-import { renderSettingsPage } from "./pages/settings";
 import type {
   BlockedView,
   CurrentItemView,
@@ -228,71 +222,9 @@ export const buildSections = (
     callbacks,
     isLoggedIn: input.isLoggedIn,
     pageKind: input.pageKind,
+    running: input.running,
+    paused: input.paused,
   });
 
-  const jobsPage = renderJobsWorkspacePage(doc, {
-    currentJob: input.currentJob,
-    currentAnnotation: input.currentAnnotation,
-    allJobs: input.allJobs ?? [],
-    allAnnotations: input.allAnnotations ?? [],
-    customTags: input.customTags ?? [],
-    callbacks,
-  });
-
-  const pipelinePage = renderPipelinePage(doc, {
-    jobs: input.allJobs ?? [],
-    pipelineRecords: input.pipelineRecords ?? [],
-    interviews: input.interviews ?? [],
-    callbacks,
-  });
-
-  const searchPage = renderSearchPage(doc, {
-    config: input.config,
-    callbacks,
-  });
-
-  const matchesPage = renderMatchesPage(doc, {
-    matches: input.matches,
-    callbacks,
-  });
-
-  const queuePage = renderQueuePage(doc, {
-    queue: input.queue,
-    running: input.running ?? false,
-    paused: input.paused ?? false,
-    callbacks,
-  });
-
-  const historyPage = renderHistoryPage(doc, {
-    history: input.history,
-  });
-
-  const rulesPage = renderRulesPage(doc);
-  const messagesPage = renderMessagesPage(doc);
-
-  const settingsPage = renderSettingsPage(doc, {
-    config: input.config,
-    callbacks,
-    storageStats: input.storageStats,
-    onSaveDisplayName: (name) => {
-      callbacks.onSaveDisplayName?.(name);
-    },
-    onResetLayout: () => {
-      callbacks.onResetLayout?.();
-    },
-  });
-
-  return {
-    home: homePage,
-    jobs: jobsPage,
-    pipeline: pipelinePage,
-    search: searchPage,
-    matches: matchesPage,
-    queue: queuePage,
-    history: historyPage,
-    rules: rulesPage,
-    messages: messagesPage,
-    settings: settingsPage,
-    logs: renderLogs(doc, input.logs),
-  };
+  return { home: homePage };
 };

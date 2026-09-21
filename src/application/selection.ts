@@ -4,21 +4,21 @@
  * The simplified product flow is 搜索 → 选择 → 批量投递. The execution pipeline
  * (orchestrator scan → evaluate → apply) stays untouched; instead the platform
  * scan result is filtered to the jobs the operator explicitly selected. An
- * empty selection means "no restriction" (legacy behaviour: the whole listing
- * is in scope), so the filter is a pure narrowing that can never widen scope.
+ * empty selection selects nothing. This is fail-closed: deselecting every job
+ * must never widen the batch back to the whole listing.
  */
 
 /**
  * Narrows scanned summaries to the selected job ids.
  *
- * Failure mode: returns the input unchanged when the selection is empty, and
- * drops a summary whose id is missing or unselected. Never throws.
+ * Failure mode: returns an empty array when the selection is empty, and drops a
+ * summary whose id is missing or unselected. Never throws and never widens.
  */
 export const filterSummariesBySelection = <T extends { readonly id: unknown }>(
   summaries: readonly T[],
   selected: ReadonlySet<string>,
 ): readonly T[] => {
-  if (selected.size === 0) return summaries;
+  if (selected.size === 0) return [];
   return summaries.filter((summary) => selected.has(String(summary.id)));
 };
 
@@ -36,3 +36,50 @@ export const isSelectionCurrent = (
   selectionHref: string | undefined,
   currentHref: string | undefined,
 ): boolean => selectionHref !== undefined && selectionHref === currentHref;
+
+export interface SelectedJobIdentity {
+  readonly id: string;
+  readonly title: string;
+  readonly companyName: string;
+  readonly url?: string;
+  readonly platformJobId?: string;
+  readonly idIsPlatformNative?: boolean;
+}
+
+export type SelectionValidation =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: "empty" | "stale-page" | "missing-job" | "identity-conflict";
+      readonly jobId?: string;
+    };
+
+/** Validates the immutable discovery snapshot before a finite batch may run. */
+export const validateSelectionSnapshot = (
+  selected: ReadonlyMap<string, SelectedJobIdentity>,
+  selectionHref: string | undefined,
+  currentHref: string | undefined,
+  scanned?: readonly SelectedJobIdentity[],
+): SelectionValidation => {
+  if (selected.size === 0) return { ok: false, reason: "empty" };
+  if (!isSelectionCurrent(selectionHref, currentHref)) {
+    return { ok: false, reason: "stale-page" };
+  }
+  if (scanned === undefined) return { ok: true };
+
+  const currentById = new Map(scanned.map((job) => [job.id, job]));
+  for (const [id, expected] of selected) {
+    const current = currentById.get(id);
+    if (current === undefined) return { ok: false, reason: "missing-job", jobId: id };
+    if (
+      current.title !== expected.title ||
+      current.companyName !== expected.companyName ||
+      (current.url !== undefined && expected.url !== undefined && current.url !== expected.url) ||
+      current.platformJobId !== expected.platformJobId ||
+      current.idIsPlatformNative !== expected.idIsPlatformNative
+    ) {
+      return { ok: false, reason: "identity-conflict", jobId: id };
+    }
+  }
+  return { ok: true };
+};

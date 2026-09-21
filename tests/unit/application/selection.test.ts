@@ -2,14 +2,18 @@
  * Operator selection filter tests.
  *
  * Pins the narrowing contract of `filterSummariesBySelection`:
- *   - an empty selection is "no restriction" and returns the input unchanged;
+ *   - an empty selection selects nothing;
  *   - a populated selection narrows to exactly the selected ids;
  *   - ids in the selection that no summary has are simply dropped;
  *   - non-string ids are compared via String(id), matching how the panel
  *     renders and toggles job ids.
  */
 import { describe, expect, it } from "vitest";
-import { filterSummariesBySelection, isSelectionCurrent } from "../../../src/application/selection";
+import {
+  filterSummariesBySelection,
+  isSelectionCurrent,
+  validateSelectionSnapshot,
+} from "../../../src/application/selection";
 
 interface Summary {
   readonly id: unknown;
@@ -23,10 +27,9 @@ const summaries: readonly Summary[] = [
 ];
 
 describe("filterSummariesBySelection", () => {
-  it("returns every summary when the selection is empty", () => {
+  it("returns no summaries when the selection is empty", () => {
     const result = filterSummariesBySelection(summaries, new Set());
-    expect(result).toHaveLength(3);
-    expect(result).toEqual(summaries);
+    expect(result).toHaveLength(0);
   });
 
   it("narrows to exactly the selected ids", () => {
@@ -87,5 +90,89 @@ describe("isSelectionCurrent", () => {
 
   it("is stale when no selection href was recorded", () => {
     expect(isSelectionCurrent(undefined, "https://www.zhipin.com/web/geek/jobs")).toBe(false);
+  });
+});
+
+describe("validateSelectionSnapshot", () => {
+  const href = "https://www.zhipin.com/web/geek/jobs?query=java";
+  const selected = new Map([
+    [
+      "job-1",
+      { id: "job-1", title: "Backend", companyName: "Example A", url: "/job_detail/job-1" },
+    ],
+  ]);
+
+  it("refuses an empty selection and a selection from another page", () => {
+    expect(validateSelectionSnapshot(new Map(), href, href)).toEqual({
+      ok: false,
+      reason: "empty",
+    });
+    expect(validateSelectionSnapshot(selected, href, `${href}&page=2`)).toEqual({
+      ok: false,
+      reason: "stale-page",
+    });
+  });
+
+  it("fails closed when the card disappears or strong identity contradicts discovery", () => {
+    expect(validateSelectionSnapshot(selected, href, href, [])).toEqual({
+      ok: false,
+      reason: "missing-job",
+      jobId: "job-1",
+    });
+    expect(
+      validateSelectionSnapshot(selected, href, href, [
+        {
+          id: "job-1",
+          title: "Backend",
+          companyName: "Different Company",
+          url: "/job_detail/job-1",
+        },
+      ]),
+    ).toEqual({ ok: false, reason: "identity-conflict", jobId: "job-1" });
+  });
+
+  it("accepts a safe rerender with the same strong identity", () => {
+    expect(validateSelectionSnapshot(selected, href, href, [...selected.values()])).toEqual({
+      ok: true,
+    });
+  });
+
+  it("keeps selection by identity when the listing is reordered", () => {
+    const second = {
+      id: "job-2",
+      title: "Frontend",
+      companyName: "Example B",
+      url: "/job_detail/job-2",
+    };
+    const both = new Map([...selected, [second.id, second]]);
+    expect(validateSelectionSnapshot(both, href, href, [second, ...selected.values()])).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects the same title and company when the platform job id changes", () => {
+    const strong = new Map([
+      [
+        "fingerprint-1",
+        {
+          id: "fingerprint-1",
+          title: "Backend",
+          companyName: "Example A",
+          platformJobId: "native-1",
+          idIsPlatformNative: true,
+        },
+      ],
+    ]);
+    expect(
+      validateSelectionSnapshot(strong, href, href, [
+        {
+          id: "fingerprint-1",
+          title: "Backend",
+          companyName: "Example A",
+          platformJobId: "native-2",
+          idIsPlatformNative: true,
+        },
+      ]),
+    ).toEqual({ ok: false, reason: "identity-conflict", jobId: "fingerprint-1" });
   });
 });

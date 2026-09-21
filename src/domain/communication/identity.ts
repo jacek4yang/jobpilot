@@ -25,8 +25,17 @@ export interface JobIdentity {
 export interface ChatIdentity {
   /** Job ids found anywhere in the conversation region. */
   readonly jobIds: readonly string[];
+  /** Source-ranked ids. When present, only the strongest level may decide. */
+  readonly jobIdEvidence?: readonly JobIdEvidence[];
   /** Normalised-ish free text of the conversation header plus visible job info. */
   readonly text: string;
+}
+
+export type JobIdStrength = "fallback" | "page-data" | "canonical-url" | "platform";
+
+export interface JobIdEvidence {
+  readonly id: string;
+  readonly strength: JobIdStrength;
 }
 
 export type IdentityVerdict =
@@ -105,11 +114,28 @@ export const matchChatIdentity = (
   const evidence: string[] = [];
 
   const jobId = job.jobId?.trim();
-  const comparableIds = jobId !== undefined && jobId.length > 0 && chat.jobIds.length > 0;
+  const ranked =
+    chat.jobIdEvidence ?? chat.jobIds.map((id) => ({ id, strength: "page-data" as const }));
+  const strengthRank: Readonly<Record<JobIdStrength, number>> = {
+    fallback: 0,
+    "page-data": 1,
+    "canonical-url": 2,
+    platform: 3,
+  };
+  const highestRank = ranked.reduce(
+    (highest, item) => Math.max(highest, strengthRank[item.strength]),
+    -1,
+  );
+  const strongestIds = [
+    ...new Set(
+      ranked.filter((item) => strengthRank[item.strength] === highestRank).map((item) => item.id),
+    ),
+  ];
+  const comparableIds = jobId !== undefined && jobId.length > 0 && strongestIds.length > 0;
 
   if (comparableIds) {
-    const ids = chat.jobIds;
-    if (ids.includes(jobId)) {
+    const ids = strongestIds;
+    if (ids.length === 1 && ids[0] === jobId) {
       evidence.push(`job id ${jobId} found in conversation`);
     } else {
       return {

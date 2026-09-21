@@ -59,11 +59,6 @@ const makePlatform = (loadJob: JobPlatform["loadJob"]): JobPlatform => ({
   detectPage: () => "job-list",
   scanJobs: async () => [],
   loadJob,
-  apply: async (job) => ({ outcome: { kind: "submitted", evidence: "ok" }, jobId: job.id }),
-  verifyApplication: async (job) => ({
-    outcome: { kind: "confirmed", evidence: "ok" },
-    jobId: job.id,
-  }),
 });
 
 /** An engine that always returns the given evaluation. */
@@ -85,11 +80,13 @@ interface DepsOverrides {
   readonly engine?: RuleEngine;
   readonly history?: ReturnType<typeof createApplicationHistory>;
   readonly dispatch?: (event: AutomationEvent) => void;
-  readonly isOperatorSelected?: (jobId: string) => boolean;
 }
 
 const makeDeps = (overrides: DepsOverrides = {}): OrchestratorDeps => ({
   platform: overrides.platform ?? makePlatform(async (job) => detail(String(job.id))),
+  communication: {
+    communicate: async () => ({ kind: "sent", evidence: "outgoing message observed" }),
+  },
   engine: overrides.engine ?? makeEngine(rejectedByScore),
   history: overrides.history ?? createApplicationHistory(),
   storage: storageStub(),
@@ -125,7 +122,6 @@ const makeDeps = (overrides: DepsOverrides = {}): OrchestratorDeps => ({
   onDiagnostic: () => {},
   delayPolicy: { minActionDelayMs: 0, maxActionDelayMs: 0 },
   sessionPolicy: { maxApplicationsPerSession: 5, maxApplicationsPerHour: 15, maxRetries: 2 },
-  isOperatorSelected: overrides.isOperatorSelected ?? (() => false),
 });
 
 /** A context already at the session cap, so APPLY_STARTED is never scheduled. */
@@ -178,8 +174,8 @@ describe("orchestrator load-job", () => {
   });
 });
 
-describe("orchestrator evaluate-job — operator selection", () => {
-  it("force-accepts an operator-selected job and records the manual-select reason as approved", async () => {
+describe("orchestrator evaluate-job", () => {
+  it("lets explicit selection bypass only a soft score rejection", async () => {
     const events: AutomationEvent[] = [];
     const history = createApplicationHistory();
     const orchestrator = createOrchestrator(
@@ -187,7 +183,6 @@ describe("orchestrator evaluate-job — operator selection", () => {
         engine: makeEngine(rejectedByScore),
         history,
         dispatch: (event) => events.push(event),
-        isOperatorSelected: () => true,
       }),
     );
 
@@ -197,28 +192,32 @@ describe("orchestrator evaluate-job — operator selection", () => {
     expect(evaluated?.type).toBe("EVALUATED");
     if (evaluated?.type !== "EVALUATED") throw new Error("expected EVALUATED");
     expect(evaluated.evaluation.accepted).toBe(true);
-    const manual = evaluated.evaluation.reasons.find((reason) => reason.ruleId === "manual.select");
-    expect(manual?.message).toBe("手动选择（勾选）");
 
-    // The history must record the FINAL evaluation: approved, manual reason
-    // included, and the session cap must still gate APPLY_STARTED (the capped
-    // context triggers SESSION_LIMIT_REACHED instead).
+    // The operator selected this finite batch; an empty/default scoring profile
+    // must not make the primary flow silently skip every selected job.
     const record = history.get(asJobId("job-1"));
     expect(record?.status).toBe("approved");
-    expect(record?.reasons).toContain("手动选择（勾选）");
-    expect(events.some((event) => event.type === "APPLY_STARTED")).toBe(false);
     expect(events.some((event) => event.type === "SESSION_LIMIT_REACHED")).toBe(true);
   });
 
-  it("keeps the engine verdict for a job the operator did not select", async () => {
+  it("does not bypass a hard rejection", async () => {
     const events: AutomationEvent[] = [];
     const history = createApplicationHistory();
     const orchestrator = createOrchestrator(
       makeDeps({
-        engine: makeEngine(rejectedByScore),
+        engine: makeEngine({
+          ...rejectedByScore,
+          rejections: [
+            {
+              ruleId: "company.blacklist",
+              kind: "hard",
+              delta: 0,
+              message: "company is blocked",
+            },
+          ],
+        }),
         history,
         dispatch: (event) => events.push(event),
-        isOperatorSelected: () => false,
       }),
     );
 
@@ -227,9 +226,6 @@ describe("orchestrator evaluate-job — operator selection", () => {
     const evaluated = events.find((event) => event.type === "EVALUATED");
     if (evaluated?.type !== "EVALUATED") throw new Error("expected EVALUATED");
     expect(evaluated.evaluation.accepted).toBe(false);
-    expect(evaluated.evaluation.reasons.some((reason) => reason.ruleId === "manual.select")).toBe(
-      false,
-    );
     expect(history.get(asJobId("job-1"))?.status).toBe("rejected");
   });
 });
