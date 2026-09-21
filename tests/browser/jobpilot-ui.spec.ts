@@ -222,8 +222,11 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     const tabList = page.locator(".jobpilot-tabs .jobpilot-tab");
     const tabTexts = await tabList.allTextContents();
     expect(tabTexts).toEqual(
-      expect.arrayContaining(["首页", "搜索", "匹配", "队列", "历史", "规则", "消息", "设置"]),
+      expect.arrayContaining(["首页", "搜索", "匹配", "历史", "规则", "消息", "设置"]),
     );
+    // The 队列 tab is intentionally hidden while the legacy task queue has no
+    // producer (the Home batch selection replaced it).
+    expect(tabTexts).not.toContain("队列");
 
     // Three-step batch flow on Home page. Step ② (选择职位) only renders after
     // a scan has produced matches, so a fresh panel shows ① then ③; the full

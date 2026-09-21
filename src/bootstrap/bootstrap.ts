@@ -934,12 +934,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         context.state === "paused" || context.state === "blocked" || context.state === "failed",
 
       ...(context.pauseReason === undefined
-        ? context.lastMessage === undefined && discoveryNote === undefined
+        ? context.lastMessage === undefined
           ? {}
           : {
               message: {
                 tone: context.lastError === undefined ? ("info" as const) : ("error" as const),
-                text: discoveryNote ?? context.lastMessage ?? "",
+                text: context.lastMessage ?? "",
               },
             }
         : {
