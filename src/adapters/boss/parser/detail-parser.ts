@@ -96,6 +96,45 @@ const textOf = (root: ParentNode, candidates: readonly string[]): string | undef
 };
 
 /**
+ * Drawer title candidates, most specific first.
+ *
+ * The 2026-09-21 drawer capture (004-detail.json) shows the header as
+ * `.job-detail-header`; the `itemprop`/`job-detail__` candidates are the
+ * fixture-shaped fallbacks shared with the standalone detail page. The drawer
+ * parser requires EXACT trimmed equality with the clicked summary's title, so
+ * a wrong-job drawer fails closed regardless of which candidate matched.
+ */
+const DRAWER_TITLE_CANDIDATES: readonly string[] = [
+  ".job-detail-header .name",
+  ".job-detail-header [itemprop='title']",
+  ".job-detail-header h1",
+  "[itemprop='title']",
+  "h1.job-detail__title",
+];
+
+/** Drawer description candidates (recon: `.job-sec-text` carries the body). */
+const DRAWER_DESCRIPTION_CANDIDATES: readonly string[] = [
+  "[class*='job-sec-text']",
+  "[class*='description']",
+];
+
+/**
+ * Education/experience chips of the drawer (recon 2026-09-21: `ul.tag-list`
+ * with bare `<li>` items, same shape as the list card — 004-detail.json).
+ * Local rather than a registry entry: the drawer tags are scoped to this
+ * parser and must not be mistaken for a standalone-detail anchor.
+ */
+const drawerTagTexts = (root: ParentNode): readonly string[] => {
+  try {
+    return Array.from(root.querySelectorAll(".tag-list li"))
+      .map((element) => clean(element.textContent))
+      .filter((text) => text.length > 0);
+  } catch {
+    return [];
+  }
+};
+
+/**
  * Maps a Chinese education chip onto the domain union.
  *
  * Failure mode: returns `"unknown"` for anything unrecognised — including the
@@ -298,4 +337,119 @@ export const parseBossJobDetail = (
 export const locateApplyButton = (root: ParentNode): Element | null => {
   const located = queryFirst(root, SELECTORS.detail.applyButton);
   return located === null ? null : located.element;
+};
+
+/**
+ * Parses the DETAIL DRAWER (2026-09-21 recon: `div.job-detail-container >
+ * div.job-detail-box`, opened in place over the listing when a card is
+ * clicked, URL unchanged — 004-detail.json, 006-detail2.json).
+ *
+ * Unlike `parseBossJobDetail` (the standalone detail page), the drawer has ONE
+ * required anchor and everything else is best-effort:
+ *
+ *   - REQUIRED: a title node inside the drawer whose trimmed text EQUALS
+ *     `summary.title`. The drawer is only trustworthy when it shows the job we
+ *     clicked for; on any mismatch this returns `null` rather than fabricating
+ *     a detail for the wrong posting.
+ *   - description via `[class*='job-sec-text'], [class*='description']`.
+ *   - recruiter via the known drawer card (`.job-boss-info .name`) with the
+ *     online/activity tag excluded (same detached-clone approach as above).
+ *   - education/experience from the drawer's `.tag-list li` chips.
+ *   - company meta / requirements / skills: parsed when present, empty when
+ *     the drawer does not carry them.
+ *
+ * Fields the drawer cannot provide fall back to the `summary` values
+ * (title/companyName/salaryRaw/locationRaw), so the result stays a complete
+ * `JobDetail`. Never throws.
+ */
+export const parseBossJobDetailFromDrawer = (
+  root: ParentNode,
+  summary: JobSummary,
+  now: number,
+): JobDetail | null => {
+  // --- Required anchor: the drawer title must be the job we clicked for ------
+  const expectedTitle = clean(summary.title);
+  let titleMatched = false;
+  for (const candidate of DRAWER_TITLE_CANDIDATES) {
+    let element: Element | null = null;
+    try {
+      element = root.querySelector(candidate);
+    } catch {
+      continue;
+    }
+    if (element !== null && clean(element.textContent) === expectedTitle) {
+      titleMatched = true;
+      break;
+    }
+  }
+  if (!titleMatched) return null;
+
+  // --- Best-effort fields ----------------------------------------------------
+  const description = textOf(root, DRAWER_DESCRIPTION_CANDIDATES) ?? "";
+
+  const tagTexts = drawerTagTexts(root);
+  const educationRaw = tagTexts.find((text) =>
+    /学历|本科|大专|硕士|博士|中专|高中|不限/.test(text),
+  );
+  const experienceRaw = tagTexts.find((text) => /经验|应届|年/.test(text));
+
+  const companyName = textOf(root, SELECTORS.detail.companyName.candidates) ?? summary.companyName;
+  const salaryRaw = textOf(root, SELECTORS.detail.salary.candidates) ?? summary.salaryRaw;
+  const locationRaw = textOf(root, SELECTORS.detail.location.candidates) ?? summary.locationRaw;
+
+  const metaTexts = queryAllFirst(root, SELECTORS.detail.companyMeta)
+    .map((element) => clean(element.textContent))
+    .filter((text) => text.length > 0);
+  const industry = metaTexts.find(
+    (text) => detectStage(text) === undefined && !IS_SIZE.test(text) && IS_INDUSTRY.test(text),
+  );
+  const stage = metaTexts.map(detectStage).find((value) => value !== undefined);
+  const size = metaTexts.find((text) => IS_SIZE.test(text));
+
+  const isOutsourcing = containsAny(`${description}\n${companyName}`, OUTSOURCING_MARKERS);
+  const company = createCompany({
+    name: companyName,
+    ...(industry === undefined ? {} : { industry }),
+    ...(stage === undefined ? {} : { stage }),
+    ...(size === undefined ? {} : { size }),
+    isOutsourcing,
+  });
+
+  const recruiterName = recruiterNameOf(root);
+  const recruiterTitle = textOf(root, SELECTORS.detail.recruiterTitle.candidates);
+  const recruiters =
+    recruiterName === undefined
+      ? []
+      : [
+          createRecruiter({
+            name: recruiterName,
+            ...(recruiterTitle === undefined ? {} : { title: recruiterTitle }),
+            isHeadhunter: containsAny(recruiterTitle ?? "", HEADHUNTER_MARKERS),
+          }),
+        ];
+
+  const requirements = queryAllFirst(root, SELECTORS.detail.requirements)
+    .map((element) => clean(element.textContent))
+    .filter((text) => text.length > 0);
+  const skills = queryAllFirst(root, SELECTORS.detail.skills)
+    .map((element) => clean(element.textContent))
+    .filter((text) => text.length > 0);
+
+  return {
+    ...summary,
+    title: expectedTitle,
+    companyName,
+    salaryRaw,
+    locationRaw,
+    company,
+    salary: parseSalary(salaryRaw),
+    location: parseLocation(locationRaw),
+    education: parseEducation(educationRaw),
+    experience: parseExperience(experienceRaw),
+    description,
+    requirements,
+    skills,
+    recruiters,
+    capturedAt: now,
+  };
 };

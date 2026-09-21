@@ -32,11 +32,12 @@ import type { LogEntry, Logger } from "../../src/ports/logger";
 /** Host the fixtures' `@match` targets — required by `isSupportedHost`. */
 export const BOSS_URL = "https://www.zhipin.com/web/geek/job";
 
-/** The six synthetic fixtures, by file name. */
+/** The synthetic fixtures, by file name. */
 export type BossFixture =
   | "job-list.html"
   | "job-detail.html"
   | "job-list-and-captcha.html"
+  | "job-list-with-drawer.html"
   | "login.html"
   | "captcha.html"
   | "empty-list.html"
@@ -158,6 +159,10 @@ export interface DepsOptions {
   readonly url?: string;
   /** Fixed clock value. Defaults to a frozen 2024-01-01T00:00:00Z. */
   readonly now?: number;
+  /** Drawer-open poll budget for `loadJob`. Defaults to the adapter's 8s. */
+  readonly drawerTimeoutMs?: number;
+  /** Drawer-open poll cadence for `loadJob`. Defaults to 250ms. */
+  readonly drawerPollIntervalMs?: number;
 }
 
 /** The location to inject: an explicit one, a URL-derived one, or the window's. */
@@ -212,6 +217,10 @@ export const makeDeps = (window: Window, options: DepsOptions = {}): BossPlatfor
   logger: silentLogger,
   clock: fixedClock(options.now ?? FIXED_NOW),
   version: "test",
+  ...(options.drawerTimeoutMs === undefined ? {} : { drawerTimeoutMs: options.drawerTimeoutMs }),
+  ...(options.drawerPollIntervalMs === undefined
+    ? {}
+    : { drawerPollIntervalMs: options.drawerPollIntervalMs }),
 });
 
 /** An `AbortSignal` that has already fired, with a deterministic reason. */

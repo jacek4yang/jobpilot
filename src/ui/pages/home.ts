@@ -29,6 +29,13 @@ export interface HomePageInput {
   readonly matches?: readonly MatchRowView[] | undefined;
   /** Human-readable result of the last scan, shown under step ①. */
   readonly discoveryNote?: string | undefined;
+  /**
+   * Operator-facing run log, newest first. Rendered by a follow-up; the field
+   * exists now so callers can thread it without a signature change later.
+   */
+  readonly runLog?: readonly { readonly time: string; readonly text: string }[] | undefined;
+  /** Number of currently selected matches. Defaults to counting `matches`. */
+  readonly selectedCount?: number | undefined;
   readonly isLoggedIn?: boolean | undefined;
   readonly pageKind?: string | undefined;
 }
@@ -256,7 +263,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   step3Header.append(step3Badge, el(doc, "span", "jobpilot-step-title", t("home.step3Title")));
   step3.append(step3Header);
 
-  const selectedCount = matches.filter((match) => match.selected).length;
+  const selectedCount = input.selectedCount ?? matches.filter((match) => match.selected).length;
   const step3Count = el(
     doc,
     "p",
