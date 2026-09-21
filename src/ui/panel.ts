@@ -460,7 +460,9 @@ export const createPanel = (options: PanelOptions): Panel => {
           ? t("header.modeManual")
           : t("header.modeAssist");
 
-    pageChip.textContent = view.pageKind;
+    const pageKindLabel = t(`pageKind.${view.pageKind}`);
+    pageChip.textContent =
+      pageKindLabel === `pageKind.${view.pageKind}` ? view.pageKind : pageKindLabel;
     pageChip.setAttribute("data-page-kind", view.pageKind);
 
     safetyChip.textContent = view.safetyLabel;

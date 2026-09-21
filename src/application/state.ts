@@ -45,27 +45,27 @@ export type PauseReason =
 export const describePauseReason = (reason: PauseReason): string => {
   switch (reason.kind) {
     case "user":
-      return "Paused by user";
+      return "已由你暂停";
     case "captcha":
-      return "CAPTCHA detected — resolve it manually, then resume";
+      return "检测到验证码，请在页面中手动完成验证后再继续";
     case "risk-control":
-      return "Risk control triggered — automation stopped";
+      return "触发平台风控，自动化已停止";
     case "login-expired":
-      return "Login expired — sign in again, then resume";
+      return "登录已过期，请重新登录后再继续";
     case "unknown-dom":
-      return "Unrecognised page structure — automation stopped";
+      return "无法识别的页面结构，自动化已停止";
     case "selector-missing":
-      return `Expected element not found (${reason.selector})`;
+      return `未找到预期元素（${reason.selector}）`;
     case "ambiguous-state":
-      return `Application outcome unclear — verify manually (${reason.evidence})`;
+      return `投递结果不明确，请手动确认（${reason.evidence}）`;
     case "session-limit":
-      return `Session limit reached (${reason.limit})`;
+      return `已达到本次任务上限（${reason.limit}）`;
     case "rate-limited":
-      return "Rate limit reached — waiting before continuing";
+      return "已达到安全频次上限，稍后再继续";
     case "watchdog":
-      return `Watchdog recovered from a stalled action (${reason.evidence})`;
+      return `检测到操作停滞，已自动恢复（${reason.evidence}）`;
     case "page-changed":
-      return `Page changed unexpectedly (${reason.evidence})`;
+      return `页面意外发生变化（${reason.evidence}）`;
   }
 };
 

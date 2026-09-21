@@ -63,7 +63,7 @@ export const evaluateExecutionGates = (input: GateInput): GateResult => {
     return {
       allowed: false,
       reason: "mode",
-      message: "JobPilot is in Manual mode, so it will not act on its own.",
+      message: "JobPilot 处于手动模式，不会自动执行任何操作。",
     };
   }
 
@@ -71,7 +71,7 @@ export const evaluateExecutionGates = (input: GateInput): GateResult => {
     return {
       allowed: false,
       reason: "human-verification",
-      message: "BOSS is asking for manual verification. Complete it in the page, then re-check.",
+      message: "BOSS 需要人工验证。请在页面中完成验证，然后重新检查。",
     };
   }
 
@@ -79,8 +79,7 @@ export const evaluateExecutionGates = (input: GateInput): GateResult => {
     return {
       allowed: false,
       reason: "storage-unhealthy",
-      message:
-        "Persistence is unavailable. JobPilot will not perform new automatic communications because duplicate-prevention state cannot be safely recorded.",
+      message: "本地存储不可用。为防止重复投递记录无法保存，JobPilot 不会执行新的自动沟通。",
     };
   }
 
@@ -88,20 +87,20 @@ export const evaluateExecutionGates = (input: GateInput): GateResult => {
     return {
       allowed: false,
       reason: "not-owner",
-      message: "JobPilot is running in another tab.",
+      message: "JobPilot 正在另一个标签页运行。",
     };
   }
 
   if (input.sessionLimitReached) {
-    return { allowed: false, reason: "session-limit", message: "Session limit reached." };
+    return { allowed: false, reason: "session-limit", message: "已达到本次任务的数量上限。" };
   }
 
   if (input.hourlyLimitReached) {
-    return { allowed: false, reason: "hourly-limit", message: "Hourly limit reached." };
+    return { allowed: false, reason: "hourly-limit", message: "已达到每小时的数量上限。" };
   }
 
   if (input.rateLimited) {
-    return { allowed: false, reason: "rate-limited", message: "Rate limit reached; waiting." };
+    return { allowed: false, reason: "rate-limited", message: "已达到安全频次上限，请稍后再试。" };
   }
 
   return ALLOWED;
@@ -128,8 +127,7 @@ export const evaluateSendGates = (input: SendGateInput): GateResult => {
     return {
       allowed: false,
       reason: "already-attempted",
-      message:
-        "A message may already have been sent for this job. Verify the conversation before continuing.",
+      message: "这个职位可能已经发送过消息，请先确认对话后再继续。",
     };
   }
 
@@ -137,7 +135,7 @@ export const evaluateSendGates = (input: SendGateInput): GateResult => {
     return {
       allowed: false,
       reason: "no-intent",
-      message: "No persisted transaction exists, so a send cannot be recovered if interrupted.",
+      message: "没有已保存的发送记录，一旦中断将无法恢复本次发送。",
     };
   }
 
@@ -145,7 +143,7 @@ export const evaluateSendGates = (input: SendGateInput): GateResult => {
     return {
       allowed: false,
       reason: "chat-unverified",
-      message: "The conversation could not be confirmed as the right one for this job.",
+      message: "无法确认当前对话就是这个职位的聊天窗口。",
     };
   }
 
@@ -153,7 +151,7 @@ export const evaluateSendGates = (input: SendGateInput): GateResult => {
     return {
       allowed: false,
       reason: "draft-present",
-      message: "There is unsent text in the conversation. JobPilot will not touch it.",
+      message: "对话输入框中有未发送的内容，JobPilot 不会改动它。",
     };
   }
 

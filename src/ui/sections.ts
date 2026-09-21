@@ -169,6 +169,8 @@ export interface BuildSectionsInput {
   readonly decisions: readonly PendingDecisionView[];
   readonly stats: readonly StatTile[];
   readonly matches: readonly MatchRowView[];
+  /** Result note of the last discovery scan, shown on the Home step ① card. */
+  readonly discoveryNote?: string | undefined;
   readonly queue: readonly QueueRowView[];
   readonly history: readonly HistoryRowView[];
   readonly logs: readonly LogRowView[];
@@ -209,24 +211,14 @@ export const buildSections = (
   const callbacks = input.callbacks ?? defaultCallbacks;
 
   const homePage = renderHomePage(doc, {
-    displayName: input.displayName ?? input.config?.general?.displayName,
-    state: input.state ?? "idle",
-    running: input.running ?? false,
-    paused: input.paused ?? false,
     message: input.message,
     blocked: input.blocked,
-    current: input.current,
     decisions: input.decisions,
-    stats: input.stats,
+    matches: input.matches,
+    discoveryNote: input.discoveryNote,
     callbacks,
-    isDiagnostic: input.channel === "diagnostic",
-    pageKind: input.pageKind,
     isLoggedIn: input.isLoggedIn,
-    favoriteCount: input.favoriteCount,
-    queueCount: input.queueCount,
-    pipelineCount: input.pipelineCount,
-    currentJob: input.currentJob,
-    currentAnnotation: input.currentAnnotation,
+    pageKind: input.pageKind,
   });
 
   const jobsPage = renderJobsWorkspacePage(doc, {

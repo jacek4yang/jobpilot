@@ -44,14 +44,13 @@ export const VERIFICATION_EVENT: Readonly<Record<VerificationKind, string>> = {
 
 /** Operator-facing explanation. Plain language, and it says what to do. */
 export const VERIFICATION_MESSAGE: Readonly<Record<VerificationKind, string>> = {
-  captcha: "BOSS is showing a CAPTCHA. Complete it in the page.",
-  "security-verification": "BOSS is asking for a security check. Complete it in the page.",
-  "identity-verification": "BOSS is asking you to verify your identity. Complete it in the page.",
-  "login-required": "Your BOSS session has expired. Sign in again in the page.",
-  "risk-control": "BOSS has shown a risk warning. Resolve it in the page.",
-  "too-frequent": "BOSS says operations are too frequent. Wait, then re-check.",
-  "unknown-modal":
-    "BOSS is showing a dialog JobPilot does not recognise. Handle it, then re-check.",
+  captcha: "BOSS 显示了验证码，请在页面中完成验证。",
+  "security-verification": "BOSS 要求进行安全验证，请在页面中完成。",
+  "identity-verification": "BOSS 要求验证身份，请在页面中完成。",
+  "login-required": "你的 BOSS 登录已过期，请重新登录。",
+  "risk-control": "BOSS 出现了风险提示，请在页面中处理。",
+  "too-frequent": "BOSS 提示操作过于频繁，请稍等后再重新检查。",
+  "unknown-modal": "BOSS 弹出了无法识别的对话框，请处理后再重新检查。",
 };
 
 export type VerificationPhase =

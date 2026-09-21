@@ -4,7 +4,7 @@
  * Verifies:
  * - Jobs workspace page and subnavigation tabs (正在看, 喜欢, 再看看, 对比, 全部职位)
  * - Pipeline recruitment stages tracking
- * - Low-pressure Home guidance cards navigation
+ * - Three-step batch flow on Home (搜索岗位 → 选择职位 → 批量投递)
  * - Calm Login Prompt UX on login walls
  * - Settings Data & Backup Center (export, import, prune, clear)
  */
@@ -78,7 +78,7 @@ test.describe("Personal Job Workspace on job-list fixture", () => {
     await expect(stageGrid).toBeVisible();
   });
 
-  test("supports navigating via home low-pressure guidance cards", async ({ page }) => {
+  test("renders the three-step batch flow on home", async ({ page }) => {
     await loadHarness(page, "job-list.html");
     expect(await waitForPanel(page)).toBe(true);
 
@@ -88,34 +88,20 @@ test.describe("Personal Job Workspace on job-list fixture", () => {
       "true",
     );
 
-    // Click favorites guidance card -> switches to jobs workspace
-    const favGuide = page.locator('.jobpilot-guidance-card[data-action="goto-favorites"]').first();
-    await expect(favGuide).toBeVisible();
-    await favGuide.click();
+    // The three-step titles render in order, with step ② hidden until a scan
+    const stepTitles = page.locator(".jobpilot-step-title");
+    await expect(stepTitles.nth(0)).toHaveText("搜索岗位");
+    await expect(stepTitles.nth(1)).toHaveText("批量投递");
 
-    await expect(page.locator('.jobpilot-panel[data-panel="jobs"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-
-    // Switch back to home
-    await page.locator('.jobpilot-tab[data-tab="home"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-
-    // Click pipeline guidance card -> switches to pipeline
-    const pipelineGuide = page
-      .locator('.jobpilot-guidance-card[data-action="goto-pipeline"]')
-      .first();
-    await expect(pipelineGuide).toBeVisible();
-    await pipelineGuide.click();
-
-    await expect(page.locator('.jobpilot-panel[data-panel="pipeline"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    // The scan and batch buttons are actionable entry points
+    await expect(
+      page
+        .locator('.jobpilot-panel[data-panel="home"] button[data-action="discover-jobs"]')
+        .first(),
+    ).toBeVisible();
+    await expect(
+      page.locator('.jobpilot-panel[data-panel="home"] button[data-action="start-batch"]').first(),
+    ).toBeVisible();
   });
 
   test("provides local storage data and backup center in settings", async ({ page }) => {

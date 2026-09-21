@@ -225,10 +225,13 @@ test.describe("JobPilot panel on a job-list fixture", () => {
       expect.arrayContaining(["首页", "搜索", "匹配", "队列", "历史", "规则", "消息", "设置"]),
     );
 
-    // Calm default greeting on Home page
-    const greetingText = page.locator(".jobpilot-greeting-text").first();
-    await expect(greetingText).toBeVisible();
-    await expect(greetingText).toHaveText("你好，今天慢慢来，先看看合适的机会。");
+    // Three-step batch flow on Home page. Step ② (选择职位) only renders after
+    // a scan has produced matches, so a fresh panel shows ① then ③; the full
+    // three-title order is pinned by the home-page unit test.
+    const stepTitles = page.locator(".jobpilot-step-title");
+    await expect(stepTitles.nth(0)).toBeVisible();
+    await expect(stepTitles.nth(0)).toHaveText("搜索岗位");
+    await expect(stepTitles.nth(1)).toHaveText("批量投递");
   });
 
   test("supports smooth tab switching across sections", async ({ page }) => {
