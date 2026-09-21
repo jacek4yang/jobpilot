@@ -246,10 +246,27 @@ export const findActiveDetailRoot = (root: ParentNode): Element | null => {
     for (const element of matches) {
       if (isHiddenByStyle(element)) continue;
       const action = queryBossFirst(element, SELECTORS.detail.applyButton);
-      if (action !== null) return element;
+      if (action !== null && hasCommunicateLabel(action.element)) return element;
     }
   }
   return null;
+};
+
+/** The one acceptable visible label for the detail-pane 立即沟通 control. */
+const COMMUNICATE_LABEL = "立即沟通";
+
+/**
+ * Reports whether `element` is the exact 立即沟通 control, in the same style
+ * as the send-button label filter (`chat-reader.findSendButton`): a non-empty
+ * aria-label wins, otherwise the *entire* normalised textContent must equal
+ * 立即沟通. The 2026-09-21 capture shows the drawer's action block also holds
+ * an `a.op-btn-like` labelled 收藏 — a substring or lookalike match must never
+ * be treated as the apply control.
+ */
+const hasCommunicateLabel = (element: Element): boolean => {
+  const label =
+    normalizeText(element.getAttribute("aria-label")) || normalizeText(element.textContent);
+  return label === COMMUNICATE_LABEL;
 };
 
 /** Hidden-by-attribute-or-inline-style check, shared by the visibility probes. */
@@ -315,7 +332,10 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
     findCommunicateButton(): LocatedElement | null {
       const detailRoot = findActiveDetailRoot(root);
       if (detailRoot === null) return null;
-      return queryBossFirst(detailRoot, SELECTORS.detail.applyButton);
+      const located = queryBossFirst(detailRoot, SELECTORS.detail.applyButton);
+      // Same exact-label discipline as the apply action: only the control whose
+      // ENTIRE label is 立即沟通 is reported; anything else is a miss.
+      return located !== null && hasCommunicateLabel(located.element) ? located : null;
     },
 
     readCurrentChat(): ChatIdentity | null {

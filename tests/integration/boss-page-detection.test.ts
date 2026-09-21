@@ -127,20 +127,28 @@ describe("boss page classification — precedence", () => {
   <div class="captcha-container" id="captcha" data-jobpilot-guard="captcha">
     <p>请完成安全验证</p>
   </div>
-  <main data-jobpilot-list="job-list">
-    <ul class="job-list">
-      <li class="job-card" data-jobpilot-card data-job-id="boss-1001">
-        <a class="job-card__link" href="/job_detail/boss-1001.html?ka=x">
-          <h3 class="job-card__title" itemprop="title">前端开发工程师</h3>
-        </a>
-        <span class="job-card__salary" itemprop="baseSalary">20-35K·14薪</span>
-        <span class="job-card__location" itemprop="jobLocation">北京·朝阳区</span>
-        <div class="job-card__company" itemprop="hiringOrganization">
-          <span itemprop="name">未来科技有限公司</span>
-        </div>
-      </li>
+  <div class="job-list-container">
+    <ul class="rec-job-list">
+      <div class="job-card-wrap">
+        <li class="job-card-box">
+          <div class="job-info">
+            <div class="job-title clearfix">
+              <a href="/job_detail/boss-1001.html?ka=x" class="job-name">前端开发工程师</a>
+              <span class="job-salary">20-35K·14薪</span>
+            </div>
+            <ul class="tag-list"><li>本科</li><li>3-5年</li></ul>
+          </div>
+          <div class="job-card-footer">
+            <a href="/gongsi/acme-1001.html?from=top-card" class="boss-info">
+              <div class="boss-logo"><span class="boss-online-icon"></span></div>
+              <span class="boss-name">未来科技有限公司</span>
+            </a>
+            <span class="company-location">北京·朝阳区·望京</span>
+          </div>
+        </li>
+      </div>
     </ul>
-  </main>
+  </div>
 </body></html>`;
 
   it("reports captcha for a page that is both a CAPTCHA and a job list", () => {
@@ -155,7 +163,7 @@ describe("boss page classification — precedence", () => {
     // element and a parseable card — so "captcha" is a precedence decision, not
     // an accident of the document being unreadable.
     expect(root.querySelector("[data-jobpilot-guard='captcha']")).not.toBeNull();
-    expect(root.querySelectorAll("[data-jobpilot-card]").length).toBeGreaterThan(0);
+    expect(root.querySelectorAll(".job-card-wrap").length).toBeGreaterThan(0);
     expect(detectBossPageKind(asDocument(root), locationOf(window))).toBe("captcha");
   });
 

@@ -223,7 +223,7 @@ export const abortedSignal = (reason?: unknown): AbortSignal => {
 
 /** Reverses the order of the job cards in a list document, in place. */
 export const reverseCards = (root: ParseRoot): void => {
-  const cards = Array.from(root.querySelectorAll("[data-jobpilot-card]"));
+  const cards = Array.from(root.querySelectorAll(".job-card-wrap"));
   const parent = cards[0]?.parentNode;
   if (parent === null || parent === undefined) return;
   for (const card of [...cards].reverse()) parent.appendChild(card);

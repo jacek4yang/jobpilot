@@ -1,16 +1,18 @@
 <!doctype html>
 <!--
-  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  SYNTHETIC FIXTURE — mirrors the REAL BOSS Zhipin chat DOM captured on
+  2026-09-21 (see chat-conversation.html for the evidence pointer), content
+  sanitized.
 
-  A <textarea> editor instead of a contenteditable one, used to prove that
-  readEditorText / writeEditorText handle BOTH shapes. The live BOSS editor
-  shape is unknown; both are guesses ("fixture-only").
+  The 2026-09-21 capture shows the editor as a contenteditable #chat-input
+  (see chat-conversation.html). This fixture keeps the historical <textarea>
+  variant of the same shape — <textarea id="chat-input" class="chat-input"> —
+  to prove that readEditorText / writeEditorText handle BOTH editor shapes
+  through the same #chat-input anchor.
 
-  Selectors this fixture is intended to satisfy (confidence "fixture-only"):
-    chatRoot, chatHeader, jobTitleInChat, companyInChat, chatJobIdAttribute,
-    commonPhraseToggle, commonPhrasePanel, commonPhraseItem, sendButton,
-    outgoingMessage, outgoingMessageBody.
-    chatEditor  <- "textarea.chat-editor" (the second candidate in the group)
+  Real selectors this fixture is intended to satisfy: identical to
+  chat-conversation.html, except chatEditor resolves to the <textarea> via
+  the shared #chat-input id.
 -->
 <html lang="zh-CN">
   <head>
@@ -18,44 +20,43 @@
     <title>沟通会话（文本框编辑器） - 合成测试夹具</title>
   </head>
   <body>
-    <header class="page-header">合成夹具 · 非真实站点</header>
+    <header class="page-header">合成夹具 · 内容已脱敏 · 结构镜像 2026-09-21 实拍</header>
 
     <main class="chat-page">
-      <section class="chat-panel" data-jobpilot-chat data-job-id="job-70001">
-        <header class="chat-header" data-jobpilot-chat-header>
-          <span class="chat-header__recruiter" data-jobpilot-chat-recruiter>王先生</span>
-          <span class="chat-header__job-title" data-jobpilot-chat-title data-job-id="job-70001">
-            数据平台工程师
-          </span>
-          <span class="chat-header__company" data-jobpilot-chat-company>示例数据有限公司</span>
-        </header>
+      <div class="chat-conversation" data-job-id="job-12345">
+        <div class="chat-header">
+          <span class="recruiter-name">李女士</span>
+          <span class="base-title">招聘经理</span>
+          <span class="company-name">示例科技有限公司</span>
+          <a href="/job_detail/job-12345.html" class="job-card-title">后端开发工程师</a>
+        </div>
 
-        <div class="chat-messages">
-          <div class="message-item is-outgoing" data-jobpilot-outgoing>
-            <div class="message-item__body" data-jobpilot-body>您好，想了解一下这个岗位。</div>
-          </div>
+        <div class="chat-message">
+          <ul class="im-list">
+            <li data-mid="mid-1002" class="message-item item-friend">
+              <div class="item-message-body">您好，感谢您的关注。</div>
+            </li>
+            <li data-mid="mid-1001" class="message-item item-myself">
+              <div class="item-message-body">您好，我对这个职位很感兴趣。</div>
+            </li>
+          </ul>
+        </div>
+
+        <button class="chat-tool-item phrase-toggle">常用语</button>
+
+        <div class="common-phrase-panel">
+          <ul>
+            <li class="phrase-item">您好，我对这个职位很感兴趣。</li>
+            <li class="phrase-item">您好，方便沟通一下吗？</li>
+            <li class="phrase-item">期待您的回复。</li>
+          </ul>
         </div>
 
         <div class="chat-editor">
-          <button
-            type="button"
-            class="chat-editor__phrase-toggle"
-            data-jobpilot-action="common-phrases"
-          >
-            常用语
-          </button>
-
-          <textarea class="chat-editor" rows="3" aria-label="输入消息"></textarea>
-
-          <button type="button" class="chat-editor__send" data-jobpilot-action="send">发送</button>
-
-          <ul class="common-phrase-panel" data-jobpilot-common-phrases>
-            <li data-jobpilot-common-phrase>您好，我对这个职位很感兴趣，方便聊聊吗？</li>
-            <li data-jobpilot-common-phrase>您好，请问该岗位还在招聘吗？</li>
-            <li data-jobpilot-common-phrase>您好，我已发送简历，期待您的回复。</li>
-          </ul>
+          <textarea id="chat-input" class="chat-input"></textarea>
+          <button type="send" class="btn-v2 btn-sure-v2 btn-send">发送</button>
         </div>
-      </section>
+      </div>
     </main>
   </body>
 </html>

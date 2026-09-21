@@ -4,6 +4,8 @@
  * ============================ HONESTY NOTICE ============================
  * These tests assert agreement between this repository's own code and its own
  * synthetic fixtures. They are NOT evidence about the real BOSS Zhipin site.
+ * Entries marked "recon-verified" additionally cite the 2026-09-21 read-only
+ * live-site capture, which this file does not itself re-verify.
  * =======================================================================
  */
 
@@ -27,14 +29,15 @@ describe("communication selectors", () => {
 
   it("marks every entry with a confidence and a non-empty note", () => {
     for (const { key, entry } of communicationSelectorEntries()) {
-      expect(["fixture-only", "unverified"]).toContain(entry.confidence);
+      expect(["fixture-only", "unverified", "recon-verified"]).toContain(entry.confidence);
       expect(entry.note.length, `note for ${key}`).toBeGreaterThan(20);
     }
   });
 
   it("never claims a selector is verified", () => {
-    // The only legal confidences are the two non-verified ones; a "verified"
-    // value would be unrepresentable anyway, and this pins it.
+    // The only legal confidences are the three non-verified rungs of the
+    // ladder (fixture-only < unverified < recon-verified); a "verified" value
+    // would be unrepresentable anyway, and this pins it.
     for (const { entry } of communicationSelectorEntries()) {
       expect(entry.confidence).not.toBe("verified");
     }

@@ -76,10 +76,10 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     // ---- Host page integrity ------------------------------------------------
     // The fixture's original job card must still be present and visible: the
     // panel is an addition, never a replacement, and must not break the page.
-    await expect(page.locator("#fixture-root .job-card").first()).toBeVisible();
+    await expect(page.locator("#fixture-root .job-card-wrap").first()).toBeVisible();
 
     // The fixture's list container is untouched.
-    await expect(page.locator("#fixture-root [data-jobpilot-list]").first()).toBeVisible();
+    await expect(page.locator("#fixture-root .job-list-container").first()).toBeVisible();
 
     // The panel is mounted in its own shadow host appended to <body>, NOT nested
     // inside the fixture markup. This is the isolation guarantee: the panel

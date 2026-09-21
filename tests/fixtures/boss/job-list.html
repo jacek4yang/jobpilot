@@ -1,9 +1,9 @@
 <!doctype html>
 <!--
   SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
-  Hand-authored for JobPilot adapter unit tests and deliberately shaped to match
-  src/adapters/boss/selectors.ts. The real BOSS Zhipin DOM was never inspected;
-  passing against this file proves parser plumbing only, not real-site support.
+  Mirrors the real BOSS Zhipin list-page DOM captured by the read-only recon
+  harness on 2026-09-21, with every value sanitized to synthetic content.
+  Passing against this file proves parser plumbing only, not real-site support.
 -->
 <html lang="zh-CN">
   <head>
@@ -13,68 +13,96 @@
   <body>
     <header class="page-header">合成夹具 · 非真实站点</header>
 
-    <main data-jobpilot-list="job-list">
-      <ul class="job-list">
-        <li class="job-card" data-jobpilot-card data-job-id="boss-1001">
-          <a class="job-card__link" href="/job_detail/boss-1001.html?ka=search-list-1&lid=x9">
-            <h3 class="job-card__title" itemprop="title">前端开发工程师</h3>
-          </a>
-          <span class="job-card__salary" itemprop="baseSalary">20-35K·14薪</span>
-          <span class="job-card__location" itemprop="jobLocation">北京·朝阳区·望京</span>
-          <div class="job-card__company" itemprop="hiringOrganization">
-            <span itemprop="name">未来科技有限公司</span>
-          </div>
-          <div class="job-card__tags">
-            <span class="job-card__tag">本科</span>
-            <span class="job-card__tag">3-5年</span>
-          </div>
-        </li>
+    <div class="job-list-container">
+      <ul class="rec-job-list">
+        <div class="job-card-wrap" data-job-id="boss-1001">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1001.html?ka=search-list-1&lid=x9" class="job-name">前端开发工程师</a>
+                <span class="job-salary">20-35K·14薪</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>3-5年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1001.html?from=top-card" class="boss-info">
+                <div class="boss-logo"><span class="boss-online-icon"></span></div>
+                <span class="boss-name">未来科技有限公司</span>
+              </a>
+              <span class="company-location">北京·朝阳区·望京</span>
+            </div>
+          </li>
+        </div>
 
-        <li class="job-card" data-jobpilot-card data-job-id="boss-1002">
-          <a class="job-card__link" href="/job_detail/boss-1002.html?ka=search-list-2">
-            <h3 class="job-card__title" itemprop="title">高级后端开发工程师（Java）</h3>
-          </a>
-          <span class="job-card__salary" itemprop="baseSalary">30-50K·15薪</span>
-          <span class="job-card__location" itemprop="jobLocation">上海·浦东新区·张江</span>
-          <div class="job-card__company" itemprop="hiringOrganization">
-            <span itemprop="name">云图网络技术有限公司</span>
-          </div>
-          <div class="job-card__tags">
-            <span class="job-card__tag">硕士</span>
-            <span class="job-card__tag">5-10年</span>
-          </div>
-        </li>
+        <div class="job-card-wrap" data-job-id="boss-1002">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1002.html?ka=search-list-2" class="job-name">高级后端开发工程师（Java）</a>
+                <span class="job-salary">30-50K·15薪</span>
+              </div>
+              <ul class="tag-list">
+                <li>硕士</li>
+                <li>5-10年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1002.html?from=top-card" class="boss-info">
+                <div class="boss-logo"></div>
+                <span class="boss-name">云图网络技术有限公司</span>
+              </a>
+              <span class="company-location">上海·浦东新区·张江</span>
+            </div>
+          </li>
+        </div>
 
-        <li class="job-card" data-jobpilot-card data-job-id="boss-1003">
-          <a class="job-card__link" href="/job_detail/boss-1003.html?ka=search-list-3">
-            <h3 class="job-card__title" itemprop="title">资深产品经理</h3>
-          </a>
-          <span class="job-card__salary" itemprop="baseSalary">25-40K</span>
-          <span class="job-card__location" itemprop="jobLocation">深圳·南山区·科技园</span>
-          <div class="job-card__company" itemprop="hiringOrganization">
-            <span itemprop="name">智联数据服务有限公司</span>
-          </div>
-          <div class="job-card__tags">
-            <span class="job-card__tag">本科</span>
-            <span class="job-card__tag">3-5年</span>
-          </div>
-        </li>
+        <div class="job-card-wrap" data-job-id="boss-1003">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1003.html?ka=search-list-3" class="job-name">资深产品经理</a>
+                <span class="job-salary">25-40K</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>3-5年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1003.html?from=top-card" class="boss-info">
+                <div class="boss-logo"><span class="boss-online-icon"></span></div>
+                <span class="boss-name">智联数据服务有限公司</span>
+              </a>
+              <span class="company-location">深圳·南山区·科技园</span>
+            </div>
+          </li>
+        </div>
 
-        <li class="job-card" data-jobpilot-card data-job-id="boss-1004">
-          <a class="job-card__link" href="/job_detail/boss-1004.html?ka=search-list-4">
-            <h3 class="job-card__title" itemprop="title">应届生招聘 · 数据分析师</h3>
-          </a>
-          <span class="job-card__salary" itemprop="baseSalary">面议</span>
-          <span class="job-card__location" itemprop="jobLocation">杭州·余杭区</span>
-          <div class="job-card__company" itemprop="hiringOrganization">
-            <span itemprop="name">星辰云计算有限公司</span>
-          </div>
-          <div class="job-card__tags">
-            <span class="job-card__tag">本科</span>
-            <span class="job-card__tag">应届生</span>
-          </div>
-        </li>
+        <div class="job-card-wrap" data-job-id="boss-1004">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1004.html?ka=search-list-4" class="job-name">应届生招聘 · 数据分析师</a>
+                <span class="job-salary">面议</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>应届生</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1004.html?from=top-card" class="boss-info">
+                <div class="boss-logo"></div>
+                <span class="boss-name">星辰云计算有限公司</span>
+              </a>
+              <span class="company-location">杭州·余杭区</span>
+            </div>
+          </li>
+        </div>
       </ul>
-    </main>
+    </div>
   </body>
 </html>

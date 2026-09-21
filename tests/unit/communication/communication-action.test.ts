@@ -3,10 +3,10 @@
  *
  * ============================ HONESTY NOTICE ============================
  * Everything asserted here runs against the synthetic fixtures under
- * `tests/fixtures/boss/`, which were hand-authored to match our own selectors.
- * These tests prove the fail-closed CONTROL FLOW is implemented. They are not
- * evidence that any of it works on the real BOSS Zhipin site, which was never
- * inspected.
+ * `tests/fixtures/boss/`. The six chat fixtures mirror the REAL BOSS Zhipin
+ * chat DOM captured on 2026-09-21 (sanitized content); the modal/risk fixtures
+ * remain hand-authored. Live-site messaging is still UNVERIFIED and must not
+ * be described as working.
  * =======================================================================
  */
 
@@ -194,7 +194,7 @@ describe("dispatchSend", () => {
 
     expect((await action.prepareMessage(intent)).kind).toBe("ready");
 
-    const button = root.querySelector("[data-jobpilot-action='send']");
+    const button = root.querySelector(".btn-send");
     expect(button).not.toBeNull();
     let clicks = 0;
     button?.addEventListener("click", () => {
@@ -310,7 +310,9 @@ describe("readers and helpers", () => {
   it("lists the common phrases in document order", () => {
     const phrases = readCommonPhrases(load("chat-conversation.html"));
     expect(phrases).toHaveLength(3);
-    expect(phrases[0]).toBe(PHRASE);
+    // The fixture mirrors the real capture's phrase panel: its first item is
+    // the short greeting, not the full PHRASE the adapter sends.
+    expect(phrases[0]).toBe("您好，我对这个职位很感兴趣。");
   });
 
   it("reads the current chat identity", () => {
