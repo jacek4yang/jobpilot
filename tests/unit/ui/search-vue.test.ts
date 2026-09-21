@@ -1,21 +1,25 @@
 /**
- * Search page persistence tests.
+ * Search page Vue render smoke test.
  *
- * Regression: typing into the Search page (e.g. the salary inputs) was wiped
- * as soon as the panel re-rendered — the page rebuilt its DOM from persisted
- * state on every render and nothing stored what was typed. These tests pin:
+ * Pins the DOM contract of the Vue-backed Search page:
  *
- *   - every control change calls onSaveSearchProfile with the full profile
- *     read back from the inputs (write-through);
- *   - a re-render that lands before the storage round-trip still shows the
- *     typed value (module-scope draft wins over stale persisted state);
- *   - the salary fields in particular keep their text across re-renders.
+ *   - the rendered tree keeps the established selectors (`.jobpilot-page-search`,
+ *     `.jobpilot-input`, `.jobpilot-btn[data-variant=primary]`,
+ *     `.jobpilot-filter-chip[data-selected]`, `.jobpilot-select`);
+ *   - typing writes the full profile through to `onSaveSearchProfile` with
+ *     parsed salary numbers (same behavioural assertions as the old
+ *     hand-rolled page tests);
+ *   - re-calling `renderSearchPage` with the SAME document returns the SAME
+ *     element (the no-rebuild contract) and a re-render with stale config
+ *     keeps the typed value (the draft contract).
  *
- * Profile ids are unique per test so the module-scope draft map never leaks
- * between tests.
+ * Vue mounts against happy-dom here; if that combination stops working, this
+ * file is the place that fails, not the pure `search-form` tests.
  */
+// @vitest-environment happy-dom
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
+import { nextTick } from "vue";
 import type { JobPilotConfig, StoredSearchProfile } from "../../../src/config/schema";
 import { renderSearchPage } from "../../../src/ui/pages/search";
 import type { UiCallbacks } from "../../../src/ui/view-model";
@@ -112,12 +116,30 @@ const salaryInputsOf = (root: HTMLElement): [HTMLInputElement, HTMLInputElement]
   return [inputs[0] as HTMLInputElement, inputs[1] as HTMLInputElement];
 };
 
-describe("renderSearchPage persistence", () => {
+describe("renderSearchPage (Vue)", () => {
+  it("renders the keyword input with the configured profile value", () => {
+    const saved: StoredSearchProfile[] = [];
+    const doc = makeDoc();
+    const page = renderSearchPage(doc, {
+      config: configWithProfile("v-render", { keywords: ["Golang", "后端"] }),
+      callbacks: callbacksWith(saved),
+    });
+
+    expect(page.querySelector(".jobpilot-page-search")).not.toBeNull();
+    const textInput = page.querySelector("input.jobpilot-input");
+    if (textInput === null) throw new Error("keyword input missing");
+    expect(textInput).toHaveProperty("value", "Golang, 后端");
+
+    const runBtn = page.querySelector("button.jobpilot-btn[data-variant='primary']");
+    if (runBtn === null) throw new Error("run button missing");
+    expect(runBtn.textContent).toBe("开始整理职位");
+  });
+
   it("salary typing fires onSaveSearchProfile with the parsed numbers", () => {
     const saved: StoredSearchProfile[] = [];
     const doc = makeDoc();
     const page = renderSearchPage(doc, {
-      config: configWithProfile("p-salary-write"),
+      config: configWithProfile("v-salary-write"),
       callbacks: callbacksWith(saved),
     });
     const [minInput, maxInput] = salaryInputsOf(page);
@@ -133,37 +155,24 @@ describe("renderSearchPage persistence", () => {
     expect(latest?.salaryMaxK).toBe(30);
   });
 
-  it("typed salary survives a re-render that lands before storage round-trip", () => {
-    const saved: StoredSearchProfile[] = [];
-    const config = configWithProfile("p-salary-rerender");
-    const doc = makeDoc();
-    const first = renderSearchPage(doc, { config, callbacks: callbacksWith(saved) });
-    const [minFirst] = salaryInputsOf(first);
-
-    minFirst.value = "20";
-    fire(doc, minFirst, "input");
-    expect(saved.at(-1)?.salaryMinK).toBe(20);
-
-    // Re-render with the ORIGINAL (stale) config — the storage write has not
-    // landed yet. The draft must win or the keystroke is wiped.
-    const second = renderSearchPage(doc, { config, callbacks: callbacksWith([]) });
-    const [minSecond] = salaryInputsOf(second);
-    expect(minSecond.value).toBe("20");
-  });
-
-  it("city chips, filters and the activity select all persist on change", () => {
+  it("city chips, filters and the activity select all persist on change", async () => {
     const saved: StoredSearchProfile[] = [];
     const doc = makeDoc();
     const page = renderSearchPage(doc, {
-      config: configWithProfile("p-chips"),
+      config: configWithProfile("v-chips"),
       callbacks: callbacksWith(saved),
     });
 
     const chip = Array.from(page.querySelectorAll("button.jobpilot-filter-chip")).find(
       (node) => node.textContent === "北京",
     );
-    if (chip) fire(doc, chip, "click");
+    if (chip === undefined) throw new Error("北京 chip missing");
+    expect(chip.getAttribute("data-selected")).toBe("false");
+    fire(doc, chip, "click");
     expect(saved.at(-1)?.cities).toContain("北京");
+    // The selected state is a reactive prop patch — flushed on the microtask.
+    await nextTick();
+    expect(chip.getAttribute("data-selected")).toBe("true");
 
     const select = page.querySelector("select.jobpilot-select");
     const SelectClass = doc.defaultView?.HTMLSelectElement;
@@ -180,7 +189,7 @@ describe("renderSearchPage persistence", () => {
     const saved: StoredSearchProfile[] = [];
     const doc = makeDoc();
     const page = renderSearchPage(doc, {
-      config: configWithProfile("p-keywords"),
+      config: configWithProfile("v-keywords"),
       callbacks: callbacksWith(saved),
     });
     const textInput = page.querySelector("input.jobpilot-input");
@@ -193,5 +202,39 @@ describe("renderSearchPage persistence", () => {
     fire(doc, textInput, "input");
 
     expect(saved.at(-1)?.keywords).toEqual(["Java", "后端", "微服务"]);
+  });
+
+  it("same document returns the same element and stale re-render keeps typed values", async () => {
+    const saved: StoredSearchProfile[] = [];
+    const config = configWithProfile("v-rerender");
+    const doc = makeDoc();
+    const first = renderSearchPage(doc, { config, callbacks: callbacksWith(saved) });
+    const textInput = first.querySelector("input.jobpilot-input");
+    const InputClass = doc.defaultView?.HTMLInputElement;
+    if (textInput === null || InputClass === undefined || !(textInput instanceof InputClass)) {
+      throw new Error("keyword input missing");
+    }
+
+    textInput.value = "typed-keyword";
+    fire(doc, textInput, "input");
+    expect(saved.at(-1)?.keywords).toEqual(["typed-keyword"]);
+
+    // Re-render with the ORIGINAL (stale) config — the storage write has not
+    // landed yet. The mounted section must be updated in place, not rebuilt,
+    // and the draft must win or the keystroke is wiped.
+    const after: StoredSearchProfile[] = [];
+    const second = renderSearchPage(doc, { config, callbacks: callbacksWith(after) });
+    expect(second).toBe(first);
+    await nextTick();
+    expect(textInput.value).toBe("typed-keyword");
+
+    // The refreshed callbacks are wired: a chip click now saves into `after`.
+    const chip = Array.from(second.querySelectorAll("button.jobpilot-filter-chip")).find(
+      (node) => node.textContent === "北京",
+    );
+    if (chip === undefined) throw new Error("北京 chip missing");
+    fire(doc, chip, "click");
+    expect(after.at(-1)?.cities).toContain("北京");
+    expect(after.at(-1)?.keywords).toEqual(["typed-keyword"]);
   });
 });
