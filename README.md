@@ -50,6 +50,31 @@ match the selectors, not captured from the site.
 Do not install this expecting it to work on BOSS Zhipin today. Do install it if
 you intend to help verify it. See [`docs/boss-adapter.md`](docs/boss-adapter.md).
 
+### Live-testing status
+
+**No live scenario has been run yet.** The staged plan and its hard gates are in
+[`docs/live-testing/TEST_MATRIX.md`](docs/live-testing/TEST_MATRIX.md), the
+procedure is in [`docs/live-testing/RUNBOOK.md`](docs/live-testing/RUNBOOK.md),
+and per-scenario progress is tracked in
+[`docs/live-testing/PROGRESS.md`](docs/live-testing/PROGRESS.md).
+
+Two things that are worth stating plainly, because they are what a reader
+actually needs to know:
+
+- The diagnostic build is **ready for live testing**. `pnpm diag:selftest`
+  proves the observation → export → analysis loop closes: it drives the real
+  instrumenters, exports a real bundle, analyses it offline, and asserts the
+  bundle carries route, page-fingerprint, state, effect, selector, queue,
+  storage, transaction, chat-identity and verification traces. That gate does
+  not touch BOSS and does not prove anything about it.
+- Passing automated tests is **not** evidence of live-site behaviour. It is
+  evidence that the code is internally consistent. The distinction is the whole
+  reason the staged live-testing plan exists.
+
+A stable `v1.0.0` will not be published until the required live scenarios have
+actually passed. Until then the honest description of this project is: a
+well-tested userscript whose real-site behaviour is unverified.
+
 ---
 
 ## Features
