@@ -2,7 +2,7 @@
  * View models for the JobPilot panel.
  */
 
-import type { AutomationMode, JobPilotConfig } from "../config/schema";
+import type { AutomationMode, JobPilotConfig, StoredSearchProfile } from "../config/schema";
 import type {
   InterviewRecord,
   JobStage,
@@ -78,6 +78,13 @@ export interface UiCallbacks {
   readonly onPruneData?: (() => void) | undefined;
   readonly onClearAllData?: (() => void) | undefined;
   readonly onSelectTab?: ((tab: PanelTab) => void) | undefined;
+
+  /**
+   * Persists the search profile the Search page edits. Called on every field
+   * change so typed values survive panel re-renders (the page rebuilds its DOM
+   * from persisted state on each render) and page reloads.
+   */
+  readonly onSaveSearchProfile?: ((profile: StoredSearchProfile) => void) | undefined;
 }
 
 export interface StatTile {

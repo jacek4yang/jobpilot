@@ -451,6 +451,19 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       void persist();
       render();
     },
+    onSaveSearchProfile: (profile) => {
+      const existing = effectiveConfig.profiles ?? [];
+      const index = existing.findIndex((candidate) => candidate.id === profile.id);
+      effectiveConfig = {
+        ...effectiveConfig,
+        profiles:
+          index >= 0
+            ? existing.map((candidate, i) => (i === index ? profile : candidate))
+            : [...existing, profile],
+      };
+      void persist();
+      render();
+    },
 
     // Personal Job Workspace callbacks
     onSetPreference: async (jobId: string, preference: PersonalPreference) => {
