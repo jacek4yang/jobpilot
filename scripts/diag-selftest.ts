@@ -15,13 +15,34 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initialContext } from "../src/application/state";
 import { createBuildInfo } from "../src/diagnostics/build-info";
 import { buildBundle, REQUIRED_BUNDLE_FILES } from "../src/diagnostics/bundle/bundle";
 import { sha256Hex } from "../src/diagnostics/bundle/hash";
 import { readZip } from "../src/diagnostics/bundle/zip";
 import { EVENTS } from "../src/diagnostics/event";
+import {
+  DEFAULT_EFFECT_BUDGETS,
+  traceOrchestrator,
+} from "../src/diagnostics/instrument/effect-trace";
+import { recordPageFingerprint } from "../src/diagnostics/instrument/page-fingerprint";
+import {
+  describeResolution,
+  recordSelectorOutcome,
+} from "../src/diagnostics/instrument/selector-trace";
+import { reduceWithTrace } from "../src/diagnostics/instrument/state-trace";
+import {
+  recordDraftCheck,
+  recordIdentityCheck,
+  recordIntentCreated,
+  recordSendClicked,
+  recordTransactionTerminal,
+  recordVerification,
+} from "../src/diagnostics/instrument/transaction-trace";
 import { createDiagnosticRecorder } from "../src/diagnostics/recorder";
 import { bundleFileName, newSessionId, startSession } from "../src/diagnostics/session";
+import { traceQueue } from "../src/diagnostics/trace";
+import { createTaskQueue } from "../src/infrastructure/queue/queue";
 import { analyzeBundle } from "./analyze-bundle";
 import { loadBundle } from "./diagnostics/bundle-reader";
 
@@ -49,7 +70,7 @@ const SECRETS: readonly [string, string, string, string, string] = [
  * Builds one synthetic session that exercises the interesting paths: a normal
  * flow, a selector miss, a draft block, and an uncertain send.
  */
-const buildSyntheticBundle = (): Uint8Array => {
+const buildSyntheticBundle = async (): Promise<Uint8Array> => {
   const now = Date.now();
   const build = createBuildInfo({ channel: "diagnostic", schemaVersion: 4 });
   const recorder = createDiagnosticRecorder({
@@ -72,7 +93,12 @@ const buildSyntheticBundle = (): Uint8Array => {
     }),
   );
 
-  // A normal state progression.
+  // The session is driven through the REAL instrumenters rather than by
+  // emitting events by hand. A hand-written stream would satisfy the coverage
+  // gate even if the instrumentation were broken, which would make the gate
+  // worthless precisely when it matters.
+
+  // Page detection and fingerprint.
   recorder.record({
     level: "info",
     category: "bootstrap",
@@ -85,63 +111,113 @@ const buildSyntheticBundle = (): Uint8Array => {
     event: EVENTS.routeChanged,
     routeId: "job-list",
   });
-  recorder.record({
-    level: "info",
-    category: "state-machine",
-    event: EVENTS.stateTransition,
-    state: "scanning",
-    data: { from: "idle", trigger: "START", to: "scanning", dwellMs: 0 },
+  recordPageFingerprint(recorder, {
+    routePattern: "/web/geek/job",
+    pageKind: "job-list",
+    regions: ["[data-jobpilot-list]"],
+    jobCardCount: 12,
+    dialogCount: 0,
+    markers: ["[data-jobpilot-card]"],
+    actionLabels: [],
+    signature: "abc12345",
   });
 
-  // A selector miss, twice, so the analyzer can call it confirmed.
+  // State machine, through the tracing reducer.
+  let context = initialContext(now);
+  context = reduceWithTrace(recorder, {
+    context,
+    event: { type: "START" },
+    options: { now, maxRetries: 2 },
+    routeId: "job-list",
+  }).context;
+
+  // Effects, through the tracing orchestrator.
+  let effectClock = 0;
+  const tracedOrchestrator = traceOrchestrator(
+    { runEffect: async () => {}, dispose: () => {} },
+    { recorder, now: () => (effectClock += 12), budgets: DEFAULT_EFFECT_BUDGETS },
+  );
+  await tracedOrchestrator.runEffect({ type: "persist" }, context);
+  await tracedOrchestrator.runEffect({ type: "scan-jobs" }, context);
+
+  // Queue lifecycle, through the tracing queue.
+  const queue = traceQueue(createTaskQueue(), recorder);
+  queue.enqueue({ jobId: "job-42", now });
+  queue.enqueue({ jobId: "job-43", now });
+  queue.enqueue({ jobId: "job-43", now }); // duplicate, must not double-enqueue
+  const taken = queue.takeNext(now);
+  if (taken !== undefined) queue.update(taken.jobId, "success", now);
+
+  // Selector outcomes, through the real reporter — including a miss, so the
+  // analyzer has something to find.
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    recorder.record({
-      level: "warn",
-      category: "selector",
-      event: EVENTS.selectorMiss,
-      data: {
-        purpose: "detail.applyButton",
-        candidates: [{ selector: ".btn-startchat", matches: 0 }],
-      },
-    });
+    recordSelectorOutcome(
+      recorder,
+      describeResolution("detail.applyButton", [
+        {
+          selector: ".btn-startchat",
+          confidence: "fixture-only",
+          matches: 0,
+          visible: 0,
+          selected: false,
+          rejectedBecause: "no-match",
+        },
+      ]),
+    );
   }
+  recordSelectorOutcome(
+    recorder,
+    describeResolution("detail.title", [
+      { selector: "h1", confidence: "fixture-only", matches: 1, visible: 1, selected: true },
+    ]),
+  );
 
-  // A draft block: the intended, safe outcome.
-  recorder.record({
-    level: "info",
-    category: "message",
-    event: EVENTS.draftChecked,
-    jobId: "job-42",
-    transactionId: "txn-42",
-    data: { draftPresent: true },
+  // Communication transaction, through the real tracers.
+  const txn = { transactionId: "txn-42", jobId: "job-42" };
+  const MESSAGE = "您好，我对该职位很感兴趣。";
+
+  recordIntentCreated(recorder, txn, {
+    templateId: "default",
+    messageText: MESSAGE,
+    variablesUsed: ["jobTitle"],
+    outgoingBaseline: 0,
+    expiresAt: now + 180_000,
+  });
+  recordDraftCheck(recorder, txn, false);
+  recordIdentityCheck(recorder, txn, {
+    kind: "match",
+    signals: { titleMatched: true, companyMatched: true, idsCompared: true },
+  });
+  recordSendClicked(recorder, txn);
+  recordVerification(recorder, txn, { kind: "verified", outgoingCount: 1, baseline: 0 });
+  recordTransactionTerminal(recorder, txn, { kind: "completed" });
+
+  // A second transaction that ends uncertain, which is the case the analyzer
+  // must flag and a maintainer must never see rounded to success.
+  const uncertainTxn = { transactionId: "txn-43", jobId: "job-43" };
+  recordIntentCreated(recorder, uncertainTxn, {
+    templateId: "default",
+    messageText: MESSAGE,
+    variablesUsed: ["jobTitle"],
+    outgoingBaseline: 0,
+    expiresAt: now + 180_000,
+  });
+  recordIdentityCheck(recorder, uncertainTxn, {
+    kind: "match",
+    signals: { titleMatched: true },
+  });
+  recordSendClicked(recorder, uncertainTxn);
+  recordVerification(recorder, uncertainTxn, { kind: "uncertain", outgoingCount: 0, baseline: 0 });
+  recordTransactionTerminal(recorder, uncertainTxn, {
+    kind: "uncertain",
+    reason: "no outgoing message observed",
   });
 
-  // An uncertain send: clicked, never observed.
-  recorder.record({
-    level: "info",
-    category: "communication",
-    event: EVENTS.sendAttempted,
-    jobId: "job-43",
-    transactionId: "txn-43",
-    data: { messageLength: 24, messageDigest: "fnv1a:deadbeef" },
-  });
-  recorder.record({
-    level: "info",
-    category: "communication",
-    event: EVENTS.sendClicked,
-    jobId: "job-43",
-    transactionId: "txn-43",
-  });
-  recorder.record({
-    level: "warn",
-    category: "communication",
-    event: EVENTS.transactionUncertain,
-    jobId: "job-43",
-    transactionId: "txn-43",
-    data: { detail: "no outgoing message observed" },
-  });
+  // A draft block, the intended safe outcome.
+  const draftTxn = { transactionId: "txn-44", jobId: "job-44" };
+  recordDraftCheck(recorder, draftTxn, true);
 
-  // A storage failure, which should have forced read-only mode.
+  // A storage failure, which must have forced read-only mode.
   recorder.record({
     level: "error",
     category: "storage",
@@ -190,13 +266,15 @@ const buildSyntheticBundle = (): Uint8Array => {
   return result.bytes;
 };
 
-const run = (): void => {
+const run = async (): Promise<void> => {
   const workDir = join(tmpdir(), `jobpilot-selftest-${Date.now()}`);
   mkdirSync(workDir, { recursive: true });
+  /** Bundle files, captured inside the load-result narrowing. */
+  let capturedFiles: ReadonlyMap<string, string> | undefined;
 
   try {
     // --- 1. Generate ------------------------------------------------------
-    const bytes = buildSyntheticBundle();
+    const bytes = await buildSyntheticBundle();
     check("bundle generated", bytes.length > 0, `${bytes.length} bytes`);
 
     const zipPath = join(workDir, "selftest.zip");
@@ -252,8 +330,12 @@ const run = (): void => {
         check("manifest carries checksums", false, "checksums missing");
       }
 
+      // Captured FIRST, while the load-result narrowing is in force, so every
+      // later check reads real content rather than an empty fallback.
+      capturedFiles = loaded.bundle.files;
+
       // --- 4. NDJSON is genuinely parseable -------------------------------
-      const eventsText = loaded.bundle.files.get("events.ndjson") ?? "";
+      const eventsText = capturedFiles.get("events.ndjson") ?? "";
       const lines = eventsText.split("\n").filter((line) => line.trim().length > 0);
       let parsedAll = true;
       for (const line of lines) {
@@ -331,6 +413,70 @@ const run = (): void => {
       "",
     );
 
+    // --- 7b. Evidence coverage gate ---------------------------------------
+    // This is the check the runbook depends on: a bundle that cannot carry a
+    // given trace cannot diagnose a failure in that area, so live testing must
+    // not proceed on it. Each entry names a trace the phase brief requires and
+    // asserts the exported bundle actually contains it.
+    const coverage: readonly (readonly [string, readonly string[]])[] = [
+      ["route trace", ["route.changed"]],
+      ["page fingerprint", ["page.fingerprinted"]],
+      ["state transitions", ["state.transition"]],
+      ["effect trace", ["effect.started", "effect.completed"]],
+      ["selector trace", ["selector.miss", "selector.match"]],
+      ["queue trace", ["queue.item.enqueued", "queue.item.started"]],
+      ["storage trace", ["storage.write.failed"]],
+      ["transaction trace", ["communication.intent.created", "communication.send.attempted"]],
+      ["chat identity trace", ["chat.identity.matched", "chat.identity.evaluated"]],
+      ["send verification trace", ["communication.send.verified", "communication.send.uncertain"]],
+    ];
+
+    const coverageEvents = capturedFiles?.get("events.ndjson");
+    if (coverageEvents === undefined) {
+      // A missing evidence file must FAIL the gate, not pass it vacuously.
+      check("bundle carries events.ndjson", false, "events.ndjson absent from the bundle");
+    } else {
+      // Parsed, not substring-matched. A substring search over the raw text
+      // would be satisfied by an event NAME appearing in some other field; this
+      // requires an actual event with that name to have been recorded.
+      const recorded = new Set(
+        coverageEvents
+          .split(/\r?\n/)
+          .filter((line) => line.trim().length > 0)
+          .flatMap((line) => {
+            try {
+              const parsed = JSON.parse(line) as { event?: unknown };
+              return typeof parsed.event === "string" ? [parsed.event] : [];
+            } catch {
+              return [];
+            }
+          }),
+      );
+      for (const [label, names] of coverage) {
+        const found = names.some((name) => recorded.has(name));
+        check(
+          `bundle carries ${label}`,
+          found,
+          found ? "" : `expected one of: ${names.join(", ")}`,
+        );
+      }
+    }
+
+    // The analyzer must be able to reconstruct what the bundle describes.
+    const reconstructed = [
+      [
+        "state transitions",
+        ids.some((id) => id.startsWith("selector.miss.")) || report.includes("Findings"),
+      ],
+      [
+        "transaction lifecycle",
+        ids.includes("transaction.uncertain") || ids.includes("transaction.coverage-gap"),
+      ],
+    ] as const;
+    for (const [label, ok] of reconstructed) {
+      check(`analyzer reconstructs ${label}`, ok, "");
+    }
+
     // --- 8. Deterministic filename ---------------------------------------
     const name = bundleFileName({
       scenarioId: "T60",
@@ -363,4 +509,4 @@ const run = (): void => {
   }
 };
 
-run();
+void run();

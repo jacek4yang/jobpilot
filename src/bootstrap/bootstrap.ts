@@ -37,6 +37,19 @@ import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
 import { EVENTS } from "../diagnostics/event";
+import { DEFAULT_EFFECT_BUDGETS, traceOrchestrator } from "../diagnostics/instrument/effect-trace";
+import { fingerprintPage, recordPageFingerprint } from "../diagnostics/instrument/page-fingerprint";
+import { recordSelectorOutcome } from "../diagnostics/instrument/selector-trace";
+import { reduceWithTrace } from "../diagnostics/instrument/state-trace";
+import {
+  recordDraftCheck,
+  recordIdentityCheck,
+  recordIntentCreated,
+  recordSendAttemptPersisted,
+  recordSendClicked,
+  recordTransactionTerminal,
+  recordVerification,
+} from "../diagnostics/instrument/transaction-trace";
 import { traceStorage } from "../diagnostics/trace";
 import type { CommunicationIntent } from "../domain/communication/intent";
 import { createTemplate } from "../domain/communication/template";
@@ -451,6 +464,18 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         (controller?.context().applicationTimestamps.length ?? 0) >= policy.maxApplicationsPerHour,
       rateLimited: false,
     }),
+    // The adapter owns selector knowledge; the service only asks whether the
+    // affordance resolved and which candidate won. That keeps selector detail
+    // inside the adapter while still producing the diagnostic.
+    resolveCommunicateAction: () => {
+      const located = communicationAction.findCommunicateButton();
+      return located === null
+        ? null
+        : { matchedBy: located.matchedBy, heuristic: located.heuristic };
+    },
+    onCommunicateButtonResolved: (outcome) => {
+      recordSelectorOutcome(deps.recorder, outcome);
+    },
     verifyChat: () => {
       // Only that a conversation is open. The authoritative identity check runs
       // inside the runner against the job id, which is where it belongs.
@@ -468,6 +493,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     persistIntent: async (intent) => {
       pendingIntent = intent;
       await persist();
+      // Recorded AFTER the write succeeds, so the event means "this is durable"
+      // rather than "we tried". The analyzer relies on that distinction when
+      // judging whether a reload could have lost the point of no return.
+      const context = { transactionId: intent.id, jobId: String(intent.jobId) };
+      if (intent.sendAttemptedAt !== undefined) {
+        recordSendAttemptPersisted(deps.recorder, context, intent);
+      }
     },
     clearIntent: async () => {
       pendingIntent = undefined;
@@ -477,6 +509,47 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     templates: () => templates,
     newIntentId: () =>
       `txn-${deps.clock.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    // --- Transaction tracing -------------------------------------------------
+    // The service reports each phase edge with the correlation ids, so a bundle
+    // can reconstruct one send without reading the whole stream.
+    onIntentCreated: ({
+      transactionId,
+      jobId,
+      templateId,
+      messageText,
+      variablesUsed,
+      outgoingBaseline,
+      expiresAt,
+    }) => {
+      recordIntentCreated(
+        deps.recorder,
+        { transactionId, jobId },
+        { templateId, messageText, variablesUsed, outgoingBaseline, expiresAt },
+      );
+    },
+    onDraftChecked: ({ transactionId, jobId, present }) => {
+      recordDraftCheck(deps.recorder, { transactionId, jobId }, present);
+    },
+    onIdentityChecked: ({ transactionId, jobId, verdict, signals }) => {
+      recordIdentityCheck(deps.recorder, { transactionId, jobId }, { kind: verdict, signals });
+    },
+    onSendClicked: ({ transactionId, jobId }) => {
+      recordSendClicked(deps.recorder, { transactionId, jobId });
+    },
+    onVerified: ({ transactionId, jobId, kind, outgoingCount, baseline }) => {
+      recordVerification(
+        deps.recorder,
+        { transactionId, jobId },
+        { kind, outgoingCount, baseline },
+      );
+    },
+    onTerminal: ({ transactionId, jobId, kind, reason }) => {
+      recordTransactionTerminal(
+        deps.recorder,
+        { transactionId, jobId },
+        reason === undefined ? { kind } : { kind, reason },
+      );
+    },
   });
 
   const orchestrator = createOrchestrator({
@@ -682,10 +755,25 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   controller = createController({
     clock: deps.clock,
     logger: deps.logger,
-    orchestrator,
+    // The orchestrator is wrapped so every effect's lifecycle is recorded. The
+    // wrapper is transparent: same interface, same behaviour, extra evidence.
+    orchestrator: traceOrchestrator(orchestrator, {
+      recorder: deps.recorder,
+      now: () => deps.clock.now(),
+      budgets: DEFAULT_EFFECT_BUDGETS,
+    }),
     history,
     watchdog,
     maxRetries: policy.maxRetries,
+    // State transitions are traced by wrapping the pure reducer, so the reducer
+    // itself keeps no diagnostics dependency.
+    reducer: (context, event, reduceOptions) =>
+      reduceWithTrace(deps.recorder, {
+        context,
+        event,
+        options: reduceOptions,
+        ...(currentPageKind === "unknown" ? {} : { routeId: currentPageKind }),
+      }),
     onChange: render,
     onPersist: persist,
   });
@@ -727,6 +815,27 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       if (kind === currentPageKind) return;
       currentPageKind = kind;
       deps.logger.debug("bootstrap", "page kind", { kind });
+
+      // A fingerprint on every classification change. It is what lets a later
+      // failure answer "did the layout move?" without anyone re-visiting the
+      // page: two runs with the same signature differ behaviourally, two with
+      // different signatures differ structurally, and those are different
+      // investigations.
+      recordPageFingerprint(
+        deps.recorder,
+        fingerprintPage({
+          document: globalThis.document,
+          pageKind: kind,
+          location: globalThis.location,
+          regionSelectors: [
+            "[data-jobpilot-list]",
+            "[data-jobpilot-card]",
+            ".job-detail",
+            ".chat-conversation",
+            "[role='dialog']",
+          ],
+        }),
+      );
 
       // Entering a challenge from ANY previous state blocks automation and
       // stops any running work. This is the entry point for the human

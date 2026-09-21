@@ -16,6 +16,7 @@
  */
 
 import { EVENTS } from "../diagnostics/event";
+import type { SelectorOutcome } from "../diagnostics/instrument/selector-trace";
 import type { DiagnosticRecorder } from "../diagnostics/recorder";
 import { fingerprint } from "../diagnostics/redact";
 import type { StorageHealth } from "../diagnostics/trace";
@@ -81,6 +82,62 @@ export interface CommunicationServiceDeps {
   readonly activeTemplateId?: () => string | undefined;
   /** Stable id generator, injected so tests are deterministic. */
   readonly newIntentId: () => string;
+
+  // --- Transaction tracing --------------------------------------------------
+  // Optional observers, so the service stays usable (and testable) with no
+  // recorder attached. Each is called at exactly one phase edge, which is what
+  // makes the resulting trace a faithful account of the transaction rather than
+  // a best-effort log.
+  readonly onIntentCreated?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+    readonly templateId: string;
+    readonly messageText: string;
+    readonly variablesUsed: readonly string[];
+    readonly outgoingBaseline: number;
+    readonly expiresAt: number;
+  }) => void;
+  readonly onDraftChecked?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+    readonly present: boolean;
+  }) => void;
+  readonly onIdentityChecked?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+    readonly verdict: "match" | "mismatch" | "insufficient";
+    readonly signals: Readonly<Record<string, import("../diagnostics/event").JsonValue>>;
+  }) => void;
+  readonly onSendClicked?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+  }) => void;
+  readonly onVerified?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+    readonly kind: "verified" | "uncertain" | "negative";
+    readonly outgoingCount: number;
+    readonly baseline: number;
+  }) => void;
+  /**
+   * Resolves the contact affordance, returning which candidate matched.
+   *
+   * Optional so the service stays usable without an adapter. When supplied, a
+   * null result refuses the send: without the affordance there is nothing to
+   * click, and guessing an alternative is what must not happen.
+   */
+  readonly resolveCommunicateAction?: () => {
+    readonly matchedBy: string;
+    readonly heuristic: boolean;
+  } | null;
+  /** Selector diagnostics for the communicate affordance. */
+  readonly onCommunicateButtonResolved?: (outcome: SelectorOutcome) => void;
+  readonly onTerminal?: (details: {
+    readonly transactionId: string;
+    readonly jobId: string;
+    readonly kind: "completed" | "uncertain" | "failed";
+    readonly reason?: string | undefined;
+  }) => void;
 }
 
 export interface CommunicateInput {
@@ -257,6 +314,55 @@ export const createCommunicationService = (
       const draftPresent = deps.isDraftPresent();
       const persisted = deps.readPersistedIntent();
 
+      deps.onIdentityChecked?.({
+        transactionId,
+        jobId,
+        verdict: chat.verified ? "match" : "insufficient",
+        signals: { detail: chat.detail, verified: chat.verified },
+      });
+      deps.onDraftChecked?.({ transactionId, jobId, present: draftPresent });
+
+      // Resolve the affordance BEFORE arming anything, and report which
+      // selector candidate found it. This is the target most likely to break
+      // first when BOSS changes markup, and a missing button is the failure a
+      // maintainer most needs named rather than guessed.
+      if (deps.resolveCommunicateAction !== undefined) {
+        const located = deps.resolveCommunicateAction();
+        deps.onCommunicateButtonResolved?.({
+          purpose: "detail.applyButton",
+          heuristic: located?.heuristic ?? false,
+          ...(located === null
+            ? { attempts: [] }
+            : {
+                selected: located.matchedBy,
+                attempts: [
+                  {
+                    selector: located.matchedBy,
+                    confidence: located.heuristic ? "unverified" : "fixture-only",
+                    matches: 1,
+                    visible: 1,
+                    selected: true,
+                  },
+                ],
+              }),
+        });
+        if (located === null) {
+          // Fail closed: without the affordance there is nothing to click, and
+          // guessing an alternative is exactly what must not happen.
+          reportInvariantViolation(deps.recorder, {
+            invariant: INVARIANTS.noContinuationThroughUnknownModal,
+            detail: "the communicate affordance could not be located",
+            context: { jobId, transactionId },
+          });
+          return {
+            kind: "refused",
+            reason: "no-action",
+            message:
+              "JobPilot could not find the contact button on this page, so it stopped rather than guess.",
+          };
+        }
+      }
+
       // `hasPersistedIntent` is satisfied by the intent we are about to create,
       // because creation happens before any click. The gate exists to prevent a
       // *click* without a persisted record, and step 4 guarantees that ordering
@@ -323,6 +429,16 @@ export const createCommunicationService = (
       // If persistence silently failed, the runs-once guarantee does not exist
       // for this transaction, so proceeding would be the exact fault the
       // invariant forbids.
+      deps.onIntentCreated?.({
+        transactionId,
+        jobId,
+        templateId: template.id,
+        messageText: rendered.text,
+        variablesUsed: rendered.usedVariables,
+        outgoingBaseline: intent.outgoingBaseline,
+        expiresAt: intent.expiresAt,
+      });
+
       await deps.persistIntent(intent);
 
       const confirmed = deps.readPersistedIntent();
