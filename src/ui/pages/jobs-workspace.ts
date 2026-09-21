@@ -53,8 +53,7 @@ export const renderJobsWorkspacePage = (doc: Document, input: JobsWorkspaceInput
     { id: "archive", label: t("workspace.tabArchive") },
   ];
 
-  let activeSubTab =
-    persistedActiveSubTab ?? (input.currentJob ? "current" : "favorites");
+  let activeSubTab = persistedActiveSubTab ?? (input.currentJob ? "current" : "favorites");
   const views = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
 
