@@ -330,8 +330,12 @@ const run = async (): Promise<void> => {
         check("manifest carries checksums", false, "checksums missing");
       }
 
+      // Captured FIRST, while the load-result narrowing is in force, so every
+      // later check reads real content rather than an empty fallback.
+      capturedFiles = loaded.bundle.files;
+
       // --- 4. NDJSON is genuinely parseable -------------------------------
-      const eventsText = capturedFiles?.get("events.ndjson") ?? "";
+      const eventsText = capturedFiles.get("events.ndjson") ?? "";
       const lines = eventsText.split("\n").filter((line) => line.trim().length > 0);
       let parsedAll = true;
       for (const line of lines) {
@@ -343,10 +347,6 @@ const run = async (): Promise<void> => {
         }
       }
       check("events.ndjson parses line by line", parsedAll, `${lines.length} lines`);
-
-      // Captured while the narrowing is still in force, so the coverage gate
-      // below does not need to re-narrow.
-      capturedFiles = loaded.bundle.files;
 
       // --- 5. Privacy -----------------------------------------------------
       // Search the DECOMPRESSED contents and the raw archive bytes, so an
@@ -431,10 +431,35 @@ const run = async (): Promise<void> => {
       ["send verification trace", ["communication.send.verified", "communication.send.uncertain"]],
     ];
 
-    const eventsText = capturedFiles?.get("events.ndjson") ?? "";
-    for (const [label, names] of coverage) {
-      const found = names.some((name) => eventsText.includes(name));
-      check(`bundle carries ${label}`, found, found ? "" : `expected one of: ${names.join(", ")}`);
+    const coverageEvents = capturedFiles?.get("events.ndjson");
+    if (coverageEvents === undefined) {
+      // A missing evidence file must FAIL the gate, not pass it vacuously.
+      check("bundle carries events.ndjson", false, "events.ndjson absent from the bundle");
+    } else {
+      // Parsed, not substring-matched. A substring search over the raw text
+      // would be satisfied by an event NAME appearing in some other field; this
+      // requires an actual event with that name to have been recorded.
+      const recorded = new Set(
+        coverageEvents
+          .split(/\r?\n/)
+          .filter((line) => line.trim().length > 0)
+          .flatMap((line) => {
+            try {
+              const parsed = JSON.parse(line) as { event?: unknown };
+              return typeof parsed.event === "string" ? [parsed.event] : [];
+            } catch {
+              return [];
+            }
+          }),
+      );
+      for (const [label, names] of coverage) {
+        const found = names.some((name) => recorded.has(name));
+        check(
+          `bundle carries ${label}`,
+          found,
+          found ? "" : `expected one of: ${names.join(", ")}`,
+        );
+      }
     }
 
     // The analyzer must be able to reconstruct what the bundle describes.
