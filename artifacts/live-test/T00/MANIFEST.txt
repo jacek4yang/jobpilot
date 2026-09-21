@@ -1,0 +1,16 @@
+JobPilot live-test artifact
+===========================
+
+scenario:                  T00
+version:                   0.1.0
+git commit (full):         ece20c3c5cb0902a52a6d38b49c5ce024bbf1836
+git commit (embedded):     ece20c3c5cb0902a52a6d38b49c5ce024bbf1836
+channel:                   diagnostic
+build timestamp:           2026-09-21T04:10:17.267Z
+diagnostic schema version: 1
+sha256:                    2634463d6e443692519be3108c57d5606e61234b04f5277de332c72c90e2527a
+bytes:                     301583
+
+The embedded commit equals the git commit above; the preparation script
+refuses to emit this file when they disagree. If they differ when you read
+this, the artifact has been replaced.

@@ -46,3 +46,8 @@ diagnostic-analysis/
 *.diagnostic.zip
 *.diag.zip
 artifacts/live-test/*/*.zip
+
+# Live-test artifacts are build outputs, reproducible from the commit their
+# MANIFEST names. Only the MANIFEST is committed so the handoff is auditable;
+# the bundle itself is rebuilt locally by `pnpm live:prepare <ID>`.
+artifacts/live-test/*/jobpilot.diagnostic.user.js

@@ -28,7 +28,8 @@
     "diag:analyze": "tsx scripts/analyze-bundle.ts",
     "diag:compare": "tsx scripts/compare-bundles.ts",
     "diag:selftest": "tsx scripts/diag-selftest.ts",
-    "build:all": "node scripts/run-build.mjs production --clean && node scripts/run-build.mjs diagnostic"
+    "build:all": "node scripts/run-build.mjs production --clean && node scripts/run-build.mjs diagnostic",
+    "live:prepare": "tsx scripts/prepare-live-artifact.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
