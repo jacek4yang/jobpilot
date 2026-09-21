@@ -1,0 +1,135 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — NOT REAL BOSS ZHIPIN MARKUP.
+  Mirrors the real BOSS Zhipin list-page DOM with the DETAIL DRAWER open over
+  the listing, as captured by the read-only recon harness on 2026-09-21
+  (002-list.json + 004-detail.json), with every value sanitized to synthetic
+  content. Passing against this file proves parser plumbing only, not
+  real-site support.
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>职位列表 + 详情抽屉 - 合成测试夹具</title>
+  </head>
+  <body>
+    <header class="page-header">合成夹具 · 非真实站点</header>
+
+    <div class="job-list-container">
+      <ul class="rec-job-list">
+        <div class="job-card-wrap" data-job-id="boss-1001">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1001.html?ka=search-list-1&lid=x9" class="job-name">前端开发工程师</a>
+                <span class="job-salary">20-35K·14薪</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>3-5年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1001.html?from=top-card" class="boss-info">
+                <div class="boss-logo"><span class="boss-online-icon"></span></div>
+                <span class="boss-name">未来科技有限公司</span>
+              </a>
+              <span class="company-location">北京·朝阳区·望京</span>
+            </div>
+          </li>
+        </div>
+
+        <div class="job-card-wrap" data-job-id="boss-1002">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1002.html?ka=search-list-2" class="job-name">高级后端开发工程师（Java）</a>
+                <span class="job-salary">30-50K·15薪</span>
+              </div>
+              <ul class="tag-list">
+                <li>硕士</li>
+                <li>5-10年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1002.html?from=top-card" class="boss-info">
+                <div class="boss-logo"></div>
+                <span class="boss-name">云图网络技术有限公司</span>
+              </a>
+              <span class="company-location">上海·浦东新区·张江</span>
+            </div>
+          </li>
+        </div>
+
+        <div class="job-card-wrap" data-job-id="boss-1003">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1003.html?ka=search-list-3" class="job-name">资深产品经理</a>
+                <span class="job-salary">25-40K</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>3-5年</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1003.html?from=top-card" class="boss-info">
+                <div class="boss-logo"><span class="boss-online-icon"></span></div>
+                <span class="boss-name">智联数据服务有限公司</span>
+              </a>
+              <span class="company-location">深圳·南山区·科技园</span>
+            </div>
+          </li>
+        </div>
+
+        <div class="job-card-wrap" data-job-id="boss-1004">
+          <li class="job-card-box">
+            <div class="job-info">
+              <div class="job-title clearfix">
+                <a href="/job_detail/boss-1004.html?ka=search-list-4" class="job-name">应届生招聘 · 数据分析师</a>
+                <span class="job-salary">面议</span>
+              </div>
+              <ul class="tag-list">
+                <li>本科</li>
+                <li>应届生</li>
+              </ul>
+            </div>
+            <div class="job-card-footer">
+              <a href="/gongsi/acme-1004.html?from=top-card" class="boss-info">
+                <div class="boss-logo"></div>
+                <span class="boss-name">星辰云计算有限公司</span>
+              </a>
+              <span class="company-location">杭州·余杭区</span>
+            </div>
+          </li>
+        </div>
+      </ul>
+    </div>
+
+    <!--
+      The detail drawer, open over the listing for the selected card
+      (boss-1002). Same shape as the 2026-09-21 drawer capture: the container
+      carries the box; the header holds the title; the recruiter card nests an
+      online-status tag inside the name element.
+    -->
+    <div class="job-detail-container">
+      <div class="job-detail-box">
+        <div class="job-detail-header">
+          <span class="name">高级后端开发工程师（Java）</span>
+        </div>
+        <ul class="tag-list">
+          <li>硕士</li>
+          <li>5-10年</li>
+        </ul>
+        <div class="job-boss-info">
+          <h2 class="name">测试招聘者<span class="boss-online-tag">在线</span></h2>
+          <p class="boss-info-attr">云图网络技术有限公司 · 招聘者</p>
+        </div>
+        <div class="job-sec-text">
+          负责云图网络核心后端系统的设计与开发，主导 Java 微服务架构演进，建设高并发订单与结算链路。
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -29,9 +29,10 @@ import type {
 import type { Logger } from "../../ports/logger";
 import { isAborted, throwIfAborted } from "./actions/abort";
 import { createApplyAction } from "./actions/apply-action";
-import { parseBossJobDetail } from "./parser/detail-parser";
+import { parseBossJobDetail, parseBossJobDetailFromDrawer } from "./parser/detail-parser";
 import { parseBossJobList } from "./parser/list-parser";
 import { detectBossPageKind } from "./parser/page-kind";
+import { queryFirst, SELECTORS } from "./selectors";
 
 /** Stable adapter id, used as the `PlatformId` for every job it produces. */
 export const BOSS_PLATFORM_ID = "boss";
@@ -66,7 +67,51 @@ export interface BossPlatformDeps {
   readonly clock: Clock;
   /** JobPilot version string, surfaced in diagnostics. */
   readonly version: string;
+  /**
+   * Poll budget for the drawer-open wait in `loadJob`, in milliseconds.
+   * Defaults to {@link DRAWER_OPEN_TIMEOUT_MS}; tests shrink it so the
+   * navigation fallback stays fast.
+   */
+  readonly drawerTimeoutMs?: number;
+  /** Poll cadence for the drawer wait. Defaults to 250ms. */
+  readonly drawerPollIntervalMs?: number;
 }
+
+/** How long `loadJob` waits for the clicked card's drawer to render. */
+const DRAWER_OPEN_TIMEOUT_MS = 8_000;
+/** Poll cadence while waiting for the drawer. */
+const DRAWER_POLL_INTERVAL_MS = 250;
+
+/** The pathname of a URL, tolerating relative hrefs. */
+const urlPathnameOf = (url: string): string | undefined => {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    const withoutHash = url.split("#")[0] ?? url;
+    const withoutQuery = withoutHash.split("?")[0] ?? withoutHash;
+    return withoutQuery.length > 0 ? withoutQuery : undefined;
+  }
+};
+
+/**
+ * Finds the listing card for `job`, when the current page is a listing.
+ *
+ * Iterates `.job-card-wrap` cards and matches the card's `/job_detail/{id}`
+ * link href against the summary id (or its canonical URL path). Returns null
+ * when no card matches — callers then use another load strategy.
+ */
+const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
+  const id = String(job.id);
+  const urlPath = job.url === undefined ? undefined : urlPathnameOf(job.url);
+  for (const card of Array.from(root.querySelectorAll(".job-card-wrap"))) {
+    const anchor = card.querySelector("a[href*='/job_detail/']");
+    const href = anchor?.getAttribute("href");
+    if (href === null || href === undefined) continue;
+    if (href.includes(`/job_detail/${id}`)) return card;
+    if (urlPath !== undefined && href.includes(urlPath)) return card;
+  }
+  return null;
+};
 
 /**
  * Builds a `JobPlatform` for BOSS Zhipin.
@@ -92,6 +137,51 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
       url: location.href.split("?")[0] ?? "",
     });
     return kind;
+  };
+
+  /**
+   * Clicks the listing card and polls for the drawer's parsed detail.
+   *
+   * The click is a real site interaction: the live SPA opens the detail
+   * drawer in place. This helper only runs from `loadJob`, which only runs
+   * from the operator-started batch pipeline — there is no autonomous path
+   * here.
+   *
+   * Fail-closed and non-throwing: returns null when the signal aborts, the
+   * drawer does not render within the poll budget, or the drawer's title
+   * anchor does not match `job`. The caller falls back to the navigation
+   * flow, which enforces its own fail-closed checks.
+   */
+  const tryLoadFromDrawer = async (
+    card: Element,
+    job: JobSummary,
+    options?: ApplyOptions,
+  ): Promise<JobDetail | null> => {
+    // Synthetic clicks must use the document's own Event constructor: the
+    // adapter is also exercised under happy-dom, where the global MouseEvent
+    // does not exist.
+    const view = doc.defaultView;
+    card.dispatchEvent(
+      view === null
+        ? new MouseEvent("click", { bubbles: true })
+        : new view.MouseEvent("click", { bubbles: true }),
+    );
+
+    const timeoutMs = deps.drawerTimeoutMs ?? DRAWER_OPEN_TIMEOUT_MS;
+    const intervalMs = deps.drawerPollIntervalMs ?? DRAWER_POLL_INTERVAL_MS;
+    // The drawer renders on the site's own schedule, so the budget is
+    // wall-clock; the injected clock may be frozen in tests.
+    const startedAt = Date.now();
+    for (;;) {
+      if (isAborted(options?.signal)) return null;
+      const drawer = queryFirst(doc, SELECTORS.detail.root);
+      if (drawer !== null) {
+        const detail = parseBossJobDetailFromDrawer(drawer.element, job, clock.now());
+        if (detail !== null) return detail;
+      }
+      if (Date.now() - startedAt >= timeoutMs) return null;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
   };
 
   return {
@@ -142,7 +232,15 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
     },
 
     /**
-     * Opens (re-parses) the currently displayed detail page for `job`.
+     * Opens the detail for `job`, DRAWER FIRST.
+     *
+     * When the listing card for `job` is on screen, clicking it opens the
+     * job's detail drawer in place (the live SPA behaviour, recon-verified
+     * 2026-09-21), which avoids a full-page navigation. The click is a REAL
+     * site interaction: it can only ever run here, inside `loadJob`, which
+     * the operator-started batch pipeline alone invokes — never autonomously.
+     * If the drawer does not render in time, or its title anchor does not
+     * match `job`, this falls back to the navigation flow unchanged.
      *
      * Failure mode: throws rather than returning a partial detail. Callers are
      * expected to check `detectPage()` first; a null parse means the required
@@ -150,6 +248,16 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
      */
     async loadJob(job: JobSummary, options?: ApplyOptions): Promise<JobDetail> {
       throwIfAborted(options?.signal);
+
+      // Drawer-first: a visible listing card is the fastest, least disruptive
+      // route to the detail. No card (e.g. a standalone detail page is
+      // already open) falls straight through to the navigation flow.
+      const card = findJobCard(doc, job);
+      if (card !== null) {
+        const drawerDetail = await tryLoadFromDrawer(card, job, options);
+        if (drawerDetail !== null) return drawerDetail;
+        logger.debug("boss.loadJob", "drawer wait timed out; falling back to navigation");
+      }
 
       const kind = detectBossPageKind(doc, location);
       if (kind !== "job-detail") {

@@ -152,11 +152,12 @@ export const reduce = (
     }
 
     case "STOP": {
-      const stopped = clearFields(enter(context, "idle", now, { lastMessage: "已停止" }), [
-        "pauseReason",
-        "currentJob",
-        "currentStatus",
-      ]);
+      // An explicit abort discards the batch: the pending queue is a live view
+      // of one scan, not work the user asked to keep.
+      const stopped = clearFields(
+        enter(context, "idle", now, { lastMessage: "已停止", pendingSummaries: [] }),
+        ["pauseReason", "currentJob", "currentStatus"],
+      );
       return { context: stopped, effects: [{ type: "stop" }, { type: "persist" }] };
     }
 
@@ -172,20 +173,29 @@ export const reduce = (
         { scanned: context.stats.scanned + event.summaries.length },
         now,
       );
+      // A fresh scan starts a new batch: whatever was pending from a previous
+      // scan is overwritten, never merged.
       const next = enter(stats, "evaluating", now, {
         queueDepth: event.summaries.length,
+        pendingSummaries: event.summaries,
         lastMessage:
           event.skipped > 0
             ? `已扫描 ${event.summaries.length} 个职位（${event.skipped} 张卡片无法解析）`
             : `已扫描 ${event.summaries.length} 个职位`,
       });
-      if (event.summaries.length === 0) {
+      const [first] = event.summaries;
+      if (first === undefined) {
         return {
           context: enter(next, "idle", now, { lastMessage: "这个页面上没有找到职位" }),
           effects: [{ type: "persist" }],
         };
       }
-      return { context: next, effects: [{ type: "persist" }] };
+      // Bridge the scan into the per-job pipeline: the first summary loads
+      // immediately, the rest wait in pendingSummaries for the cooldown drain.
+      return {
+        context: next,
+        effects: [{ type: "persist" }, { type: "load-job", summary: first }],
+      };
     }
 
     case "SCAN_FAILED": {
@@ -203,7 +213,14 @@ export const reduce = (
 
     case "JOB_LOADED": {
       if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      const next = enter(context, "evaluating", now, { currentJob: event.job });
+      // The loaded job leaves the pending queue: the queue holds exactly the
+      // jobs that have NOT started their cycle, so the cooldown drain below
+      // never re-loads a job that already ran. Ids not in the queue (a load
+      // that did not come from the batch scan) change nothing.
+      const pendingSummaries = context.pendingSummaries.filter(
+        (entry) => String(entry.id) !== String(event.job.id),
+      );
+      const next = enter(context, "evaluating", now, { currentJob: event.job, pendingSummaries });
       return { context: next, effects: [{ type: "evaluate-job", job: event.job }] };
     }
 
@@ -389,8 +406,18 @@ export const reduce = (
     case "COOLDOWN_ELAPSED":
     case "RETRY_ELAPSED": {
       if (context.state !== "cooldown") return { context, effects: noEffects };
+      const [next, ...rest] = context.pendingSummaries;
+      if (next !== undefined) {
+        // The batch drains the pending queue one job per cooldown; each drain
+        // hands the next summary to the per-job load/evaluate/apply cycle.
+        return {
+          context: enter(context, "evaluating", now, { pendingSummaries: rest }),
+          effects: [{ type: "load-job", summary: next }],
+        };
+      }
       // Deliberately returns to scanning: the queue decides what runs next,
-      // which keeps a single scheduling path instead of many.
+      // which keeps a single scheduling path instead of many. When the pending
+      // batch is drained, the legacy rescan loop resumes.
       return { context: enter(context, "scanning", now), effects: [{ type: "scan-jobs" }] };
     }
 

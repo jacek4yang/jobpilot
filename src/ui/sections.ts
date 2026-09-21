@@ -171,6 +171,13 @@ export interface BuildSectionsInput {
   readonly matches: readonly MatchRowView[];
   /** Result note of the last discovery scan, shown on the Home step ① card. */
   readonly discoveryNote?: string | undefined;
+  /**
+   * Operator-facing run log, newest first. Threaded to the Home page for a
+   * follow-up renderer; nothing renders it yet.
+   */
+  readonly runLog?: readonly { readonly time: string; readonly text: string }[] | undefined;
+  /** Number of currently operator-selected matches, shown on the Home step ③ card. */
+  readonly selectedCount?: number | undefined;
   readonly queue: readonly QueueRowView[];
   readonly history: readonly HistoryRowView[];
   readonly logs: readonly LogRowView[];
@@ -216,6 +223,8 @@ export const buildSections = (
     decisions: input.decisions,
     matches: input.matches,
     discoveryNote: input.discoveryNote,
+    runLog: input.runLog,
+    selectedCount: input.selectedCount,
     callbacks,
     isLoggedIn: input.isLoggedIn,
     pageKind: input.pageKind,

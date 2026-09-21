@@ -38,6 +38,11 @@ export interface OrchestratorDeps {
     readonly maxApplicationsPerHour: number;
     readonly maxRetries: number;
   };
+  /**
+   * True when the operator explicitly selected this job for the batch run.
+   * Selection IS the acceptance: a selected job bypasses scoring.
+   */
+  readonly isOperatorSelected: (jobId: string) => boolean;
 }
 
 /** Pending timers created by effects, so they can be cancelled on dispose. */
@@ -175,6 +180,9 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
 
       case "load-job": {
         try {
+          // Enter `opening` before touching the platform so the watchdog and
+          // the UI observe the load, not just its result.
+          deps.dispatch({ type: "JOB_LOADING", summary: effect.summary });
           const detail = await deps.platform.loadJob(effect.summary);
           deps.dispatch({ type: "JOB_LOADED", job: detail });
         } catch (error) {
@@ -187,10 +195,29 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
       }
 
       case "evaluate-job": {
-        const evaluation: Evaluation = deps.engine.evaluate({
+        const engineEvaluation: Evaluation = deps.engine.evaluate({
           job: effect.job,
           context: ruleContext(),
         });
+
+        // The operator's explicit selection is acceptance: it bypasses scoring
+        // entirely. The manual reason is appended so the recorded decision
+        // stays explainable.
+        const evaluation: Evaluation = deps.isOperatorSelected(String(effect.job.id))
+          ? {
+              ...engineEvaluation,
+              accepted: true,
+              reasons: [
+                ...engineEvaluation.reasons,
+                {
+                  ruleId: "manual.select",
+                  kind: "soft",
+                  delta: 0,
+                  message: "手动选择（勾选）",
+                },
+              ],
+            }
+          : engineEvaluation;
 
         // Record the decision in history before acting on it.
         deps.history.discover(effect.job.platform, effect.job.id, deps.clock.now());

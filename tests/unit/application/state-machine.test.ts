@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AutomationEvent } from "../../../src/application/events";
+import type { AutomationEvent, Effect } from "../../../src/application/events";
 import { reduce } from "../../../src/application/reducer";
 import type { AutomationContext } from "../../../src/application/state";
 import { emptyStats, initialContext, isActive } from "../../../src/application/state";
@@ -398,6 +398,236 @@ describe("automation state machine", () => {
     it("ignores COOLDOWN_ELAPSED outside cooldown", () => {
       const { context } = run(startContext(), [{ type: "COOLDOWN_ELAPSED" }]);
       expect(context.state).toBe("scanning");
+    });
+  });
+
+  describe("batch run engine", () => {
+    /** The load-job effect, asserted present so payload checks never see undefined. */
+    const loadJobEffectOf = (effects: readonly Effect[]): Extract<Effect, { type: "load-job" }> => {
+      const found = effects.find((effect) => effect.type === "load-job");
+      if (found === undefined || found.type !== "load-job") {
+        throw new Error("expected a load-job effect");
+      }
+      return found;
+    };
+
+    it("bridges SCAN_COMPLETED into the per-job pipeline and drains one job per cooldown", () => {
+      // START → scan completes: the first summary loads immediately and the
+      // whole scan waits in the pending queue.
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      expect(result.context.state).toBe("evaluating");
+      expect(result.context.pendingSummaries).toHaveLength(2);
+      expect(loadJobEffectOf(result.effects).summary.id).toBe(summary().id);
+
+      // Loading a job removes it from the queue: pendingSummaries holds only
+      // jobs that have NOT started their cycle.
+      result = reduce(result.context, { type: "JOB_LOADED", job: detail() }, opts);
+      expect(result.effects.map((effect) => effect.type)).toContain("evaluate-job");
+      expect(result.context.pendingSummaries).toHaveLength(1);
+
+      // evaluate → accepted → apply → verify → settle in cooldown.
+      result = reduce(result.context, { type: "EVALUATED", evaluation: accepted }, opts);
+      expect(result.context.state).toBe("validating");
+      result = reduce(result.context, { type: "APPLY_STARTED", job: detail() }, opts);
+      result = reduce(result.context, { type: "APPLY_SUBMITTED", evidence: "ok" }, opts);
+      result = reduce(result.context, { type: "VERIFICATION_CONFIRMED", evidence: "ok" }, opts);
+      expect(result.context.state).toBe("cooldown");
+      // Settling one job must not consume the rest of the batch.
+      expect(result.context.pendingSummaries.map((entry) => entry.id)).toEqual([
+        summary("job-2").id,
+      ]);
+
+      // The first cooldown drains summaries[1]; the queue is now empty.
+      result = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      expect(result.context.state).toBe("evaluating");
+      expect(result.context.pendingSummaries).toHaveLength(0);
+      expect(loadJobEffectOf(result.effects).summary.id).toBe(summary("job-2").id);
+
+      // Settle the second job (score rejection is a normal settle) — the next
+      // cooldown finds the queue drained and resumes the legacy rescan loop.
+      result = reduce(result.context, { type: "JOB_LOADED", job: detail("job-2") }, opts);
+      result = reduce(result.context, { type: "EVALUATED", evaluation: rejectedByScore }, opts);
+      expect(result.context.state).toBe("cooldown");
+      result = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      expect(result.context.state).toBe("scanning");
+      expect(result.effects.map((effect) => effect.type)).toContain("scan-jobs");
+    });
+
+    it("runs every scanned job exactly once, however long the scan was", () => {
+      const summaries = [summary(), summary("job-2"), summary("job-3")];
+      const loaded: string[] = [];
+      let result = reduce(startContext(), { type: "SCAN_COMPLETED", summaries, skipped: 0 }, opts);
+      // Consume the whole batch: each cooldown must hand out exactly one new
+      // job — no re-loads, no silent drops.
+      for (let index = 0; index < summaries.length; index += 1) {
+        expect(result.context.state).toBe("evaluating");
+        const effect = loadJobEffectOf(result.effects);
+        loaded.push(effect.summary.id);
+        let step = reduce(
+          result.context,
+          {
+            type: "JOB_LOADED",
+            job: detail(effect.summary.id),
+          },
+          opts,
+        );
+        step = reduce(step.context, { type: "EVALUATED", evaluation: rejectedByScore }, opts);
+        expect(step.context.state).toBe("cooldown");
+        result = reduce(step.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      }
+      expect(loaded).toEqual(summaries.map((entry) => entry.id));
+      // Drained: the legacy rescan loop resumes.
+      expect(result.context.state).toBe("scanning");
+    });
+
+    it("advances to the next pending job after a rejected evaluation", () => {
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      result = reduce(result.context, { type: "JOB_LOADED", job: detail() }, opts);
+      expect(result.context.pendingSummaries).toHaveLength(1);
+      result = reduce(result.context, { type: "EVALUATED", evaluation: rejectedByScore }, opts);
+      expect(result.context.state).toBe("cooldown");
+
+      result = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      expect(result.context.state).toBe("evaluating");
+      expect(result.context.pendingSummaries).toHaveLength(0);
+      expect(loadJobEffectOf(result.effects).summary.id).toBe(summary("job-2").id);
+    });
+
+    it("clears the pending batch on STOP", () => {
+      const scanned = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      ).context;
+      expect(scanned.pendingSummaries).toHaveLength(2);
+
+      const { context, effects } = reduce(scanned, { type: "STOP" }, opts);
+      expect(context.state).toBe("idle");
+      expect(context.pendingSummaries).toHaveLength(0);
+      expect(effects.map((effect) => effect.type)).toContain("stop");
+    });
+
+    it("keeps the pending batch across PAUSE and rescans on RESUME", () => {
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      result = reduce(result.context, { type: "JOB_LOADED", job: detail() }, opts);
+      result = reduce(result.context, { type: "EVALUATED", evaluation: rejectedByScore }, opts);
+      expect(result.context.state).toBe("cooldown");
+      expect(result.context.pendingSummaries).toHaveLength(1);
+
+      result = reduce(result.context, { type: "PAUSE", reason: { kind: "user" } }, opts);
+      expect(result.context.state).toBe("paused");
+      // Pausing is not an abort: the batch is preserved...
+      expect(result.context.pendingSummaries).toHaveLength(1);
+
+      // ...but a halted machine never consumes it: COOLDOWN_ELAPSED only acts
+      // from cooldown.
+      const ignored = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      expect(ignored.context.state).toBe("paused");
+      expect(ignored.context.pendingSummaries).toHaveLength(1);
+      expect(ignored.effects).toHaveLength(0);
+
+      // Resume restarts from scanning, exactly as it did before the batch
+      // engine existed; the fresh scan will overwrite the stale queue.
+      const resumed = reduce(result.context, { type: "RESUME" }, opts);
+      expect(resumed.context.state).toBe("scanning");
+      expect(resumed.effects.map((effect) => effect.type)).toContain("scan-jobs");
+    });
+
+    it("never consumes the pending batch after a page change halts the run", () => {
+      // Land in evaluating (an active state) with the batch still pending, then
+      // let the route change halt the machine mid-cycle.
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      result = reduce(result.context, { type: "JOB_LOADED", job: detail() }, opts);
+      expect(result.context.state).toBe("evaluating");
+      expect(result.context.pendingSummaries).toHaveLength(1);
+
+      result = reduce(result.context, { type: "PAGE_CHANGED", pageKind: "job-list" }, opts);
+      expect(result.context.state).toBe("paused");
+      expect(result.context.pendingSummaries).toHaveLength(1);
+
+      const ignored = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
+      expect(ignored.context.state).toBe("paused");
+      expect(ignored.context.pendingSummaries).toHaveLength(1);
+    });
+
+    it("treats a fresh scan as a new batch, replacing the pending queue", () => {
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      expect(result.context.pendingSummaries).toHaveLength(2);
+
+      result = reduce(
+        result.context,
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary("job-3")],
+          skipped: 0,
+        },
+        opts,
+      );
+      expect(result.context.pendingSummaries).toHaveLength(1);
+      expect(result.context.pendingSummaries[0]?.id).toBe(summary("job-3").id);
+      expect(loadJobEffectOf(result.effects).summary.id).toBe(summary("job-3").id);
+    });
+
+    it("clears the pending queue when the scan finds nothing", () => {
+      let result = reduce(
+        startContext(),
+        {
+          type: "SCAN_COMPLETED",
+          summaries: [summary(), summary("job-2")],
+          skipped: 0,
+        },
+        opts,
+      );
+      expect(result.context.pendingSummaries).toHaveLength(2);
+
+      result = reduce(result.context, { type: "SCAN_COMPLETED", summaries: [], skipped: 0 }, opts);
+      expect(result.context.state).toBe("idle");
+      expect(result.context.pendingSummaries).toHaveLength(0);
+      expect(result.effects.map((effect) => effect.type)).not.toContain("load-job");
     });
   });
 

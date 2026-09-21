@@ -1,5 +1,5 @@
 import type { ApplicationStatus } from "../domain/application/application";
-import type { JobDetail } from "../domain/job/job";
+import type { JobDetail, JobSummary } from "../domain/job/job";
 
 /** Explicit automation states. Every state is observable and testable. */
 export type AutomationState =
@@ -104,6 +104,13 @@ export interface AutomationContext {
   /** Timestamps (ms) of applications, used for the hourly cap. */
   readonly applicationTimestamps: readonly number[];
   readonly consecutiveFailures: number;
+  /**
+   * Runtime-only queue of the current scan: the summaries waiting for their
+   * per-job load/evaluate/apply cycle. Entered on SCAN_COMPLETED, drained one
+   * job per COOLDOWN_ELAPSED. Deliberately NOT persisted: it is a live view of
+   * the listing, rebuilt by every fresh scan.
+   */
+  readonly pendingSummaries: readonly JobSummary[];
   /** Last state-change timestamp, used by the watchdog. */
   readonly stateSince: number;
   /** Non-fatal message for the UI, e.g. the last rejection reason. */
@@ -118,5 +125,6 @@ export const initialContext = (now: number): AutomationContext => ({
   sessionApplications: 0,
   applicationTimestamps: [],
   consecutiveFailures: 0,
+  pendingSummaries: [],
   stateSince: now,
 });

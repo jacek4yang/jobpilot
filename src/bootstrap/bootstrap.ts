@@ -174,6 +174,17 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   let matches: readonly Match[] = [];
   let discoveryNote: string | undefined;
 
+  /**
+   * Operator-facing run log: what the batch did, newest first. Surfaced on the
+   * Home page (rendered by a follow-up); capped so a long session cannot grow
+   * the panel DOM without bound.
+   */
+  let runLog: readonly { time: string; text: string }[] = [];
+  const appendRunLog = (text: string): void => {
+    const time = new Date(deps.clock.now()).toLocaleTimeString();
+    runLog = [{ time, text }, ...runLog].slice(0, 80);
+  };
+
   // Operator's batch selection: which discovered jobs the next run may touch.
   // Empty = no restriction (legacy whole-listing behaviour). Populated from
   // the accepted matches at discovery time; the user can toggle entries. The
@@ -238,12 +249,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
 
     discoveryNote = "正在扫描职位…";
+    appendRunLog("开始扫描职位");
     render();
 
     const result = await discoveryService.run(active);
 
     if (!result.ok) {
       discoveryNote = describeDiscoveryFailure(result.failure);
+      appendRunLog(discoveryNote);
       render();
       panel.toast("warn", discoveryNote);
       deps.logger.warn("bootstrap", "discovery stopped", { failure: result.failure.kind });
@@ -258,6 +271,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
     const accepted = matches.filter((match) => match.accepted).length;
     discoveryNote = `共找到 ${matches.length} 个职位，${accepted} 个符合你的意向，已默认勾选。`;
+    appendRunLog(discoveryNote);
     render();
     deps.logger.info("bootstrap", "discovery complete", {
       total: matches.length,
@@ -331,6 +345,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         category: "user-action",
         event: EVENTS.userStart,
       });
+      appendRunLog("开始投递");
       controller?.dispatch({ type: "START" });
     },
     recheck: () => {
@@ -361,6 +376,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         category: "user-action",
         event: EVENTS.userPause,
       });
+      appendRunLog("暂停运行");
       controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
     },
     resume: () => {
@@ -396,13 +412,17 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         category: "user-action",
         event: EVENTS.userResume,
       });
+      appendRunLog("继续运行");
       controller?.dispatch({ type: "RESUME" });
     },
     skipCurrent: () => {
       deps.logger.info("panel", "skip requested");
       controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
     },
-    stop: () => controller?.dispatch({ type: "STOP" }),
+    stop: () => {
+      appendRunLog("停止运行");
+      controller?.dispatch({ type: "STOP" });
+    },
     setCollapsed: (collapsed: boolean) => {
       effectiveConfig = {
         ...effectiveConfig,
@@ -834,6 +854,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     persist,
     dispatch: (event) => controller?.dispatch(event),
     notify: (level, message) => {
+      const levelText = level === "error" ? "错误" : level === "warn" ? "警告" : "信息";
+      appendRunLog(`${levelText}：${message}`);
       panel.toast(level, message);
       deps.logger.info("notify", message, { level });
     },
@@ -849,6 +871,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       maxApplicationsPerHour: policy.maxApplicationsPerHour,
       maxRetries: policy.maxRetries,
     },
+    isOperatorSelected: (jobId) => selectedJobIds.has(jobId),
   });
 
   /**
@@ -1059,6 +1082,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         stats: partial.stats,
         matches: partial.matches,
         discoveryNote,
+        runLog,
+        selectedCount: matches.filter((m) => selectedJobIds.has(String(m.summary.id))).length,
         queue: partial.queue,
         history: partial.history,
         logs: partial.logs,

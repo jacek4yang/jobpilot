@@ -101,6 +101,7 @@ export const zhCN = {
     step3Selected: "已选择 {count} 个职位",
     step3Start: "开始投递",
     step3Hint: "辅助模式下，每一步发送前 JobPilot 都会停下来等你确认。",
+    runLogTitle: "本次运行记录",
   },
   blocked: {
     verificationTitle: "需要你完成一下验证",
