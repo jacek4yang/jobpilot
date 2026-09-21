@@ -3,13 +3,13 @@ JobPilot live-test artifact
 
 scenario:                  T00
 version:                   0.1.0
-git commit (full):         47600e7f8a759d379e3a9223a08f8118cbb49c03
-git commit (embedded):     47600e7f8a759d379e3a9223a08f8118cbb49c03
+git commit (full):         82a811a8c185f457e08116cef1beedc025a42038
+git commit (embedded):     82a811a8c185f457e08116cef1beedc025a42038
 channel:                   diagnostic
-build timestamp:           2026-09-21T04:15:49.153Z
+build timestamp:           2026-09-21T18:23:12.710Z
 diagnostic schema version: 1
-sha256:                    297f0bb63f26022a710ea416bcd149ca3e2bc703ae419206f5ba0122cd52ecf7
-bytes:                     301583
+sha256:                    b5903fae31dbb22462c0e1c7703a7289d7cb2b6e745ae2a55ecf781db3effaf2
+bytes:                     640705
 
 The embedded commit equals the git commit above; the preparation script
 refuses to emit this file when they disagree. If they differ when you read
