@@ -26,7 +26,7 @@ import {
   type CommunicationFailure,
   type CommunicationIntent,
   canClickSend,
-  hasSendBeenAttempted,
+  isSendCommitted,
   markClickDispatched,
   reduceIntent,
 } from "../domain/communication/intent";
@@ -70,6 +70,21 @@ export interface RunOptions {
   readonly observeTimeoutMs?: number;
   readonly observeIntervalMs?: number;
   readonly signal?: AbortSignal;
+  /** Recovery mode: observe an existing attempt and never navigate, type or click. */
+  readonly verificationOnly?: boolean;
+  /**
+   * Final application-level authorization, evaluated after the intended chat
+   * and empty editor have been proven, but immediately before the durable
+   * send boundary. A fresh run without this callback fails closed.
+   */
+  readonly authorizeSend?: (
+    intent: CommunicationIntent,
+  ) => Promise<{ readonly allowed: boolean; readonly detail: string }>;
+  readonly onIdentityChecked?: (details: {
+    readonly verdict: "match" | "mismatch" | "insufficient";
+    readonly detail: string;
+  }) => void;
+  readonly onDraftChecked?: (present: boolean) => void;
 }
 
 export interface CommunicationRunner {
@@ -95,7 +110,22 @@ const failureForBlock = (reason: BlockReason): CommunicationFailure => {
 };
 
 export const createCommunicationRunner = (deps: CommunicationRunnerDeps): CommunicationRunner => {
-  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  const sleep = (ms: number, signal?: AbortSignal): Promise<boolean> =>
+    new Promise((resolve) => {
+      if (signal?.aborted === true) {
+        resolve(false);
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(true);
+      }, ms);
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
 
   const run = async (
     initial: CommunicationIntent,
@@ -130,8 +160,8 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
     if (deps.readPersistedIntent !== undefined) {
       const persisted = await deps.readPersistedIntent();
       if (persisted !== undefined && persisted.id === initial.id) {
-        if (hasSendBeenAttempted(persisted)) {
-          deps.logger.warn("communication", "refusing to run: a click was already dispatched", {
+        if (isSendCommitted(persisted) && options.verificationOnly !== true) {
+          deps.logger.warn("communication", "refusing to run: this send is already committed", {
             jobId: initial.jobId,
             clickDispatched: persisted.clickDispatched ?? null,
           });
@@ -146,10 +176,38 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       }
     }
 
-    // --- 3. The conversation must be the right one ------------------------
-    const chat = deps.action.readCurrentChat();
+    // --- 3. Navigate to the selected job's chat, then verify identity ------
+    // Recovery is observation-only: it must not click even a contact control.
+    const chat =
+      options.verificationOnly === true
+        ? deps.action.readCurrentChat()
+        : await deps.action
+            .openConversation(
+              intent,
+              options.signal === undefined ? {} : { signal: options.signal },
+            )
+            .then((opened) => {
+              switch (opened.kind) {
+                case "ready":
+                  return opened.identity;
+                case "blocked":
+                  return opened;
+                case "chat-mismatch":
+                  return {
+                    kind: "aborted" as const,
+                    failure: "CHAT_MISMATCH" as const,
+                    detail: opened.detail,
+                  };
+              }
+            });
     if (chat === null) {
       return { kind: "aborted", failure: "CHAT_MISMATCH", detail: "no conversation is open" };
+    }
+    if ("kind" in chat) {
+      if (chat.kind === "blocked") {
+        return { kind: "blocked", reason: chat.reason, evidence: chat.evidence };
+      }
+      return chat;
     }
 
     // The transaction starts `armed`, meaning "we have not yet committed to a
@@ -178,10 +236,52 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
         jobId: intent.jobId,
         verdict: identity.kind,
       });
+      options.onIdentityChecked?.({ verdict: identity.kind, detail });
       return { kind: "aborted", failure: "CHAT_MISMATCH", detail };
     }
 
+    options.onIdentityChecked?.({ verdict: "match", detail: identity.evidence.join(", ") });
+
     await transition(reduceIntent(intent, { type: "CHAT_VERIFIED" }, { now: deps.clock.now() }));
+
+    // Establish the baseline only after the intended chat is positively
+    // identified. Counting on the detail page would miss older identical
+    // messages and could turn a no-op click into a false success.
+    if (options.verificationOnly !== true) {
+      intent = { ...intent, outgoingBaseline: deps.action.outgoingCount(intent.messageText) };
+      await deps.persistIntent(intent);
+    }
+
+    if (options.verificationOnly === true && !isSendCommitted(intent)) {
+      return {
+        kind: "aborted",
+        failure: "USER_INTERRUPTED",
+        detail: "the recovered transaction never reached the send boundary",
+      };
+    }
+
+    if (options.verificationOnly === true) {
+      const observed = await deps.action.observeSend(
+        intent,
+        intent.outgoingBaseline,
+        options.signal === undefined ? {} : { signal: options.signal },
+      );
+      if (observed.kind === "observed") {
+        await transition(
+          reduceIntent(
+            intent,
+            { type: "SEND_OBSERVED", outgoingCount: observed.count },
+            { now: deps.clock.now() },
+          ),
+        );
+        await deps.clearIntent();
+        return { kind: "sent", evidence: observed.evidence };
+      }
+      if (observed.kind === "blocked") {
+        return { kind: "blocked", reason: observed.reason, evidence: observed.evidence };
+      }
+      return { kind: "uncertain", detail: observed.detail };
+    }
 
     // --- 3. Prepare, which refuses to overwrite a draft -------------------
     const prepared = await deps.action.prepareMessage(
@@ -193,6 +293,7 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       case "blocked":
         return { kind: "blocked", reason: prepared.reason, evidence: prepared.evidence };
       case "draft-present": {
+        options.onDraftChecked?.(true);
         await transition(
           reduceIntent(
             intent,
@@ -210,10 +311,31 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       case "chat-mismatch":
         return { kind: "aborted", failure: "CHAT_MISMATCH", detail: prepared.detail };
       case "ready":
+        options.onDraftChecked?.(false);
         break;
     }
 
     await transition(reduceIntent(intent, { type: "MESSAGE_PREPARED" }, { now: deps.clock.now() }));
+
+    // The service owns context gates (storage, ownership, limits). They must be
+    // evaluated here, not before navigation: the current conversation and
+    // editor only become knowable after openConversation/prepareMessage, while
+    // ownership or storage health may change during that navigation.
+    if (options.authorizeSend === undefined) {
+      return {
+        kind: "aborted",
+        failure: "USER_INTERRUPTED",
+        detail: "send authorization was not provided",
+      };
+    }
+    const authorization = await options.authorizeSend(intent);
+    if (!authorization.allowed) {
+      return {
+        kind: "aborted",
+        failure: "USER_INTERRUPTED",
+        detail: authorization.detail,
+      };
+    }
 
     // --- 4. Dispatch, guarded on both sides ------------------------------
     if (!canClickSend(intent)) {
@@ -305,7 +427,17 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
         return { kind: "sent", evidence: observed.evidence };
       }
 
-      await sleep(intervalMs);
+      const completed = await sleep(intervalMs, options.signal);
+      if (!completed) {
+        await transition(
+          reduceIntent(
+            intent,
+            { type: "SEND_UNOBSERVED", detail: "verification was cancelled after send" },
+            { now: deps.clock.now() },
+          ),
+        );
+        return { kind: "uncertain", detail: "verification was cancelled after send" };
+      }
     }
 
     // Not observed within budget. This is the ambiguous case: report it as
@@ -317,8 +449,6 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
         { now: deps.clock.now() },
       ),
     );
-    await deps.clearIntent();
-
     deps.logger.warn("communication", "send outcome could not be confirmed", {
       jobId: intent.jobId,
       attemptStarted,

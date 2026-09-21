@@ -39,6 +39,8 @@ export interface HomePageInput {
   readonly selectedCount?: number | undefined;
   readonly isLoggedIn?: boolean | undefined;
   readonly pageKind?: string | undefined;
+  readonly running?: boolean | undefined;
+  readonly paused?: boolean | undefined;
 }
 
 export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement => {
@@ -185,6 +187,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   scanBtn.type = "button";
   scanBtn.setAttribute("data-action", "discover-jobs");
   scanBtn.setAttribute("data-variant", "primary");
+  scanBtn.disabled = input.running === true || input.paused === true;
   scanBtn.addEventListener("click", () => {
     input.callbacks.discover();
   });
@@ -284,6 +287,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   startBtn.type = "button";
   startBtn.setAttribute("data-action", "start-batch");
   startBtn.setAttribute("data-variant", "primary");
+  startBtn.disabled = selectedCount === 0 || input.running === true || input.paused === true;
   startBtn.addEventListener("click", () => {
     input.callbacks.start();
   });
@@ -291,6 +295,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   const pauseBtn = el(doc, "button", "jobpilot-btn", t("common.pause"));
   pauseBtn.type = "button";
   pauseBtn.setAttribute("data-action", "pause-batch");
+  pauseBtn.disabled = input.running !== true;
   pauseBtn.addEventListener("click", () => {
     input.callbacks.pause();
   });
@@ -298,6 +303,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   const resumeBtn = el(doc, "button", "jobpilot-btn", t("common.resume"));
   resumeBtn.type = "button";
   resumeBtn.setAttribute("data-action", "resume-batch");
+  resumeBtn.disabled = input.paused !== true;
   resumeBtn.addEventListener("click", () => {
     input.callbacks.resume();
   });
@@ -306,6 +312,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   stopBtn.type = "button";
   stopBtn.setAttribute("data-action", "stop-batch");
   stopBtn.setAttribute("data-variant", "danger");
+  stopBtn.disabled = input.running !== true && input.paused !== true;
   stopBtn.addEventListener("click", () => {
     input.callbacks.stop();
   });

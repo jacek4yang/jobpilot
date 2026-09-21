@@ -91,6 +91,16 @@ export const markClickDispatched = (
 export const hasSendBeenAttempted = (intent: CommunicationIntent): boolean =>
   intent.clickDispatched !== undefined;
 
+/**
+ * True once the durable point of no return was recorded.
+ *
+ * A crash can happen after the browser accepted the click but before
+ * `clickDispatched` is written. Therefore recovery and deduplication must use
+ * this stronger predicate and treat the outcome as uncertain, never send again.
+ */
+export const isSendCommitted = (intent: CommunicationIntent): boolean =>
+  intent.sendAttemptedAt !== undefined;
+
 /** Why the transaction ended, in the failure taxonomy. */
 export type CommunicationFailure =
   | "DOM_CHANGED"

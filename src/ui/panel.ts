@@ -46,18 +46,6 @@ export interface Panel {
 
 const TAB_DEFS: readonly { readonly id: PanelTab; readonly key: string }[] = [
   { id: "home", key: "nav.home" },
-  { id: "jobs", key: "nav.jobs" },
-  { id: "pipeline", key: "nav.pipeline" },
-  { id: "search", key: "nav.search" },
-  { id: "matches", key: "nav.matches" },
-  // The 队列 tab is hidden while the legacy task queue has no producer — the
-  // batch selection on Home replaced it. The queue infrastructure (and this
-  // tab) returns when queue-driven execution ships; the section still exists
-  // in the DOM, it is just not reachable.
-  { id: "history", key: "nav.history" },
-  { id: "rules", key: "nav.rules" },
-  { id: "messages", key: "nav.messages" },
-  { id: "settings", key: "nav.settings" },
 ];
 
 const el = <K extends keyof HTMLElementTagNameMap>(
@@ -135,6 +123,7 @@ export const createPanel = (options: PanelOptions): Panel => {
 
   // Navigation Tabs
   const tabBar = el(doc, "div", "jobpilot-tabs");
+  tabBar.classList.add("jobpilot-hidden");
   tabBar.setAttribute("role", "tablist");
   const tabButtons = new Map<PanelTab, HTMLButtonElement>();
   const panels = new Map<PanelTab, HTMLElement>();
@@ -165,19 +154,7 @@ export const createPanel = (options: PanelOptions): Panel => {
 
   const body = el(doc, "div", "jobpilot-body");
 
-  const allTabs: PanelTab[] = [
-    "home",
-    "jobs",
-    "pipeline",
-    "search",
-    "matches",
-    "queue",
-    "history",
-    "rules",
-    "messages",
-    "settings",
-    "diagnostics",
-  ];
+  const allTabs: PanelTab[] = ["home", "diagnostics"];
 
   for (const tabId of allTabs) {
     const section = el(doc, "div", "jobpilot-panel");
@@ -203,49 +180,7 @@ export const createPanel = (options: PanelOptions): Panel => {
     originalOnSelectTab?.(tab);
   };
 
-  // Action Bar
-  const actions = el(doc, "div", "jobpilot-actions");
-
-  const discoverBtn = el(doc, "button", "jobpilot-btn", t("common.discover"));
-  discoverBtn.type = "button";
-  discoverBtn.setAttribute("data-action", "discover");
-  discoverBtn.addEventListener("click", () => callbacks.discover());
-
-  const startBtn = el(doc, "button", "jobpilot-btn", t("common.start"));
-  startBtn.type = "button";
-  startBtn.setAttribute("data-action", "start");
-  startBtn.setAttribute("data-variant", "primary");
-  startBtn.addEventListener("click", () => callbacks.start());
-
-  const pauseBtn = el(doc, "button", "jobpilot-btn", t("common.pause"));
-  pauseBtn.type = "button";
-  pauseBtn.setAttribute("data-action", "pause");
-  pauseBtn.addEventListener("click", () => callbacks.pause());
-
-  const resumeBtn = el(doc, "button", "jobpilot-btn", t("common.resume"));
-  resumeBtn.type = "button";
-  resumeBtn.setAttribute("data-action", "resume");
-  resumeBtn.addEventListener("click", () => callbacks.resume());
-
-  const recheckBtn = el(doc, "button", "jobpilot-btn", t("common.recheck"));
-  recheckBtn.type = "button";
-  recheckBtn.setAttribute("data-action", "recheck");
-  recheckBtn.addEventListener("click", () => callbacks.recheck());
-
-  const skipBtn = el(doc, "button", "jobpilot-btn", t("common.skip"));
-  skipBtn.type = "button";
-  skipBtn.setAttribute("data-action", "skip");
-  skipBtn.addEventListener("click", () => callbacks.skipCurrent());
-
-  const stopBtn = el(doc, "button", "jobpilot-btn", t("common.stop"));
-  stopBtn.type = "button";
-  stopBtn.setAttribute("data-action", "stop");
-  stopBtn.setAttribute("data-variant", "danger");
-  stopBtn.addEventListener("click", () => callbacks.stop());
-
-  actions.append(discoverBtn, startBtn, pauseBtn, resumeBtn, recheckBtn, skipBtn, stopBtn);
-
-  panelEl.append(header, tabBar, body, actions);
+  panelEl.append(header, tabBar, body);
   root.append(launcher, panelEl);
 
   // --- 3. Layout Geometry & Clamping ---------------------------------------
@@ -401,14 +336,6 @@ export const createPanel = (options: PanelOptions): Panel => {
     }
     diagTabButton.textContent = t("nav.diagnostics");
 
-    discoverBtn.textContent = t("common.discover");
-    startBtn.textContent = t("common.start");
-    pauseBtn.textContent = t("common.pause");
-    resumeBtn.textContent = t("common.resume");
-    recheckBtn.textContent = t("common.recheck");
-    skipBtn.textContent = t("common.skip");
-    stopBtn.textContent = t("common.stop");
-
     if (lastViewModel) {
       renderView(lastViewModel);
     }
@@ -474,6 +401,7 @@ export const createPanel = (options: PanelOptions): Panel => {
     // Diagnostic Tab visibility
     if (view.channel === "diagnostic" || view.sections.diagnostics !== undefined) {
       diagTabButton.classList.remove("jobpilot-hidden");
+      tabBar.classList.remove("jobpilot-hidden");
     }
 
     // Populate section contents. Re-appending an unchanged element would blur
@@ -484,20 +412,6 @@ export const createPanel = (options: PanelOptions): Panel => {
       if (content === undefined) continue;
       if (section.firstChild !== content) section.replaceChildren(content);
     }
-
-    // Action button states
-    const canStart = !view.running;
-    const canPause = view.running;
-    const canResume = view.paused;
-    const canSkip = view.running;
-    const canStop = view.running || view.paused;
-
-    discoverBtn.disabled = !canStart;
-    startBtn.disabled = !canStart;
-    pauseBtn.disabled = !canPause;
-    resumeBtn.disabled = !canResume;
-    skipBtn.disabled = !canSkip;
-    stopBtn.disabled = !canStop;
   };
 
   return {

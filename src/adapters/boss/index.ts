@@ -19,16 +19,13 @@
 import type { JobDetail, JobSummary } from "../../domain/job/job";
 import type { Clock } from "../../domain/support/shared";
 import type {
-  ApplyOptions,
-  ApplyResult,
   JobPlatform,
   PageKind,
+  PlatformOperationOptions,
   ScanOptions,
-  VerificationResult,
 } from "../../ports/job-platform";
 import type { Logger } from "../../ports/logger";
 import { isAborted, throwIfAborted } from "./actions/abort";
-import { createApplyAction } from "./actions/apply-action";
 import { parseBossJobDetail, parseBossJobDetailFromDrawer } from "./parser/detail-parser";
 import { parseBossJobList } from "./parser/list-parser";
 import { detectBossPageKind } from "./parser/page-kind";
@@ -128,8 +125,6 @@ const findJobCard = (root: ParentNode, job: JobSummary): Element | null => {
 export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   const { document: doc, location, logger, clock, version } = deps;
 
-  const applyAction = createApplyAction({ root: doc, clock, logger });
-
   const logDetection = (kind: PageKind): PageKind => {
     logger.debug("boss.detect", "page classified", {
       kind,
@@ -155,7 +150,7 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
   const tryLoadFromDrawer = async (
     card: Element,
     job: JobSummary,
-    options?: ApplyOptions,
+    options?: PlatformOperationOptions,
   ): Promise<JobDetail | null> => {
     // Synthetic clicks must use the document's own Event constructor: the
     // adapter is also exercised under happy-dom, where the global MouseEvent
@@ -246,7 +241,7 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
      * expected to check `detectPage()` first; a null parse means the required
      * anchors were missing, which is a hard stop (`unknown-dom`).
      */
-    async loadJob(job: JobSummary, options?: ApplyOptions): Promise<JobDetail> {
+    async loadJob(job: JobSummary, options?: PlatformOperationOptions): Promise<JobDetail> {
       throwIfAborted(options?.signal);
 
       // Drawer-first: a visible listing card is the fastest, least disruptive
@@ -273,14 +268,6 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
         );
       }
       return detail;
-    },
-
-    apply(job: JobDetail, options?: ApplyOptions): Promise<ApplyResult> {
-      return applyAction.apply(job, options);
-    },
-
-    verifyApplication(job: JobDetail, options?: ApplyOptions): Promise<VerificationResult> {
-      return applyAction.verifyApplication(job, options);
     },
   };
 };

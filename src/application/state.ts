@@ -8,12 +8,20 @@ export type AutomationState =
   | "evaluating"
   | "opening"
   | "validating"
-  | "applying"
-  | "verifying"
+  | "contacting"
   | "cooldown"
   | "paused"
   | "blocked"
   | "failed";
+
+/** Why the most recent finite batch stopped. */
+export type BatchTerminalReason =
+  | "completed"
+  | "stopped"
+  | "paused"
+  | "blocked"
+  | "failed"
+  | "needs-confirmation";
 
 /** The subset of states in which the machine is actively doing work. */
 export const ACTIVE_STATES: readonly AutomationState[] = [
@@ -21,8 +29,7 @@ export const ACTIVE_STATES: readonly AutomationState[] = [
   "evaluating",
   "opening",
   "validating",
-  "applying",
-  "verifying",
+  "contacting",
 ];
 
 export const isActive = (state: AutomationState): boolean => ACTIVE_STATES.includes(state);
@@ -111,6 +118,8 @@ export interface AutomationContext {
    * the listing, rebuilt by every fresh scan.
    */
   readonly pendingSummaries: readonly JobSummary[];
+  /** Explicit outcome of the latest finite operator-selected batch. */
+  readonly lastTerminalReason?: BatchTerminalReason;
   /** Last state-change timestamp, used by the watchdog. */
   readonly stateSince: number;
   /** Non-fatal message for the UI, e.g. the last rejection reason. */

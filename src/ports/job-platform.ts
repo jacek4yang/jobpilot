@@ -9,24 +9,12 @@ import type { JobDetail, JobSummary } from "../domain/job/job";
 export type PageKind =
   | "job-list"
   | "job-detail"
+  | "chat"
   | "login-required"
   | "captcha"
   | "empty-result"
   | "unsupported"
   | "unknown";
-
-/** Outcome of an application attempt. Never inferred, always reported. */
-export type ApplyOutcome =
-  | { readonly kind: "submitted"; readonly evidence: string }
-  | { readonly kind: "already-applied"; readonly evidence: string }
-  | { readonly kind: "needs-confirmation"; readonly evidence: string }
-  | { readonly kind: "rejected-by-form"; readonly evidence: string }
-  | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string };
-
-export type VerificationOutcome =
-  | { readonly kind: "confirmed"; readonly evidence: string }
-  | { readonly kind: "not-applied"; readonly evidence: string }
-  | { readonly kind: "indeterminate"; readonly evidence: string };
 
 /**
  * Reasons an adapter refuses to continue. These are safety signals: the
@@ -50,23 +38,13 @@ export interface LocatedElement {
   readonly heuristic: boolean;
 }
 
-export interface ApplyResult {
-  readonly outcome: ApplyOutcome;
-  readonly jobId: string;
-}
-
-export interface VerificationResult {
-  readonly outcome: VerificationOutcome;
-  readonly jobId: string;
-}
-
 export interface ScanOptions {
   /** Maximum number of summaries to return. Adapters may return fewer. */
   readonly limit?: number;
   readonly signal?: AbortSignal;
 }
 
-export interface ApplyOptions {
+export interface PlatformOperationOptions {
   readonly signal?: AbortSignal;
 }
 
@@ -85,9 +63,5 @@ export interface JobPlatform {
 
   scanJobs(options?: ScanOptions): Promise<readonly JobSummary[]>;
 
-  loadJob(job: JobSummary, options?: ApplyOptions): Promise<JobDetail>;
-
-  apply(job: JobDetail, options?: ApplyOptions): Promise<ApplyResult>;
-
-  verifyApplication(job: JobDetail, options?: ApplyOptions): Promise<VerificationResult>;
+  loadJob(job: JobSummary, options?: PlatformOperationOptions): Promise<JobDetail>;
 }

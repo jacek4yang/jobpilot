@@ -68,14 +68,6 @@ const recordingPlatform = (
       if (options.failLoad?.has(String(s.id)) === true) throw new Error("detail did not render");
       return detailFor(s);
     },
-    apply: async () => ({
-      outcome: { kind: "blocked", reason: "unknown-dom", evidence: "n/a" },
-      jobId: "",
-    }),
-    verifyApplication: async () => ({
-      outcome: { kind: "indeterminate", evidence: "n/a" },
-      jobId: "",
-    }),
     get loaded() {
       return loaded;
     },

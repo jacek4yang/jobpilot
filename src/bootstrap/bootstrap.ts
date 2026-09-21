@@ -10,23 +10,16 @@
  * so observers, timers and DOM nodes cannot accumulate.
  */
 
-import { readBossRecruiterActivity } from "../adapters/boss/activity";
 import { extractBenefits } from "../adapters/boss/benefits";
 import { createCommunicationAction } from "../adapters/boss/communication";
 import { extractConcerns } from "../adapters/boss/concerns";
-import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
 import { detectBossDetailedPageKind } from "../adapters/boss/parser/page-kind";
 import { createNavigatorLock } from "../adapters/userscript/navigator-lock";
 import { createCommunicationRunner } from "../application/communication-runner";
 import { createCommunicationService } from "../application/communication-service";
 import { createController } from "../application/controller";
-import {
-  createDiscoveryService,
-  type DiscoveryFailure,
-  formatReasons,
-  type Match,
-} from "../application/discovery";
-import { evaluateSendGates } from "../application/gates";
+import type { Match } from "../application/discovery";
+import { evaluateExecutionGates } from "../application/gates";
 import { createApplicationHistory } from "../application/history";
 import {
   createVerificationController,
@@ -34,9 +27,12 @@ import {
   type VerificationKind,
 } from "../application/human-verification";
 import { createOrchestrator } from "../application/orchestrator";
-import { toDomainProfile } from "../application/profile-mapping";
-import { createRepository } from "../application/repository";
-import { filterSummariesBySelection, isSelectionCurrent } from "../application/selection";
+import { createRepository, type LoadResult } from "../application/repository";
+import {
+  filterSummariesBySelection,
+  type SelectedJobIdentity,
+  validateSelectionSnapshot,
+} from "../application/selection";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
@@ -56,7 +52,7 @@ import {
 } from "../diagnostics/instrument/transaction-trace";
 import { startSession as createDiagnosticSession, newSessionId } from "../diagnostics/session";
 import { traceStorage } from "../diagnostics/trace";
-import type { CommunicationIntent } from "../domain/communication/intent";
+import { type CommunicationIntent, isSendCommitted } from "../domain/communication/intent";
 import { createTemplate } from "../domain/communication/template";
 import { mergeJobSnapshot } from "../domain/workspace/merge";
 import type {
@@ -69,7 +65,6 @@ import type {
   StoredJob,
 } from "../domain/workspace/types";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
-import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { DEFAULT_LOCK_TTL_MS } from "../ports/lock";
 import type { JobPilotBackupV1 } from "../storage/backup/backup-service";
@@ -110,8 +105,28 @@ export const bootstrap = async (): Promise<BootstrapResult> => {
 
 const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> => {
   const deps = createRuntimeDeps(config);
-  const repository = createRepository(deps.storage, deps.logger);
-  const loaded = await repository.load();
+  // Every production repository operation must pass through the health
+  // wrapper. Constructing a second wrapper later made the storage gate vacuous:
+  // writes failed on the raw adapter while health still reported "healthy".
+  const tracedStorage = traceStorage(deps.storage, deps.recorder);
+  const repository = createRepository(tracedStorage.storage, deps.logger);
+  let loaded: LoadResult;
+  try {
+    loaded = await repository.load();
+  } catch (error) {
+    // Keep the read-only UI and diagnostic export available, but never let an
+    // unreadable durable store look like a fresh install. The trace wrapper has
+    // already marked storage unhealthy, so every irreversible gate stays shut.
+    const detail = error instanceof Error ? error.message : String(error);
+    loaded = {
+      config,
+      applications: [],
+      warnings: [`本地存储读取失败：${detail}。JobPilot 已进入只读模式。`],
+      fresh: false,
+      writeBlocked: true,
+      pendingIntent: undefined,
+    };
+  }
   let effectiveConfig = loaded.config;
   setLocale(effectiveConfig.general.locale);
   const engine = createEngineFor(effectiveConfig);
@@ -143,11 +158,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       );
     }
   };
-
-  // The execution queue. Populated from an explicit selection over the
-  // discovered matches — discovery itself never enqueues, which is the central
-  // product rule that keeps a search from turning into unattended contact.
-  const queue = createTaskQueue();
 
   // The in-flight communication transaction. Kept in memory for the runner and
   // written through to storage on every change, so a reload between committing
@@ -186,37 +196,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   };
 
   // Operator's batch selection: which discovered jobs the next run may touch.
-  // Empty = no restriction (legacy whole-listing behaviour). Populated from
-  // the accepted matches at discovery time; the user can toggle entries. The
-  // selection is scoped to the page it was made on (selectionHref): on any
-  // other listing it is stale and must not narrow the scan.
+  // Empty means no work, never "the whole listing". Populated from accepted
+  // matches and frozen at Start. A stale or contradictory page snapshot fails
+  // closed instead of broadening the selection.
   let selectedJobIds: ReadonlySet<string> = new Set();
   let selectionHref: string | undefined;
-
-  const discoveryService = createDiscoveryService({
-    platform: deps.platform,
-    logger: deps.logger,
-    resolveCities: (cities) => {
-      const { resolved, failed } = resolveCityCodes(cities);
-      const firstFailure = failed[0];
-      if (firstFailure !== undefined && !firstFailure.ok) {
-        return { ok: false, city: firstFailure.input, suggestions: firstFailure.suggestions };
-      }
-      return { ok: true, codes: resolved.map((entry) => entry.code) };
-    },
-    contactedJobIds: history.submittedJobIds(),
-    companyBlacklist: effectiveConfig.filters.companyBlacklist,
-    titleBlacklist: [],
-    scoring: {
-      baseScore: effectiveConfig.scoring.baseScore,
-      acceptThreshold: effectiveConfig.scoring.acceptThreshold,
-      preferredSkills: effectiveConfig.scoring.preferredSkills,
-      preferredIndustries: [],
-    },
-    activityPreference: "any",
-    skipUnknownActivity: true,
-    readActivity: readBossRecruiterActivity,
-  });
+  let activeBatchSnapshot: ReadonlyMap<string, SelectedJobIdentity> | undefined;
 
   // The panel needs a controller to exist, and the controller needs a panel to
   // render into. Declared first and assigned below; the panel's callbacks only
@@ -224,22 +209,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   let controller: ReturnType<typeof createController> | undefined;
 
   /**
-   * Runs discovery for the active profile and repopulates Matches.
+   * Scans the current BOSS listing and repopulates the explicit selection.
    *
    * Discovery never enqueues: it produces candidates for review. Starting it
    * while the queue is running is refused rather than allowed to fight the
    * runner for control of the page.
    */
   async function runDiscovery(): Promise<void> {
-    const stored = effectiveConfig.profiles.find((entry) => entry.enabled);
-    const active = stored === undefined ? undefined : toDomainProfile(stored);
-    if (active === undefined) {
-      discoveryNote = "还没有启用的求职意向，请先在「搜索」页设置意向。";
-      render();
-      panel.toast("warn", discoveryNote);
-      return;
-    }
-
     if (controller !== undefined && controller.context().state !== "idle") {
       // Never silently destroy queue progress by starting a search mid-run.
       discoveryNote = "当前正在运行，请先停止后再开始新搜索。";
@@ -252,77 +228,114 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     appendRunLog("开始扫描职位");
     render();
 
-    const result = await discoveryService.run(active);
-
-    if (!result.ok) {
-      discoveryNote = describeDiscoveryFailure(result.failure);
+    const pageKind = deps.platform.detectPage();
+    if (pageKind !== "job-list") {
+      discoveryNote = `当前页面不是职位列表（识别为：${pageKind}），没有扫描。`;
       appendRunLog(discoveryNote);
       render();
       panel.toast("warn", discoveryNote);
-      deps.logger.warn("bootstrap", "discovery stopped", { failure: result.failure.kind });
+      deps.logger.warn("bootstrap", "current-page scan refused", { pageKind });
       return;
     }
 
-    matches = result.matches;
-    // Default the batch selection to every accepted match; the user can
-    // uncheck entries on the Home page before starting the run.
-    selectedJobIds = new Set(matches.filter((m) => m.accepted).map((m) => String(m.summary.id)));
-    selectionHref = globalThis.location?.href;
+    try {
+      const summaries = await deps.platform.scanJobs({ limit: 50 });
+      matches = summaries.map((summary) => ({
+        summary,
+        accepted: true,
+        score: 0,
+        reasons: [],
+        decidedAt: "A",
+      }));
+    } catch (error) {
+      discoveryNote = `扫描失败：${error instanceof Error ? error.message : String(error)}`;
+      appendRunLog(discoveryNote);
+      render();
+      panel.toast("error", discoveryNote);
+      return;
+    }
 
-    const accepted = matches.filter((match) => match.accepted).length;
-    discoveryNote = `共找到 ${matches.length} 个职位，${accepted} 个符合你的意向，已默认勾选。`;
+    selectedJobIds = new Set(matches.map((match) => String(match.summary.id)));
+    selectionHref = globalThis.location?.href;
+    activeBatchSnapshot = undefined;
+
+    discoveryNote =
+      matches.length === 0
+        ? "这个页面上没有找到职位。"
+        : `当前页识别到 ${matches.length} 个职位，已默认勾选；请取消不想处理的职位。`;
     appendRunLog(discoveryNote);
     render();
     deps.logger.info("bootstrap", "discovery complete", {
       total: matches.length,
-      accepted,
+      selected: selectedJobIds.size,
     });
-  }
-
-  /** Turns a discovery failure into something a user can act on. */
-  function describeDiscoveryFailure(failure: DiscoveryFailure): string {
-    switch (failure.kind) {
-      case "city":
-        return failure.suggestions.length > 0
-          ? `城市「${failure.city}」不是有效的 BOSS 城市。你是不是想填：${failure.suggestions.join("、")}？`
-          : `城市「${failure.city}」不是有效的 BOSS 城市。`;
-      case "page-kind":
-        return `当前页面不是职位列表（识别为：${failure.pageKind}），没有扫描。`;
-      case "no-jobs":
-        return "这个页面上没有找到职位。";
-      case "aborted":
-        return "扫描已取消。";
-      case "error":
-        return `扫描失败：${failure.message}`;
-    }
   }
 
   // --- Cross-tab ownership ------------------------------------------------
-  // Two BOSS tabs must never drive the same queue. Ownership is taken before
-  // the interactive panel is built, so a tab that does not own execution can
-  // render read-only instead of offering controls that would fight the owner.
+  // Two BOSS tabs must never drive automation at once. Ownership is acquired
+  // lazily on the first scan/start action: an idle background tab must not
+  // monopolise the origin-wide lock and make the tab the user is looking at
+  // appear broken.
   const lock = createNavigatorLock({ clock: deps.clock });
   const ownerId = `tab-${Math.random().toString(36).slice(2)}`;
-  const ownership = await lock.acquire({ ownerId, ttlMs: DEFAULT_LOCK_TTL_MS });
-  const isOwner = ownership.ok;
+  let isOwner = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
 
-  if (!isOwner) {
-    deps.logger.warn("bootstrap", "another tab owns execution; rendering read-only", {
-      reason: ownership.reason,
-    });
-  }
+  const startOwnershipHeartbeat = (): void => {
+    if (heartbeat !== undefined) return;
+    heartbeat = setInterval(
+      () => {
+        void lock.renew({ token: ownerId, ttlMs: DEFAULT_LOCK_TTL_MS }).then((alive) => {
+          if (alive) return;
+          isOwner = false;
+          if (heartbeat !== undefined) clearInterval(heartbeat);
+          heartbeat = undefined;
+          deps.logger.warn("bootstrap", "lost execution ownership");
+          controller?.dispatch({
+            type: "BLOCKED",
+            reason: "ambiguous-state",
+            evidence: "另一个标签页已接管运行权",
+          });
+        });
+      },
+      Math.floor(DEFAULT_LOCK_TTL_MS / 3),
+    );
+  };
+
+  const ensureOwnership = async (): Promise<boolean> => {
+    if (isOwner) return true;
+    const ownership = await lock.acquire({ ownerId, ttlMs: DEFAULT_LOCK_TTL_MS });
+    if (!ownership.ok) {
+      deps.logger.warn("bootstrap", "another tab owns execution", { reason: ownership.reason });
+      return false;
+    }
+    isOwner = true;
+    startOwnershipHeartbeat();
+    return true;
+  };
+
+  const releaseOwnership = (): void => {
+    if (!isOwner) return;
+    isOwner = false;
+    if (heartbeat !== undefined) clearInterval(heartbeat);
+    heartbeat = undefined;
+    void lock.release(ownerId);
+  };
 
   const panelCallbacks: UiCallbacks = {
     discover: () => {
-      if (!isOwner) {
-        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
-        return;
-      }
-      void runDiscovery();
+      void ensureOwnership().then((owned) => {
+        if (owned) void runDiscovery();
+        else panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+      });
     },
     onToggleMatchSelect: (jobId: string) => {
       if (!isOwner) {
         panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+        return;
+      }
+      if (controller !== undefined && controller.context().state !== "idle") {
+        panel.toast("warn", "批量任务运行期间不能修改选择，请先停止。 ");
         return;
       }
       const next = new Set(selectedJobIds);
@@ -332,43 +345,90 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       render();
     },
     start: () => {
-      if (!isOwner) {
-        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
-        return;
-      }
-      if (verification.isBlocked()) {
-        panel.toast("warn", "BOSS 需要人工验证。请手动完成验证，然后点「重新检查页面」。");
-        return;
-      }
-      deps.recorder.record({
-        level: "info",
-        category: "user-action",
-        event: EVENTS.userStart,
+      void ensureOwnership().then((owned) => {
+        if (!owned) {
+          panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+          return;
+        }
+        if (verification.isBlocked()) {
+          panel.toast("warn", "BOSS 需要人工验证。请手动完成验证，然后点「重新检查页面」。");
+          return;
+        }
+        if (controller === undefined || controller.context().state !== "idle") {
+          panel.toast("warn", "当前任务已经在运行。");
+          return;
+        }
+        if (!storageHealth().healthy) {
+          panel.toast("error", "本地持久化不可用，已进入只读模式，不能开始自动沟通。");
+          return;
+        }
+        const selected = new Map<string, SelectedJobIdentity>();
+        for (const match of matches) {
+          const id = String(match.summary.id);
+          if (!selectedJobIds.has(id)) continue;
+          selected.set(id, {
+            id,
+            title: match.summary.title,
+            companyName: match.summary.companyName,
+            ...(match.summary.url === undefined ? {} : { url: match.summary.url }),
+          });
+        }
+        const selection = validateSelectionSnapshot(
+          selected,
+          selectionHref,
+          globalThis.location?.href,
+        );
+        if (!selection.ok) {
+          panel.toast(
+            "warn",
+            selection.reason === "empty"
+              ? "请至少选择一个职位后再开始。"
+              : "当前页面已变化，请重新扫描并选择职位。",
+          );
+          return;
+        }
+        const contacted = new Set([...history.submittedJobIds()].map(String));
+        if ([...selected.keys()].some((id) => contacted.has(id))) {
+          panel.toast("warn", "选择中包含已经沟通过的职位，请重新扫描。");
+          return;
+        }
+        activeBatchSnapshot = selected;
+        deps.recorder.record({
+          level: "info",
+          category: "user-action",
+          event: EVENTS.userStart,
+        });
+        appendRunLog(`开始处理 ${selected.size} 个已选职位`);
+        controller.dispatch({ type: "START" });
       });
-      appendRunLog("开始投递");
-      controller?.dispatch({ type: "START" });
     },
     recheck: () => {
-      // Step one of the two-step recovery. This VALIDATES and reports; it
-      // never resumes. Resuming is a separate, explicit user action.
-      const pageKind = deps.platform.detectPage();
-      const result = verification.recheck(
-        {
-          pageKind,
-          loginValid: pageKind !== "login-required",
-          riskPresent: pageKind === "captcha" || pageKind === "unknown",
-          expectedRoute:
-            pageKind === "job-list" || pageKind === "job-detail" || pageKind === "empty-result",
-          storageHealthy: tracedStorage.health().healthy,
-          isQueueOwner: isOwner,
-        },
-        deps.clock.now(),
-      );
-      panel.toast(
-        result.result.ok ? "success" : "warn",
-        result.result.ok ? "页面看起来正常了。准备好之后点「继续」。" : result.result.detail,
-      );
-      render();
+      void ensureOwnership().then((owned) => {
+        if (!owned) {
+          panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+          return;
+        }
+        // Step one of the two-step recovery. This VALIDATES and reports; it
+        // never resumes. Resuming is a separate, explicit user action.
+        const pageKind = deps.platform.detectPage();
+        const result = verification.recheck(
+          {
+            pageKind,
+            loginValid: pageKind !== "login-required",
+            riskPresent: pageKind === "captcha" || pageKind === "unknown",
+            expectedRoute:
+              pageKind === "job-list" || pageKind === "job-detail" || pageKind === "empty-result",
+            storageHealthy: storageHealth().healthy,
+            isQueueOwner: true,
+          },
+          deps.clock.now(),
+        );
+        panel.toast(
+          result.result.ok ? "success" : "warn",
+          result.result.ok ? "页面看起来正常了。准备好之后点「继续」。" : result.result.detail,
+        );
+        render();
+      });
     },
     pause: () => {
       deps.recorder.record({
@@ -380,40 +440,43 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
     },
     resume: () => {
-      // The two-step recovery is enforced HERE, at the only place resume can
-      // be triggered. A challenge disappearing is not sufficient: the user
-      // must have re-checked the page and been told it is safe.
-      const state = verification.state();
-      if (state.phase === "blocked" || state.phase === "still-blocked") {
-        deps.recorder.warnEvent("risk", EVENTS.humanVerificationRecheck, {
-          detail: "resume refused: the page has not been re-checked",
-          phase: state.phase,
-        });
-        panel.toast(
-          "warn",
-          state.phase === "still-blocked"
-            ? `暂时无法继续：${state.lastCheckDetail ?? "验证仍未完成"}。`
-            : "请先在页面中完成验证，然后点「重新检查页面」。",
-        );
-        return;
-      }
-      if (state.phase === "ready") {
-        // The user has re-checked and been told it is safe; this press is the
-        // explicit confirmation the flow requires.
-        verification.clear(deps.clock.now());
+      void ensureOwnership().then((owned) => {
+        if (!owned) {
+          panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+          return;
+        }
+        // A challenge disappearing is not sufficient: the user must have
+        // re-checked the page and then explicitly pressed Resume.
+        const state = verification.state();
+        if (state.phase === "blocked" || state.phase === "still-blocked") {
+          deps.recorder.warnEvent("risk", EVENTS.humanVerificationRecheck, {
+            detail: "resume refused: the page has not been re-checked",
+            phase: state.phase,
+          });
+          panel.toast(
+            "warn",
+            state.phase === "still-blocked"
+              ? `暂时无法继续：${state.lastCheckDetail ?? "验证仍未完成"}。`
+              : "请先在页面中完成验证，然后点「重新检查页面」。",
+          );
+          return;
+        }
+        if (state.phase === "ready") {
+          verification.clear(deps.clock.now());
+          deps.recorder.record({
+            level: "info",
+            category: "user-action",
+            event: EVENTS.userCompletedVerification,
+          });
+        }
         deps.recorder.record({
           level: "info",
           category: "user-action",
-          event: EVENTS.userCompletedVerification,
+          event: EVENTS.userResume,
         });
-      }
-      deps.recorder.record({
-        level: "info",
-        category: "user-action",
-        event: EVENTS.userResume,
+        appendRunLog("继续运行");
+        controller?.dispatch({ type: "RESUME" });
       });
-      appendRunLog("继续运行");
-      controller?.dispatch({ type: "RESUME" });
     },
     skipCurrent: () => {
       deps.logger.info("panel", "skip requested");
@@ -422,6 +485,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     stop: () => {
       appendRunLog("停止运行");
       controller?.dispatch({ type: "STOP" });
+      releaseOwnership();
     },
     setCollapsed: (collapsed: boolean) => {
       effectiveConfig = {
@@ -651,11 +715,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   });
 
   const persist = async (): Promise<void> => {
-    await repository.save({
+    const result = await repository.save({
       config: effectiveConfig,
       applications: history.serialize(),
       pendingIntent,
     });
+    if (!result.saved) {
+      throw new Error(result.reason ?? "本地存储拒绝写入");
+    }
   };
 
   const communicationAction = createCommunicationAction({
@@ -669,16 +736,28 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     logger: deps.logger,
     clock: deps.clock,
     persistIntent: async (intent) => {
+      const previous = pendingIntent;
       pendingIntent = intent;
-      await persist();
+      try {
+        await persist();
+      } catch (error) {
+        pendingIntent = previous;
+        throw error;
+      }
     },
     clearIntent: async () => {
+      const previous = pendingIntent;
       pendingIntent = undefined;
-      await persist();
+      try {
+        await persist();
+      } catch (error) {
+        pendingIntent = previous;
+        throw error;
+      }
     },
     // The durable record wins over any caller's in-memory copy, so replaying a
     // stale intent cannot cause a second click.
-    readPersistedIntent: async () => pendingIntent,
+    readPersistedIntent: async () => (await repository.load()).pendingIntent,
   });
 
   /**
@@ -691,8 +770,17 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
    */
   const verification = createVerificationController(deps.recorder, () => deps.clock.now());
 
-  /** Observes storage so persistence failures feed the health gate. */
-  const tracedStorage = traceStorage(deps.storage, deps.recorder);
+  const storageHealth = (): import("../diagnostics/trace").StorageHealth => {
+    const traced = tracedStorage.health();
+    if (!traced.healthy) return traced;
+    if (!deps.durableStorage) {
+      return { healthy: false, lastFailure: "GM 持久化不可用，当前仅为临时只读会话" };
+    }
+    if (loaded.writeBlocked) {
+      return { healthy: false, lastFailure: "持久化文档无法安全读取，写入已禁用" };
+    }
+    return traced;
+  };
 
   /**
    * Message templates.
@@ -732,7 +820,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     baseGateInput: () => ({
       mode: effectiveConfig.automation.mode,
       humanVerificationActive: verification.isBlocked(),
-      storage: tracedStorage.health(),
+      storage: storageHealth(),
       isQueueOwner: isOwner,
       sessionLimitReached:
         policy.maxApplicationsPerSession > 0 &&
@@ -754,23 +842,17 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     onCommunicateButtonResolved: (outcome) => {
       recordSelectorOutcome(deps.recorder, outcome);
     },
-    verifyChat: () => {
-      // Only that a conversation is open. The authoritative identity check runs
-      // inside the runner against the job id, which is where it belongs.
-      const chat = communicationAction.readCurrentChat();
-      return chat === null
-        ? { verified: false, detail: "no conversation is open" }
-        : { verified: true, detail: "a conversation is open" };
-    },
-    isDraftPresent: () => {
-      const text = communicationAction.readEditor();
-      return text !== null && text.trim().length > 0;
-    },
     outgoingCount: (text) => communicationAction.outgoingCount(text),
     readPersistedIntent: () => pendingIntent,
     persistIntent: async (intent) => {
+      const previous = pendingIntent;
       pendingIntent = intent;
-      await persist();
+      try {
+        await persist();
+      } catch (error) {
+        pendingIntent = previous;
+        throw error;
+      }
       // Recorded AFTER the write succeeds, so the event means "this is durable"
       // rather than "we tried". The analyzer relies on that distinction when
       // judging whether a reload could have lost the point of no return.
@@ -780,10 +862,20 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       }
     },
     clearIntent: async () => {
+      const previous = pendingIntent;
       pendingIntent = undefined;
-      await persist();
+      try {
+        await persist();
+      } catch (error) {
+        pendingIntent = previous;
+        throw error;
+      }
     },
-    storageHealth: () => tracedStorage.health(),
+    confirmPersistedIntent: async (intent) => {
+      const durable = (await repository.load()).pendingIntent;
+      return durable?.id === intent.id && durable.phase === intent.phase;
+    },
+    storageHealth,
     templates: () => templates,
     newIntentId: () =>
       `txn-${deps.clock.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -829,20 +921,42 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   // The execution pipeline only ever sees operator-selected jobs once a
   // selection exists. Discovery keeps the raw platform (step 1 must see the
-  // whole listing). The filter only narrows; an empty selection changes
-  // nothing.
+  // whole listing). Execution uses an immutable identity snapshot and refuses
+  // missing or contradictory cards instead of widening to the whole page.
   const platformForRun: typeof deps.platform = {
     ...deps.platform,
     scanJobs: async (options) => {
       const summaries = await deps.platform.scanJobs(options);
-      // A stale (other-page) selection must never empty a valid scan.
-      if (!isSelectionCurrent(selectionHref, globalThis.location?.href)) return summaries;
-      return filterSummariesBySelection(summaries, selectedJobIds);
+      const selected = activeBatchSnapshot ?? new Map<string, SelectedJobIdentity>();
+      const validation = validateSelectionSnapshot(
+        selected,
+        selectionHref,
+        globalThis.location?.href,
+        summaries.map((summary) => ({
+          id: String(summary.id),
+          title: summary.title,
+          companyName: summary.companyName,
+          ...(summary.url === undefined ? {} : { url: summary.url }),
+        })),
+      );
+      if (!validation.ok) {
+        throw new Error(
+          validation.reason === "empty"
+            ? "没有已选职位"
+            : validation.reason === "stale-page"
+              ? "页面范围已变化，请重新扫描"
+              : validation.reason === "missing-job"
+                ? `已选职位 ${validation.jobId ?? ""} 已从页面消失`
+                : `已选职位 ${validation.jobId ?? ""} 的身份信息发生冲突`,
+        );
+      }
+      return filterSummariesBySelection(summaries, new Set(selected.keys()));
     },
   };
 
   const orchestrator = createOrchestrator({
     platform: platformForRun,
+    communication: communicationService,
     engine,
     history,
     storage: deps.storage,
@@ -871,7 +985,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       maxApplicationsPerHour: policy.maxApplicationsPerHour,
       maxRetries: policy.maxRetries,
     },
-    isOperatorSelected: (jobId) => selectedJobIds.has(jobId),
   });
 
   /**
@@ -880,22 +993,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
    * The panel is a pure function of this view model, so a rendering bug can be
    * reproduced by constructing the same object in a test.
    */
-  // Renew the lease periodically so a long session does not let another tab
-  // take over mid-run. Cleared on dispose.
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  if (isOwner) {
-    heartbeat = setInterval(
-      () => {
-        void lock.renew({ token: ownerId, ttlMs: DEFAULT_LOCK_TTL_MS }).then((alive) => {
-          if (!alive) {
-            deps.logger.warn("bootstrap", "lost execution ownership");
-          }
-        });
-      },
-      Math.floor(DEFAULT_LOCK_TTL_MS / 3),
-    );
-  }
-
   // -------------------------------------------------------------------------
   // Diagnostic bundle export
   //
@@ -909,14 +1006,20 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     recorder: deps.recorder,
     config: () => effectiveConfig,
     sections: () => ({
-      "queue.json": queue.snapshot(),
+      "queue.json": {
+        tasks:
+          controller?.context().pendingSummaries.map((summary) => ({
+            jobId: String(summary.id),
+            status: "pending",
+          })) ?? [],
+      },
       ...(pendingIntent === undefined ? {} : { "transactions.json": [pendingIntent] }),
     }),
     health: () => ({
-      storageHealthy: tracedStorage.health().healthy,
-      ...(tracedStorage.health().lastFailure === undefined
+      storageHealthy: storageHealth().healthy,
+      ...(storageHealth().lastFailure === undefined
         ? {}
-        : { storageFailure: String(tracedStorage.health().lastFailure) }),
+        : { storageFailure: String(storageHealth().lastFailure) }),
       lockOwner: isOwner ? "this-tab" : "another-tab",
       humanVerificationEncountered: verification.state().phase !== "clear",
     }),
@@ -943,6 +1046,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const render = (): void => {
     if (controller === undefined) return;
     const context = controller.context();
+    if (context.state === "idle" && context.lastTerminalReason !== undefined) {
+      releaseOwnership();
+    }
     const safety = safetyFromState(context.state, effectiveConfig.automation.mode);
     const records = history.all();
 
@@ -952,7 +1058,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       safety: safety.level,
       safetyLabel: safety.label,
       launcherCount:
-        queue.pendingCount() > 0 ? `${context.sessionApplications}/${queue.pendingCount()}` : "",
+        context.pendingSummaries.length > 0
+          ? `${context.sessionApplications}/${context.pendingSummaries.length}`
+          : "",
       pageKind: currentPageKind,
 
       running: [
@@ -960,8 +1068,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         "evaluating",
         "opening",
         "validating",
-        "applying",
-        "verifying",
+        "contacting",
         "cooldown",
       ].includes(context.state),
       paused:
@@ -1031,25 +1138,15 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         score: match.score,
         accepted: match.accepted,
         selected: selectedJobIds.has(String(match.summary.id)),
-        reasons: formatReasons(match.reasons),
+        reasons: match.reasons.map((reason) => reason.message),
       })),
-      queue: queue
-        .snapshot()
-        .tasks.slice(0, 40)
-        .map((task) => {
-          const match = matches.find((candidate) => String(candidate.summary.id) === task.jobId);
-          return {
-            jobId: task.jobId,
-            title: match?.summary.title ?? task.jobId,
-            company: match?.summary.companyName ?? "",
-            status: task.status,
-            detail:
-              task.lastError ??
-              (task.attempts > 0
-                ? `已尝试 ${task.attempts} 次`
-                : new Date(task.enqueuedAt).toLocaleTimeString()),
-          };
-        }),
+      queue: context.pendingSummaries.slice(0, 40).map((summary) => ({
+        jobId: String(summary.id),
+        title: summary.title,
+        company: summary.companyName,
+        status: "pending",
+        detail: "等待处理",
+      })),
       history: records.slice(-40).map((record) => ({
         jobId: String(record.jobId),
         title: String(record.jobId),
@@ -1099,7 +1196,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         pageKind: currentPageKind,
         isLoggedIn: currentPageKind !== "login-required",
         favoriteCount: workspaceAnnotations.filter((a) => a.preference === "favorite").length,
-        queueCount: queue.pendingCount(),
+        queueCount: context.pendingSummaries.length,
         pipelineCount: workspacePipeline.filter(
           (p) => !["not-interested", "closed"].includes(p.stage),
         ).length,
@@ -1127,7 +1224,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           build: deps.build,
           recorder: deps.recorder,
           verification: verification.state(),
-          storageHealth: tracedStorage.health(),
+          storageHealth: storageHealth(),
           exportResult: lastExportResult,
           isQueueOwner: isOwner,
           route: currentPageKind,
@@ -1322,7 +1419,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     try {
       const detailed = detectBossDetailedPageKind(globalThis.document, globalThis.location);
       const kind =
-        detailed.kind === "login-required" ? "login-required" : deps.platform.detectPage();
+        detailed.kind === "login-required"
+          ? "login-required"
+          : detailed.kind === "human-verification"
+            ? "captcha"
+            : detailed.kind === "chat"
+              ? "chat"
+              : deps.platform.detectPage();
 
       if (kind === currentPageKind) {
         void refreshCurrentJob().then(() => {
@@ -1445,18 +1548,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     const base = {
       mode: effectiveConfig.automation.mode,
       humanVerificationActive: verification.isBlocked(),
-      storage: tracedStorage.health(),
+      storage: storageHealth(),
       isQueueOwner: isOwner,
       sessionLimitReached: false,
       hourlyLimitReached: false,
       rateLimited: false,
-      draftPresent: false,
-      chatVerified: true,
-      hasPersistedIntent: true,
-      sendAlreadyAttempted: true,
     };
 
-    const gate = evaluateSendGates(base);
+    const gate = evaluateExecutionGates(base);
     if (!gate.allowed) {
       deps.logger.warn("bootstrap", "recovered transaction left unresolved by a gate", {
         jobId: recovered.jobId,
@@ -1469,7 +1568,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       return;
     }
 
-    if (recovered.phase !== "send-attempted") {
+    if (!isSendCommitted(recovered)) {
       // Nothing was clicked, so there is nothing to verify. Clearing the record
       // is the whole action, and it is not a send.
       deps.logger.info("bootstrap", "discarding an uncommitted transaction", {
@@ -1477,6 +1576,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         phase: recovered.phase,
       });
       await communicationService.discardRecovered();
+      return;
+    }
+
+    if (recovered.phase === "uncertain") {
+      panel.toast(
+        "warn",
+        "上次发送结果仍不确定。JobPilot 已保留记录且不会再次发送，请先人工确认对话。",
+      );
       return;
     }
 

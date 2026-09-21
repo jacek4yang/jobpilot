@@ -150,16 +150,16 @@ describe("GMStorage", () => {
     expect(await storage.get("missing")).toBeUndefined();
   });
 
-  it("returns undefined for a non-JSON payload instead of throwing", async () => {
+  it("reports a non-JSON payload as corruption", async () => {
     backing.set(`${KEY_PREFIX}broken`, "{ not json");
     const storage = new GMStorage();
-    await expect(storage.get("broken")).resolves.toBeUndefined();
+    await expect(storage.get("broken")).rejects.toBeInstanceOf(SyntaxError);
   });
 
-  it("returns undefined for a truncated payload", async () => {
+  it("reports a truncated payload as corruption", async () => {
     backing.set(`${KEY_PREFIX}truncated`, '{"a":');
     const storage = new GMStorage();
-    expect(await storage.get("truncated")).toBeUndefined();
+    await expect(storage.get("truncated")).rejects.toBeInstanceOf(SyntaxError);
   });
 
   it("deletes a key", async () => {
@@ -188,20 +188,20 @@ describe("GMStorage", () => {
     expect(await storage.get<{ a: number }>("config")).toEqual({ a: 1 });
   });
 
-  it("degrades to no-ops when the GM globals are missing entirely", async () => {
+  it("fails loudly when the GM globals are missing entirely", async () => {
     removeGmStubs();
     const storage = new GMStorage();
-    await expect(storage.set("config", { a: 1 })).resolves.toBeUndefined();
-    await expect(storage.get("config")).resolves.toBeUndefined();
-    await expect(storage.delete("config")).resolves.toBeUndefined();
+    await expect(storage.set("config", { a: 1 })).rejects.toThrow("GM_setValue is unavailable");
+    await expect(storage.get("config")).rejects.toThrow("GM_getValue is unavailable");
+    await expect(storage.delete("config")).rejects.toThrow("GM_deleteValue is unavailable");
     expect(await storage.keys()).toEqual([]);
   });
 
-  it("does not throw when the stored value is not JSON serialisable", async () => {
+  it("reports values that are not JSON serialisable", async () => {
     const storage = new GMStorage();
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
-    await expect(storage.set("cyclic", cyclic)).resolves.toBeUndefined();
+    await expect(storage.set("cyclic", cyclic)).rejects.toThrow();
   });
 
   it("satisfies the Storage port", () => {

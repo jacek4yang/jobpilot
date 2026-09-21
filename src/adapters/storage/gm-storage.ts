@@ -37,45 +37,38 @@ const gmFunction = <T extends (...args: never[]) => unknown>(name: string): T | 
 /**
  * Reads a value and parses it as JSON.
  *
- * Two failure modes are tolerated silently, because both are indistinguishable
- * from "nothing stored yet" and neither may crash the call site:
- *  - the key is absent (or the host returned its own default), and
- *  - the payload is not valid JSON (hand-edited or truncated storage).
+ * A missing key is normal. A malformed payload is not: treating corruption as
+ * an empty install could overwrite the only durable duplicate-send record.
+ * Let JSON.parse throw so the health wrapper can enter degraded read-only mode.
  */
 const parseStored = (raw: unknown): unknown => {
   if (raw === undefined) return undefined;
   if (typeof raw !== "string") return raw;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
+  return JSON.parse(raw);
 };
 
 export class GMStorage implements Storage {
-  get<T>(key: string): Promise<T | undefined> {
+  async get<T>(key: string): Promise<T | undefined> {
     const reader = gmFunction<ReadValue>("GM_getValue");
-    if (reader === undefined) return Promise.resolve(undefined);
+    if (reader === undefined) throw new Error("GM_getValue is unavailable");
     const parsed = parseStored(reader(prefixed(key), undefined));
-    return Promise.resolve(parsed as T | undefined);
+    return parsed as T | undefined;
   }
 
   set<T>(key: string, value: T): Promise<void> {
     const writer = gmFunction<WriteValue>("GM_setValue");
-    if (writer === undefined) return Promise.resolve();
+    if (writer === undefined) return Promise.reject(new Error("GM_setValue is unavailable"));
     try {
       writer(prefixed(key), JSON.stringify(value));
-    } catch {
-      // Unserialisable (cyclic / BigInt). Dropping the write is safer than
-      // corrupting the slot with a half-written payload, and the caller's
-      // storage contract does not carry an error channel.
+    } catch (error) {
+      return Promise.reject(error);
     }
     return Promise.resolve();
   }
 
   delete(key: string): Promise<void> {
     const remover = gmFunction<DeleteValue>("GM_deleteValue");
-    if (remover === undefined) return Promise.resolve();
+    if (remover === undefined) return Promise.reject(new Error("GM_deleteValue is unavailable"));
     remover(prefixed(key));
     return Promise.resolve();
   }

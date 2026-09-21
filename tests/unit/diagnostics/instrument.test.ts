@@ -134,7 +134,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 10) },
     );
 
@@ -153,7 +153,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 25) },
     );
     await traced.runEffect(effect("persist"), initialContext(NOW));
@@ -165,6 +165,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     const traced = traceOrchestrator(
       {
+        abortCurrent: () => {},
         runEffect: async () => {
           throw new Error("boom");
         },
@@ -182,6 +183,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     const traced = traceOrchestrator(
       {
+        abortCurrent: () => {},
         runEffect: async () => {
           const error = new Error("aborted");
           error.name = "AbortError";
@@ -204,7 +206,7 @@ describe("effect tracing", () => {
     const rec = recorder();
     let clock = 0;
     const traced = traceOrchestrator(
-      { runEffect: async () => {}, dispose: () => {} },
+      { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
       { recorder: rec, now: () => (clock += 5_000), budgets: { persist: 1_000 } },
     );
     await traced.runEffect(effect("persist"), initialContext(NOW));
@@ -212,7 +214,7 @@ describe("effect tracing", () => {
   });
 
   it("ships budgets for every common effect", () => {
-    for (const name of ["scan-jobs", "load-job", "evaluate-job", "apply-job"]) {
+    for (const name of ["scan-jobs", "load-job", "evaluate-job", "contact-job"]) {
       expect(DEFAULT_EFFECT_BUDGETS[name]).toBeGreaterThan(0);
     }
   });

@@ -6,10 +6,14 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./tests/browser",
-  fullyParallel: true,
+  // The production bundle holds a real origin-scoped Web Lock. Running fixture
+  // pages concurrently would make unrelated tests look like competing tabs
+  // and turn UI coverage into ownership-race coverage. Dedicated cross-tab
+  // tests create their tabs explicitly; ordinary journeys run serially.
+  fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   timeout: 30_000,
   use: {

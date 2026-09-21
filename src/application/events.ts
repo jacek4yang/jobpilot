@@ -25,17 +25,9 @@ export type AutomationEvent =
   | { readonly type: "JOB_LOADED"; readonly job: JobDetail }
   | { readonly type: "JOB_LOAD_FAILED"; readonly error: string }
   | { readonly type: "EVALUATED"; readonly evaluation: Evaluation }
-  | { readonly type: "APPLY_STARTED"; readonly job: JobDetail }
-  | { readonly type: "APPLY_SUBMITTED"; readonly evidence: string }
-  | {
-      readonly type: "APPLY_ALREADY_DONE";
-      readonly evidence: string;
-    }
-  | { readonly type: "APPLY_NEEDS_CONFIRMATION"; readonly evidence: string }
-  | { readonly type: "APPLY_FAILED"; readonly error: string; readonly retryable: boolean }
-  | { readonly type: "VERIFICATION_CONFIRMED"; readonly evidence: string }
-  | { readonly type: "VERIFICATION_NEGATIVE"; readonly evidence: string }
-  | { readonly type: "VERIFICATION_INDETERMINATE"; readonly evidence: string }
+  | { readonly type: "CONTACT_STARTED"; readonly job: JobDetail }
+  | { readonly type: "CONTACT_CONFIRMED"; readonly evidence: string }
+  | { readonly type: "CONTACT_UNCERTAIN"; readonly evidence: string }
   | { readonly type: "BLOCKED"; readonly reason: BlockReason; readonly evidence: string }
   | {
       readonly type: "COOLDOWN_ELAPSED";
@@ -54,8 +46,7 @@ export type Effect =
   | { readonly type: "scan-jobs" }
   | { readonly type: "load-job"; readonly summary: JobSummary }
   | { readonly type: "evaluate-job"; readonly job: JobDetail }
-  | { readonly type: "apply-job"; readonly job: JobDetail }
-  | { readonly type: "verify-application"; readonly job: JobDetail }
+  | { readonly type: "contact-job"; readonly job: JobDetail }
   | { readonly type: "schedule-cooldown"; readonly delayMs: number }
   | { readonly type: "notify"; readonly level: "info" | "warn" | "error"; readonly message: string }
   | { readonly type: "persist" }

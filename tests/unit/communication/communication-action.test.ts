@@ -106,6 +106,58 @@ describe("findCommunicateButton", () => {
   });
 });
 
+describe("openConversation", () => {
+  const replaceWithFixture = (root: ParentNode, name: string): void => {
+    const html = readFileSync(
+      fileURLToPath(new URL(`../../fixtures/boss/${name}`, import.meta.url)),
+      "utf8",
+    );
+    const document = root as Document;
+    document.body.innerHTML = html;
+  };
+
+  it("clicks the exact contact control once and waits for the intended chat", async () => {
+    const root = load("success-modal.html");
+    const button = root.querySelector("button");
+    expect(button).not.toBeNull();
+    let clicks = 0;
+    button?.addEventListener("click", () => {
+      clicks += 1;
+      replaceWithFixture(root, "chat-conversation.html");
+    });
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 2,
+      scheduler: (run) => run(),
+    });
+
+    expect(result.kind).toBe("ready");
+    expect(clicks).toBe(1);
+  });
+
+  it("fails closed when the opened conversation belongs to another job", async () => {
+    const root = load("success-modal.html");
+    root.querySelector("button")?.addEventListener("click", () => {
+      replaceWithFixture(root, "chat-wrong-conversation.html");
+    });
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 2,
+      scheduler: (run) => run(),
+    });
+
+    expect(result.kind).toBe("chat-mismatch");
+  });
+
+  it("never clicks a broad fallback when the exact control is absent", async () => {
+    const result = await actionFor(load("unknown-modal.html")).openConversation(intentFor(), {
+      maxAttempts: 1,
+    });
+    expect(result.kind).toBe("blocked");
+    expect(result.kind === "blocked" ? result.reason : "").toBe("selector-missing");
+  });
+});
+
 describe("prepareMessage", () => {
   it("reports a draft and leaves the editor byte-for-byte untouched", async () => {
     const root = load("chat-with-draft.html");

@@ -30,13 +30,11 @@ export const localizeStatus = (status: string): string => {
     case "validating":
     case "checking":
       return t("queue.statusChecking");
-    case "applying":
+    case "contacting":
     case "preparing":
       return t("queue.statusApplying");
     case "chatting":
       return t("queue.statusChatting");
-    case "verifying":
-      return t("queue.statusVerifying");
     case "completed":
     case "submitted":
       return t("queue.statusCompleted");

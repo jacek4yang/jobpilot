@@ -111,8 +111,7 @@ export const existingFixtures = (): readonly string[] => KNOWN_FIXTURES.filter(f
  *       .jobpilot-root              <- the panel, `display:flex` when expanded
  *         .jobpilot-header > .jobpilot-title
  *         .jobpilot-dot[data-state] <- the state readout
- *         .jobpilot-tabs > .jobpilot-tab
- *         .jobpilot-actions > button.jobpilot-btn (Start/Pause/Resume/Skip/Stop)
+ *         .jobpilot-panel[data-panel="home"] (the single production surface)
  *
  * A `.jobpilot-hidden` class (`display: none !important`) marks the collapsed
  * element, so visibility assertions are meaningful.
@@ -134,11 +133,11 @@ export const PANEL_SAFETY_CHIP = ".jobpilot-safety-chip";
 export const PANEL_PAGE_CHIP = ".jobpilot-page-chip";
 export const PANEL_MODE_CHIP = ".jobpilot-mode-chip";
 export const PANEL_TITLE = ".jobpilot-title";
-export const PANEL_ACTIONS = ".jobpilot-actions";
+export const PANEL_ACTIONS = ".jobpilot-step-actions";
 export const PANEL_LAUNCHER = ".jobpilot-launcher";
-export const PANEL_START = '.jobpilot-actions button.jobpilot-btn[data-action="start"]';
-export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn[data-action="pause"]';
-export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn[data-action="stop"]';
+export const PANEL_START = 'button.jobpilot-btn[data-action="start-batch"]';
+export const PANEL_PAUSE = 'button.jobpilot-btn[data-action="pause-batch"]';
+export const PANEL_STOP = 'button.jobpilot-btn[data-action="stop-batch"]';
 
 /**
  * Page kinds observed from the built userscript, per fixture, on the loopback
@@ -173,8 +172,7 @@ export const RUNNING_STATES = [
   "evaluating",
   "opening",
   "validating",
-  "applying",
-  "verifying",
+  "contacting",
   "cooldown",
 ] as const;
 
@@ -222,6 +220,27 @@ export const loadHarness = async (
   options: LoadHarnessOptions = {},
 ): Promise<HarnessLoad> => {
   const { origin = GUARDED_ORIGIN, query = {}, waitForUserscript = true } = options;
+
+  // The loopback fixture is intentionally served over plain HTTP while using
+  // the BOSS hostname alias. Chromium therefore does not expose Web Locks
+  // (the alias is not a secure context), although production BOSS HTTPS does.
+  // Install the smallest standards-shaped single-page lock so browser journeys
+  // exercise the production ownership gate instead of failing at a harness
+  // transport limitation. Cross-tab contention is covered with a shared fake
+  // in the navigator-lock unit suite.
+  await page.addInitScript(() => {
+    if ((navigator as Navigator & { locks?: unknown }).locks !== undefined) return;
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          _options: { readonly ifAvailable: boolean },
+          callback: (lock: object) => Promise<void>,
+        ): Promise<void> => callback({ name: "jobpilot-execution" }),
+      },
+    });
+  });
 
   const pageErrors: Error[] = [];
   const consoleErrors: string[] = [];

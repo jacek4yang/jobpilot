@@ -77,6 +77,12 @@ const blockFor = (context: AutomationContext, reason: PauseReason, now: number):
   const next = enter(context, "paused", now, {
     pauseReason: reason,
     lastMessage: describePauseReason(reason),
+    lastTerminalReason:
+      reason.kind === "user"
+        ? "paused"
+        : reason.kind === "ambiguous-state"
+          ? "needs-confirmation"
+          : "blocked",
   });
   return {
     context: next,
@@ -87,12 +93,6 @@ const blockFor = (context: AutomationContext, reason: PauseReason, now: number):
     ],
   };
 };
-
-const isRetryableFailure = (
-  retryable: boolean,
-  consecutiveFailures: number,
-  maxRetries: number,
-): boolean => retryable && consecutiveFailures < maxRetries;
 
 /**
  * Pure state machine.
@@ -121,7 +121,7 @@ export const reduce = (
           lastMessage: "正在扫描职位",
           consecutiveFailures: 0,
         }),
-        ["pauseReason"],
+        ["pauseReason", "lastTerminalReason"],
       );
       return {
         context: started,
@@ -155,7 +155,11 @@ export const reduce = (
       // An explicit abort discards the batch: the pending queue is a live view
       // of one scan, not work the user asked to keep.
       const stopped = clearFields(
-        enter(context, "idle", now, { lastMessage: "已停止", pendingSummaries: [] }),
+        enter(context, "idle", now, {
+          lastMessage: "已停止",
+          pendingSummaries: [],
+          lastTerminalReason: "stopped",
+        }),
         ["pauseReason", "currentJob", "currentStatus"],
       );
       return { context: stopped, effects: [{ type: "stop" }, { type: "persist" }] };
@@ -202,6 +206,7 @@ export const reduce = (
       const next = enter(context, "failed", now, {
         lastError: event.error,
         lastMessage: `页面类型为 ${event.pageKind} 时扫描失败`,
+        lastTerminalReason: "failed",
       });
       return { context: next, effects: [{ type: "persist" }, { type: "stop" }] };
     }
@@ -231,6 +236,7 @@ export const reduce = (
           lastError: event.error,
           lastMessage: `打开职位详情失败：${event.error}`,
           consecutiveFailures: context.consecutiveFailures + 1,
+          lastTerminalReason: "failed",
         }),
         effects: [{ type: "persist" }, { type: "stop" }],
       };
@@ -247,14 +253,11 @@ export const reduce = (
         now,
       );
 
-      if (!evaluation.accepted && evaluation.rejections.length > 0) {
-        return blockFor(base, { kind: "ambiguous-state", evidence: "rejected" }, now);
-      }
-
       if (!evaluation.accepted) {
         const reasonText =
+          evaluation.rejections[0]?.message ??
           evaluation.reasons.find((reason) => reason.ruleId === "score.threshold")?.message ??
-          "未达到接收分数线";
+          "未达到接收条件";
         return {
           context: enter(base, "cooldown", now, {
             lastMessage: `已跳过：${reasonText}`,
@@ -262,6 +265,7 @@ export const reduce = (
           effects: [
             { type: "notify", level: "info", message: `已跳过职位：${reasonText}` },
             { type: "persist" },
+            { type: "schedule-cooldown", delayMs: 0 },
           ],
         };
       }
@@ -286,77 +290,18 @@ export const reduce = (
       };
     }
 
-    case "APPLY_STARTED": {
+    case "CONTACT_STARTED": {
       if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      const next = enter(context, "applying", now, { currentJob: event.job });
-      return { context: next, effects: [{ type: "apply-job", job: event.job }] };
+      const next = enter(context, "contacting", now, { currentJob: event.job });
+      return { context: next, effects: [{ type: "contact-job", job: event.job }] };
     }
 
-    case "APPLY_SUBMITTED": {
-      if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      // The platform reported success, but we still verify before trusting it.
-      const next = enter(context, "verifying", now, {
-        currentStatus: "submitted",
-        lastMessage: "已提交，正在核实",
-      });
-      if (context.currentJob === undefined)
-        return { context: next, effects: [{ type: "persist" }] };
-      return {
-        context: next,
-        effects: [{ type: "verify-application", job: context.currentJob }, { type: "persist" }],
-      };
-    }
-
-    case "APPLY_ALREADY_DONE": {
-      if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      const base = withStats(context, { skipped: context.stats.skipped + 1 }, now);
-      const next = enter(base, "cooldown", now, {
-        currentStatus: "verified",
-        lastMessage: `已投递过：${event.evidence}`,
-      });
-      return { context: next, effects: [{ type: "persist" }] };
-    }
-
-    case "APPLY_NEEDS_CONFIRMATION": {
-      // The click may or may not have registered. We must not retry blindly.
+    case "CONTACT_UNCERTAIN": {
+      // A message may have been sent. Never retry blindly.
       return blockFor(context, { kind: "ambiguous-state", evidence: event.evidence }, now);
     }
 
-    case "APPLY_FAILED": {
-      const shouldRetry = isRetryableFailure(
-        event.retryable,
-        context.consecutiveFailures,
-        options.maxRetries,
-      );
-      const failures = context.consecutiveFailures + 1;
-      const base = withStats(context, { failed: context.stats.failed + 1 }, now);
-
-      if (shouldRetry) {
-        return {
-          context: enter(base, "cooldown", now, {
-            consecutiveFailures: failures,
-            lastError: event.error,
-            lastMessage: `尝试失败，正在重试：${event.error}`,
-          }),
-          effects: [{ type: "persist" }],
-        };
-      }
-
-      return {
-        context: enter(base, "failed", now, {
-          consecutiveFailures: failures,
-          lastError: event.error,
-          lastMessage: `投递失败：${event.error}`,
-        }),
-        effects: [
-          { type: "notify", level: "error", message: `投递失败：${event.error}` },
-          { type: "persist" },
-          { type: "stop" },
-        ],
-      };
-    }
-
-    case "VERIFICATION_CONFIRMED": {
+    case "CONTACT_CONFIRMED": {
       if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
       const appliedAt = now;
       const base = withStats(context, { applied: context.stats.applied + 1 }, now);
@@ -365,29 +310,19 @@ export const reduce = (
           sessionApplications: context.sessionApplications + 1,
           applicationTimestamps: [...context.applicationTimestamps, appliedAt],
           consecutiveFailures: 0,
-          lastMessage: `已投递并核实（${event.evidence}）`,
+          lastMessage: `消息已发送并核实（${event.evidence}）`,
         }),
         ["currentJob", "currentStatus"],
       );
       return {
         context: next,
-        effects: [{ type: "notify", level: "info", message: "投递已确认" }, { type: "persist" }],
+        effects: [
+          { type: "notify", level: "info", message: "沟通消息已确认发送" },
+          { type: "persist" },
+          { type: "schedule-cooldown", delayMs: 0 },
+        ],
       };
     }
-
-    case "VERIFICATION_NEGATIVE": {
-      if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
-      // The platform never received the application. Safe to treat as a
-      // non-event so the job can be retried within the session policy.
-      const next = enter(context, "cooldown", now, {
-        lastMessage: `未投递：${event.evidence}`,
-        currentStatus: "approved",
-      });
-      return { context: next, effects: [{ type: "persist" }] };
-    }
-
-    case "VERIFICATION_INDETERMINATE":
-      return blockFor(context, { kind: "ambiguous-state", evidence: event.evidence }, now);
 
     case "BLOCKED": {
       const reasonMap = {
@@ -415,10 +350,16 @@ export const reduce = (
           effects: [{ type: "load-job", summary: next }],
         };
       }
-      // Deliberately returns to scanning: the queue decides what runs next,
-      // which keeps a single scheduling path instead of many. When the pending
-      // batch is drained, the legacy rescan loop resumes.
-      return { context: enter(context, "scanning", now), effects: [{ type: "scan-jobs" }] };
+      // A user-selected batch is finite. Once its snapshot is drained it must
+      // terminate, never rescan the page and rediscover already-processed jobs.
+      return {
+        context: enter(context, "idle", now, {
+          lastMessage: "本次批量任务已完成",
+          lastTerminalReason: "completed",
+          queueDepth: 0,
+        }),
+        effects: [{ type: "persist" }],
+      };
     }
 
     case "QUEUE_CHANGED": {
@@ -428,6 +369,11 @@ export const reduce = (
 
     case "PAGE_CHANGED": {
       if (!isActive(context.state)) return { context, effects: noEffects };
+      // Opening the positively verified chat is the expected route transition
+      // of the communication transaction, not an interruption.
+      if (context.state === "contacting" && event.pageKind === "chat") {
+        return { context, effects: noEffects };
+      }
       // A route change mid-action invalidates the page we were driving.
       return blockFor(context, { kind: "page-changed", evidence: event.pageKind }, now);
     }

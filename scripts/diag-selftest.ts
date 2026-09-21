@@ -140,7 +140,7 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
   // Effects, through the tracing orchestrator.
   let effectClock = 0;
   const tracedOrchestrator = traceOrchestrator(
-    { runEffect: async () => {}, dispose: () => {} },
+    { abortCurrent: () => {}, runEffect: async () => {}, dispose: () => {} },
     { recorder, now: () => (effectClock += 12), budgets: DEFAULT_EFFECT_BUDGETS },
   );
   await tracedOrchestrator.runEffect({ type: "persist" }, context);
@@ -236,7 +236,24 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
 
     return createCommunicationService({
       runner: {
-        run: async (intent) => {
+        run: async (intent, runOptions) => {
+          runOptions?.onIdentityChecked?.({ verdict: "match", detail: "self-test chat" });
+          runOptions?.onDraftChecked?.(options.draftPresent ?? false);
+          if (options.draftPresent === true) {
+            return {
+              kind: "aborted",
+              failure: "DRAFT_PRESENT",
+              detail: "self-test draft present",
+            };
+          }
+          const authorization = await runOptions?.authorizeSend?.(intent);
+          if (authorization !== undefined && !authorization.allowed) {
+            return {
+              kind: "aborted",
+              failure: "USER_INTERRUPTED",
+              detail: authorization.detail,
+            };
+          }
           // The real runner commits the point of no return before clicking.
           // Without this the attempt event could never fire and the gate would
           // be asserting something unreachable.
@@ -261,8 +278,6 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
         hourlyLimitReached: false,
         rateLimited: false,
       }),
-      verifyChat: () => ({ verified: true, detail: "conversation open" }),
-      isDraftPresent: () => options.draftPresent ?? false,
       outgoingCount: () => 0,
       readPersistedIntent: () => persisted as never,
       persistIntent,

@@ -102,6 +102,19 @@ export const createController = (options: ControllerOptions): Controller => {
   function dispatch(event: AutomationEvent): void {
     if (disposed) return;
 
+    const expectedChatTransition =
+      event.type === "PAGE_CHANGED" && current.state === "contacting" && event.pageKind === "chat";
+    if (
+      !expectedChatTransition &&
+      (event.type === "STOP" ||
+        event.type === "PAUSE" ||
+        event.type === "PAGE_CHANGED" ||
+        event.type === "WATCHDOG_TIMEOUT" ||
+        event.type === "BLOCKED")
+    ) {
+      options.orchestrator.abortCurrent();
+    }
+
     // Reentrancy guard: effects dispatch follow-up events, so a naive
     // implementation would recurse. Queue instead and drain iteratively.
     if (draining) {

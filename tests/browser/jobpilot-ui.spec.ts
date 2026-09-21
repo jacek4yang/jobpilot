@@ -41,6 +41,7 @@ import {
 test.use({ launchOptions: { args: HOST_MAPPING_ARGS } });
 
 test.describe("JobPilot panel on a job-list fixture", () => {
+  test.describe.configure({ mode: "serial" });
   test.beforeAll(() => {
     test.skip(!isBuildPresent(), MISSING_BUILD_MESSAGE);
   });
@@ -111,15 +112,15 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     expect(snapshot.expanded, "panel starts expanded").toBe(true);
     expect(RUNNING_STATES).not.toContain(snapshot.state);
 
-    // Assist mode is the default: Start is available, and every action that
-    // would only make sense mid-run is disabled until Start is pressed.
-    expect(snapshot.buttons.Start, "Start should be enabled while idle").toBe(false);
-    expect(snapshot.buttons.Pause, "Pause should be disabled while idle").toBe(true);
-    expect(snapshot.buttons.Resume, "Resume should be disabled while idle").toBe(true);
-    expect(snapshot.buttons.Stop, "Stop should be disabled while idle").toBe(true);
+    // A finite explicit selection is mandatory. Before scanning, Start and all
+    // mid-run controls are disabled.
+    expect(snapshot.buttons["Start-batch"], "Start should require a selection").toBe(true);
+    expect(snapshot.buttons["暂停"], "Pause should be disabled while idle").toBe(true);
+    expect(snapshot.buttons["继续"], "Resume should be disabled while idle").toBe(true);
+    expect(snapshot.buttons["停止"], "Stop should be disabled while idle").toBe(true);
 
     // Cross-check the same facts through the DOM, not just the JS snapshot.
-    await expect(page.locator(PANEL_START).first()).toBeEnabled();
+    await expect(page.locator(PANEL_START).first()).toBeDisabled();
     await expect(page.locator(PANEL_PAUSE).first()).toBeDisabled();
     await expect(page.locator(PANEL_STOP).first()).toBeDisabled();
   });
@@ -208,25 +209,19 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     await expect(page.locator(".jobpilot-safety-chip").first()).toHaveText("安全运行");
 
     // Action buttons in Chinese
-    const startBtn = page.locator('.jobpilot-actions button[data-action="start"]').first();
+    const startBtn = page.locator('button[data-action="start-batch"]').first();
     await expect(startBtn).toBeVisible();
-    await expect(startBtn).toHaveText("开始");
+    await expect(startBtn).toHaveText("开始投递");
 
-    const pauseBtn = page.locator('.jobpilot-actions button[data-action="pause"]').first();
+    const pauseBtn = page.locator('button[data-action="pause-batch"]').first();
     await expect(pauseBtn).toHaveText("暂停");
 
-    const stopBtn = page.locator('.jobpilot-actions button[data-action="stop"]').first();
+    const stopBtn = page.locator('button[data-action="stop-batch"]').first();
     await expect(stopBtn).toHaveText("停止");
 
-    // Tabs in Chinese
-    const tabList = page.locator(".jobpilot-tabs .jobpilot-tab");
-    const tabTexts = await tabList.allTextContents();
-    expect(tabTexts).toEqual(
-      expect.arrayContaining(["首页", "搜索", "匹配", "历史", "规则", "消息", "设置"]),
-    );
-    // The 队列 tab is intentionally hidden while the legacy task queue has no
-    // producer (the Home batch selection replaced it).
-    expect(tabTexts).not.toContain("队列");
+    // Production exposes one operation surface, not a dashboard of dead tabs.
+    await expect(page.locator(".jobpilot-tabs")).toBeHidden();
+    await expect(page.locator('.jobpilot-panel[data-panel="home"]')).toBeVisible();
 
     // Three-step batch flow on Home page. Step ② (选择职位) only renders after
     // a scan has produced matches, so a fresh panel shows ① then ③; the full
@@ -237,47 +232,19 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     await expect(stepTitles.nth(1)).toHaveText("批量投递");
   });
 
-  test("supports smooth tab switching across sections", async ({ page }) => {
+  test("scans the current page into an explicit finite selection", async ({ page }) => {
     await loadHarness(page, "job-list.html");
     expect(await waitForPanel(page)).toBe(true);
 
-    // Initial tab is home
-    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    await page.locator('button[data-action="discover-jobs"]').click();
+    const checkboxes = page.locator(".jobpilot-step-match-row input[type=checkbox]");
+    await expect(checkboxes).toHaveCount(4);
+    await expect(checkboxes.first()).toBeChecked();
+    await expect(page.locator(PANEL_START).first()).toBeEnabled();
+    await expect(page.locator(".jobpilot-step-count")).toContainText("4");
 
-    // Switch to search tab
-    await page.locator('.jobpilot-tab[data-tab="search"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="search"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
-      "data-active",
-      "false",
-    );
-
-    // Switch to rules tab
-    await page.locator('.jobpilot-tab[data-tab="rules"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="rules"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-
-    // Switch to messages tab
-    await page.locator('.jobpilot-tab[data-tab="messages"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="messages"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-
-    // Switch to settings tab
-    await page.locator('.jobpilot-tab[data-tab="settings"]').first().click();
-    await expect(page.locator('.jobpilot-panel[data-panel="settings"]').first()).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    await checkboxes.first().uncheck();
+    await expect(page.locator(".jobpilot-step-count")).toContainText("3");
   });
 
   test("supports collapsing to launcher pill and expanding back", async ({ page }) => {

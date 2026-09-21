@@ -23,7 +23,7 @@ import type { StorageHealth } from "../diagnostics/trace";
 import {
   type CommunicationIntent,
   createIntent,
-  hasSendBeenAttempted,
+  isSendCommitted,
 } from "../domain/communication/intent";
 import {
   type MessageTemplate,
@@ -32,6 +32,7 @@ import {
 } from "../domain/communication/template";
 import type { JobDetail } from "../domain/job/job";
 import type { Clock } from "../domain/support/shared";
+import type { BlockReason } from "../ports/job-platform";
 import type { Logger } from "../ports/logger";
 import type { CommunicationOutcome, CommunicationRunner } from "./communication-runner";
 import {
@@ -54,7 +55,7 @@ export type CommunicationRefusal =
 export type CommunicationServiceResult =
   | { readonly kind: "sent"; readonly evidence: string }
   | { readonly kind: "uncertain"; readonly detail: string }
-  | { readonly kind: "blocked"; readonly reason: string; readonly evidence: string }
+  | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string }
   | { readonly kind: "aborted"; readonly detail: string }
   | { readonly kind: "refused"; readonly reason: CommunicationRefusal; readonly message: string };
 
@@ -68,14 +69,12 @@ export interface CommunicationServiceDeps {
     GateInput,
     "draftPresent" | "chatVerified" | "hasPersistedIntent" | "sendAlreadyAttempted"
   >;
-  /** Confirms the conversation matches the job. Must be positive evidence. */
-  readonly verifyChat: (job: JobDetail) => { readonly verified: boolean; readonly detail: string };
-  /** True when the editor already contains text the user typed. */
-  readonly isDraftPresent: () => boolean;
   /** Current outgoing-message count for the message text. */
   readonly outgoingCount: (text: string) => number;
   readonly readPersistedIntent: () => CommunicationIntent | undefined;
   readonly persistIntent: (intent: CommunicationIntent) => Promise<void>;
+  /** Reads the durable store after a write; in-memory echo is not sufficient. */
+  readonly confirmPersistedIntent?: (intent: CommunicationIntent) => Promise<boolean>;
   readonly clearIntent: () => Promise<void>;
   readonly storageHealth: () => StorageHealth;
   readonly templates: () => readonly MessageTemplate[];
@@ -140,6 +139,7 @@ export interface CommunicateInput {
   readonly job: JobDetail;
   /** TTL for the transaction. Bounds how long an intent may stay armed. */
   readonly ttlMs?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface CommunicationService {
@@ -231,6 +231,35 @@ const reportContextInvariants = (
   }
 };
 
+const reportSendInvariant = (
+  recorder: DiagnosticRecorder,
+  gate: GateResult,
+  jobId: string,
+  transactionId: string,
+): void => {
+  const invariant =
+    gate.reason === "draft-present"
+      ? INVARIANTS.noSendWithDraftPresent
+      : gate.reason === "chat-unverified"
+        ? INVARIANTS.noSendWithoutVerifiedChat
+        : gate.reason === "storage-unhealthy"
+          ? INVARIANTS.noSendWhileStorageUnhealthy
+          : gate.reason === "not-owner"
+            ? INVARIANTS.noSendWithoutQueueOwnership
+            : gate.reason === "already-attempted"
+              ? INVARIANTS.noSecondSendAfterAttempt
+              : gate.reason === "no-intent"
+                ? INVARIANTS.noSendWithoutPersistedIntent
+                : undefined;
+  if (invariant !== undefined) {
+    reportInvariantViolation(recorder, {
+      invariant,
+      detail: gate.message ?? gate.reason ?? "send authorization failed",
+      context: { jobId, transactionId },
+    });
+  }
+};
+
 export const createCommunicationService = (
   deps: CommunicationServiceDeps,
 ): CommunicationService => {
@@ -254,8 +283,8 @@ export const createCommunicationService = (
 
       // --- 1. An in-flight transaction for this job is never overtaken ------
       const existing = deps.readPersistedIntent();
-      if (existing !== undefined && existing.jobId === job.id) {
-        if (hasSendBeenAttempted(existing)) {
+      if (existing !== undefined) {
+        if (existing.jobId === job.id && isSendCommitted(existing)) {
           // Absolute: a click may have gone out. Verify, never resend.
           //
           // Both invariants below are declared in gates.ts, and this is where
@@ -281,6 +310,11 @@ export const createCommunicationService = (
               "a send was already dispatched for this job; verify the conversation before retrying",
           };
         }
+        return {
+          kind: "refused",
+          reason: "intent-in-flight",
+          message: "已有一笔沟通事务尚未由你确认，JobPilot 不会覆盖或并行发送。",
+        };
       }
 
       // --- 2. Resolve the message BEFORE gating ----------------------------
@@ -322,19 +356,6 @@ export const createCommunicationService = (
         reportContextInvariants(deps.recorder, contextGate, jobId);
         return contextRefusal;
       }
-
-      // The page is read only once the cheap gates have passed.
-      const chat = deps.verifyChat(job);
-      const draftPresent = deps.isDraftPresent();
-      const persisted = deps.readPersistedIntent();
-
-      deps.onIdentityChecked?.({
-        transactionId,
-        jobId,
-        verdict: chat.verified ? "match" : "insufficient",
-        signals: { detail: chat.detail, verified: chat.verified },
-      });
-      deps.onDraftChecked?.({ transactionId, jobId, present: draftPresent });
 
       // Report what the contact affordance resolved to, for diagnostics.
       //
@@ -391,49 +412,6 @@ export const createCommunicationService = (
         }
       }
 
-      // `hasPersistedIntent` is satisfied by the intent we are about to create,
-      // because creation happens before any click. The gate exists to prevent a
-      // *click* without a persisted record, and step 4 guarantees that ordering
-      // — so what is checked here is that persistence is actually available to
-      // record it, which the storage-health gate above already covered.
-      const gateInput = {
-        ...base,
-        draftPresent,
-        chatVerified: chat.verified,
-        hasPersistedIntent: deps.storageHealth().healthy,
-        sendAlreadyAttempted: persisted !== undefined && hasSendBeenAttempted(persisted),
-      };
-
-      const sendGate = evaluateSendGates(gateInput);
-      recordGateOutcome(deps.recorder, "send", sendGate, { jobId, transactionId });
-      const refused = decide(sendGate, "gate-blocked");
-      if (refused !== undefined) {
-        // The specific reason matters for triage, so map it onto the invariants
-        // it protects rather than returning a generic refusal.
-        if (sendGate.reason === "draft-present") {
-          reportInvariantViolation(deps.recorder, {
-            invariant: INVARIANTS.noSendWithDraftPresent,
-            detail: chat.detail,
-            context: { jobId },
-          });
-        }
-        if (sendGate.reason === "chat-unverified") {
-          reportInvariantViolation(deps.recorder, {
-            invariant: INVARIANTS.noSendWithoutVerifiedChat,
-            detail: chat.detail,
-            context: { jobId },
-          });
-        }
-        if (sendGate.reason === "storage-unhealthy") {
-          reportInvariantViolation(deps.recorder, {
-            invariant: INVARIANTS.noSendWhileStorageUnhealthy,
-            detail: "persistence unavailable",
-            context: { jobId },
-          });
-        }
-        return refused;
-      }
-
       // --- 4. Persist the intent BEFORE the click ---------------------------
       // `sendAttemptedAt` is stamped by the runner; what we record here is the
       // transaction's existence and its target, which is what makes recovery
@@ -467,10 +445,27 @@ export const createCommunicationService = (
         expiresAt: intent.expiresAt,
       });
 
-      await deps.persistIntent(intent);
+      try {
+        await deps.persistIntent(intent);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        reportInvariantViolation(deps.recorder, {
+          invariant: INVARIANTS.noSendWithoutPersistedIntent,
+          detail,
+          context: { jobId, transactionId },
+        });
+        return {
+          kind: "refused",
+          reason: "gate-blocked",
+          message: "本地发送记录保存失败。为防止重复沟通，JobPilot 已停止本次操作。",
+        };
+      }
 
-      const confirmed = deps.readPersistedIntent();
-      if (confirmed === undefined || confirmed.id !== intent.id) {
+      const confirmed =
+        deps.confirmPersistedIntent === undefined
+          ? deps.readPersistedIntent()?.id === intent.id
+          : await deps.confirmPersistedIntent(intent);
+      if (!confirmed) {
         reportInvariantViolation(deps.recorder, {
           invariant: INVARIANTS.noSendWithoutPersistedIntent,
           detail: "the intent could not be read back after being persisted",
@@ -504,14 +499,66 @@ export const createCommunicationService = (
       // The runner owns the click, the never-send-twice guard, and the
       // verification. We only translate its outcome.
       let outcome: CommunicationOutcome;
+      let authorizationChecked = false;
       try {
-        outcome = await deps.runner.run(intent);
+        outcome = await deps.runner.run(intent, {
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+          onIdentityChecked: (identity) => {
+            deps.onIdentityChecked?.({
+              transactionId,
+              jobId,
+              verdict: identity.verdict,
+              signals: { detail: identity.detail },
+            });
+          },
+          onDraftChecked: (present) => {
+            deps.onDraftChecked?.({ transactionId, jobId, present });
+          },
+          authorizeSend: async (currentIntent) => {
+            authorizationChecked = true;
+            const persisted = deps.readPersistedIntent();
+            const storage = deps.storageHealth();
+            const sendGate = evaluateSendGates({
+              ...deps.baseGateInput(),
+              storage,
+              draftPresent: false,
+              chatVerified: true,
+              hasPersistedIntent: persisted?.id === currentIntent.id && storage.healthy,
+              sendAlreadyAttempted: persisted !== undefined && isSendCommitted(persisted),
+            });
+            recordGateOutcome(deps.recorder, "send", sendGate, { jobId, transactionId });
+            if (!sendGate.allowed) {
+              reportContextInvariants(deps.recorder, sendGate, jobId);
+              reportSendInvariant(deps.recorder, sendGate, jobId, transactionId);
+            }
+            return {
+              allowed: sendGate.allowed,
+              detail: sendGate.message ?? "发送安全检查未通过。",
+            };
+          },
+        });
       } catch (error) {
         // An exception here leaves the outcome unknown, which is `uncertain` —
         // never a failure that could be retried.
         const message = error instanceof Error ? error.message : String(error);
         deps.logger.error("communication", "runner threw", { error: message, jobId });
         return { kind: "uncertain", detail: `the send could not be completed: ${message}` };
+      }
+
+      // A runner implementation is not allowed to report a send while
+      // bypassing the final gate callback. This protects the composition root
+      // itself: replacing or mis-wiring the runner cannot silently turn the
+      // service's safety checks into decorative code.
+      if (outcome.kind === "sent" && !authorizationChecked) {
+        reportInvariantViolation(deps.recorder, {
+          invariant: INVARIANTS.noSendWithoutPersistedIntent,
+          detail: "the runner reported a send without evaluating final authorization",
+          context: { jobId, transactionId },
+        });
+        return {
+          kind: "uncertain",
+          detail: "发送路径未完成最终安全检查，结果无法确认。",
+        };
       }
 
       // Terminal tracing. These were declared and wired but never invoked, so a
@@ -581,14 +628,7 @@ export const createCommunicationService = (
       // The gates apply to recovery too. A recovered transaction is exactly
       // when a challenge or a broken storage layer is most likely, and this
       // path reads the live conversation, which is an action.
-      const gate = evaluateSendGates({
-        ...deps.baseGateInput(),
-        draftPresent: false,
-        chatVerified: true,
-        hasPersistedIntent: true,
-        // Deliberately true: it stops any send and leaves the runner to verify.
-        sendAlreadyAttempted: true,
-      });
+      const gate = evaluateExecutionGates(deps.baseGateInput());
       recordGateOutcome(deps.recorder, "recovery", gate, {
         transactionId: recovered.id,
         jobId: recovered.jobId,
@@ -615,8 +655,8 @@ export const createCommunicationService = (
         outcome = await deps.runner.run(
           recovered,
           options?.observeTimeoutMs === undefined
-            ? {}
-            : { observeTimeoutMs: options.observeTimeoutMs },
+            ? { verificationOnly: true }
+            : { observeTimeoutMs: options.observeTimeoutMs, verificationOnly: true },
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -659,7 +699,7 @@ export const createCommunicationService = (
       // Refuse to discard anything that might have been sent. Discarding a
       // `send-attempted` record would erase the evidence that a message may
       // have gone out, which is the one thing that must never be lost.
-      if (hasSendBeenAttempted(recovered)) {
+      if (isSendCommitted(recovered)) {
         reportInvariantViolation(deps.recorder, {
           invariant: INVARIANTS.noSecondSendAfterAttempt,
           detail: "refused to discard a transaction that may already have sent",

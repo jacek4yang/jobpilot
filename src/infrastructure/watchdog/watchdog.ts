@@ -112,7 +112,6 @@ export const DEFAULT_WATCHDOG_BUDGETS: readonly WatchdogBudget[] = [
   { state: "evaluating", timeoutMs: 10_000 },
   { state: "opening", timeoutMs: 30_000 },
   { state: "validating", timeoutMs: 10_000 },
-  { state: "applying", timeoutMs: 45_000 },
-  { state: "verifying", timeoutMs: 30_000 },
+  { state: "contacting", timeoutMs: 60_000 },
   { state: "cooldown", timeoutMs: 120_000 },
 ];

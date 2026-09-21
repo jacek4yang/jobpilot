@@ -104,7 +104,7 @@ describe("automation state machine", () => {
 
     it("marks active states correctly", () => {
       expect(isActive("scanning")).toBe(true);
-      expect(isActive("applying")).toBe(true);
+      expect(isActive("contacting")).toBe(true);
       expect(isActive("idle")).toBe(false);
       expect(isActive("paused")).toBe(false);
     });
@@ -165,12 +165,12 @@ describe("automation state machine", () => {
       expect(result.context.state).toBe("cooldown");
     });
 
-    it("pauses when a hard rule rejects, recording the reason", () => {
+    it("skips a hard-rule rejection and continues the finite batch", () => {
       const context = run(startContext(), [{ type: "JOB_LOADED", job: detail() }]).context;
       const result = run(context, [{ type: "EVALUATED", evaluation: rejectedByHardRule }]);
-      expect(result.context.state).toBe("paused");
-      expect(result.context.pauseReason).toBeDefined();
-      expect(result.effects).toContain("record-diagnostics");
+      expect(result.context.state).toBe("cooldown");
+      expect(result.context.stats.skipped).toBe(1);
+      expect(result.effects).toContain("schedule-cooldown");
     });
 
     it("never mutates the context it was given", () => {
@@ -181,107 +181,46 @@ describe("automation state machine", () => {
     });
   });
 
-  describe("applying and verification", () => {
+  describe("authoritative communication", () => {
     const approvedContext = (): AutomationContext =>
       run(run(startContext(), [{ type: "JOB_LOADED", job: detail() }]).context, [
         { type: "EVALUATED", evaluation: accepted },
       ]).context;
 
-    it("moves to applying and requests the apply effect", () => {
+    it("moves to contacting and requests the one communication effect", () => {
       const { context, effects } = run(approvedContext(), [
-        { type: "APPLY_STARTED", job: detail() },
+        { type: "CONTACT_STARTED", job: detail() },
       ]);
-      expect(context.state).toBe("applying");
-      expect(effects).toContain("apply-job");
+      expect(context.state).toBe("contacting");
+      expect(effects).toContain("contact-job");
     });
 
-    it("verifies after a submitted result rather than trusting it", () => {
-      const applying = run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context;
-      const { context, effects } = run(applying, [
-        { type: "APPLY_SUBMITTED", evidence: "toast appeared" },
-      ]);
-      expect(context.state).toBe("verifying");
-      expect(effects).toContain("verify-application");
-    });
-
-    it("pauses on an ambiguous apply outcome instead of retrying", () => {
-      const applying = run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context;
-      const { context, effects } = run(applying, [
-        { type: "APPLY_NEEDS_CONFIRMATION", evidence: "no confirmation seen" },
+    it("pauses on an uncertain send instead of retrying", () => {
+      const contacting = run(approvedContext(), [
+        { type: "CONTACT_STARTED", job: detail() },
+      ]).context;
+      const { context, effects } = run(contacting, [
+        { type: "CONTACT_UNCERTAIN", evidence: "no outgoing message observed" },
       ]);
       expect(context.state).toBe("paused");
       expect(context.pauseReason?.kind).toBe("ambiguous-state");
-      // Crucially: no second apply is attempted.
-      expect(effects).not.toContain("apply-job");
+      expect(context.lastTerminalReason).toBe("needs-confirmation");
+      expect(effects).not.toContain("contact-job");
     });
 
-    it("counts an application only once verification confirms it", () => {
-      const verifying = run(
-        run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context,
-        [{ type: "APPLY_SUBMITTED", evidence: "ok" }],
-      ).context;
-      const { context } = run(verifying, [
-        { type: "VERIFICATION_CONFIRMED", evidence: "status shows applied" },
+    it("counts a contact only after outgoing-message evidence confirms it", () => {
+      const contacting = run(approvedContext(), [
+        { type: "CONTACT_STARTED", job: detail() },
+      ]).context;
+      const { context, effects } = run(contacting, [
+        { type: "CONTACT_CONFIRMED", evidence: "outgoing count increased" },
       ]);
       expect(context.stats.applied).toBe(1);
       expect(context.sessionApplications).toBe(1);
       expect(context.applicationTimestamps).toHaveLength(1);
       expect(context.currentJob).toBeUndefined();
-    });
-
-    it("does not count an application when verification is negative", () => {
-      const verifying = run(
-        run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context,
-        [{ type: "APPLY_SUBMITTED", evidence: "ok" }],
-      ).context;
-      const { context } = run(verifying, [
-        { type: "VERIFICATION_NEGATIVE", evidence: "no application found" },
-      ]);
-      expect(context.stats.applied).toBe(0);
       expect(context.state).toBe("cooldown");
-    });
-
-    it("fails closed when verification is indeterminate", () => {
-      const verifying = run(
-        run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context,
-        [{ type: "APPLY_SUBMITTED", evidence: "ok" }],
-      ).context;
-      const { context } = run(verifying, [
-        { type: "VERIFICATION_INDETERMINATE", evidence: "page did not settle" },
-      ]);
-      expect(context.state).toBe("paused");
-      expect(context.pauseReason?.kind).toBe("ambiguous-state");
-    });
-
-    it("retries a retryable failure while attempts remain", () => {
-      const applying = run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context;
-      const { context } = run(applying, [
-        { type: "APPLY_FAILED", error: "network", retryable: true },
-      ]);
-      expect(context.state).toBe("cooldown");
-      expect(context.consecutiveFailures).toBe(1);
-    });
-
-    it("gives up and stops once retries are exhausted", () => {
-      const applying = run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context;
-      const first = run(applying, [
-        { type: "APPLY_FAILED", error: "network", retryable: true },
-      ]).context;
-      const second = run(first, [
-        { type: "APPLY_FAILED", error: "network", retryable: true },
-      ]).context;
-      const third = run(second, [{ type: "APPLY_FAILED", error: "network", retryable: true }]);
-      // maxRetries is 2, so the third consecutive failure is terminal.
-      expect(third.context.state).toBe("failed");
-      expect(third.effects).toContain("stop");
-    });
-
-    it("does not retry a non-retryable failure", () => {
-      const applying = run(approvedContext(), [{ type: "APPLY_STARTED", job: detail() }]).context;
-      const { context } = run(applying, [
-        { type: "APPLY_FAILED", error: "form rejected", retryable: false },
-      ]);
-      expect(context.state).toBe("failed");
+      expect(effects).toContain("schedule-cooldown");
     });
   });
 
@@ -314,7 +253,7 @@ describe("automation state machine", () => {
 
     it("pauses on a watchdog timeout", () => {
       const { context } = run(startContext(), [
-        { type: "WATCHDOG_TIMEOUT", evidence: "stuck in applying" },
+        { type: "WATCHDOG_TIMEOUT", evidence: "stuck in contacting" },
       ]);
       expect(context.state).toBe("paused");
       expect(context.pauseReason?.kind).toBe("watchdog");
@@ -324,6 +263,13 @@ describe("automation state machine", () => {
       const { context } = run(startContext(), [{ type: "PAGE_CHANGED", pageKind: "job-detail" }]);
       expect(context.state).toBe("paused");
       expect(context.pauseReason?.kind).toBe("page-changed");
+    });
+
+    it("allows the expected detail-to-chat transition while contacting", () => {
+      const contacting: AutomationContext = { ...startContext(), state: "contacting" };
+      const { context, effects } = run(contacting, [{ type: "PAGE_CHANGED", pageKind: "chat" }]);
+      expect(context.state).toBe("contacting");
+      expect(effects).toHaveLength(0);
     });
 
     it("ignores PAGE_CHANGED while idle rather than pausing pointlessly", () => {
@@ -386,13 +332,14 @@ describe("automation state machine", () => {
   });
 
   describe("cooldown", () => {
-    it("returns to scanning after a cooldown elapses", () => {
+    it("completes instead of rescanning after the finite batch is drained", () => {
       const context = run(startContext(), [{ type: "JOB_LOADED", job: detail() }]).context;
       const cooled = run(context, [{ type: "EVALUATED", evaluation: rejectedByScore }]).context;
       expect(cooled.state).toBe("cooldown");
       const { context: next, effects } = run(cooled, [{ type: "COOLDOWN_ELAPSED" }]);
-      expect(next.state).toBe("scanning");
-      expect(effects).toContain("scan-jobs");
+      expect(next.state).toBe("idle");
+      expect(next.lastTerminalReason).toBe("completed");
+      expect(effects).not.toContain("scan-jobs");
     });
 
     it("ignores COOLDOWN_ELAPSED outside cooldown", () => {
@@ -436,9 +383,8 @@ describe("automation state machine", () => {
       // evaluate → accepted → apply → verify → settle in cooldown.
       result = reduce(result.context, { type: "EVALUATED", evaluation: accepted }, opts);
       expect(result.context.state).toBe("validating");
-      result = reduce(result.context, { type: "APPLY_STARTED", job: detail() }, opts);
-      result = reduce(result.context, { type: "APPLY_SUBMITTED", evidence: "ok" }, opts);
-      result = reduce(result.context, { type: "VERIFICATION_CONFIRMED", evidence: "ok" }, opts);
+      result = reduce(result.context, { type: "CONTACT_STARTED", job: detail() }, opts);
+      result = reduce(result.context, { type: "CONTACT_CONFIRMED", evidence: "ok" }, opts);
       expect(result.context.state).toBe("cooldown");
       // Settling one job must not consume the rest of the batch.
       expect(result.context.pendingSummaries.map((entry) => entry.id)).toEqual([
@@ -452,13 +398,14 @@ describe("automation state machine", () => {
       expect(loadJobEffectOf(result.effects).summary.id).toBe(summary("job-2").id);
 
       // Settle the second job (score rejection is a normal settle) — the next
-      // cooldown finds the queue drained and resumes the legacy rescan loop.
+      // cooldown finds the queue drained and terminates the finite batch.
       result = reduce(result.context, { type: "JOB_LOADED", job: detail("job-2") }, opts);
       result = reduce(result.context, { type: "EVALUATED", evaluation: rejectedByScore }, opts);
       expect(result.context.state).toBe("cooldown");
       result = reduce(result.context, { type: "COOLDOWN_ELAPSED" }, opts);
-      expect(result.context.state).toBe("scanning");
-      expect(result.effects.map((effect) => effect.type)).toContain("scan-jobs");
+      expect(result.context.state).toBe("idle");
+      expect(result.context.lastTerminalReason).toBe("completed");
+      expect(result.effects.map((effect) => effect.type)).not.toContain("scan-jobs");
     });
 
     it("runs every scanned job exactly once, however long the scan was", () => {
@@ -484,8 +431,9 @@ describe("automation state machine", () => {
         result = reduce(step.context, { type: "COOLDOWN_ELAPSED" }, opts);
       }
       expect(loaded).toEqual(summaries.map((entry) => entry.id));
-      // Drained: the legacy rescan loop resumes.
-      expect(result.context.state).toBe("scanning");
+      // Drained: a finite operator-selected batch is complete.
+      expect(result.context.state).toBe("idle");
+      expect(result.context.lastTerminalReason).toBe("completed");
     });
 
     it("advances to the next pending job after a rejected evaluation", () => {
@@ -647,9 +595,8 @@ describe("automation state machine", () => {
         { type: "SCAN_COMPLETED", summaries: [summary(), summary("job-2")], skipped: 0 },
         { type: "JOB_LOADED", job: detail() },
         { type: "EVALUATED", evaluation: accepted },
-        { type: "APPLY_STARTED", job: detail() },
-        { type: "APPLY_SUBMITTED", evidence: "ok" },
-        { type: "VERIFICATION_CONFIRMED", evidence: "ok" },
+        { type: "CONTACT_STARTED", job: detail() },
+        { type: "CONTACT_CONFIRMED", evidence: "ok" },
       ];
       let current = initialContext(NOW);
       let previous = emptyStats;

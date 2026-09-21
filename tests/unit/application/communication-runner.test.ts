@@ -65,6 +65,12 @@ const makeAction = (options: {
   const action: CommunicationAction = {
     findCommunicateButton: () => null,
     readCurrentChat: () => (options.chat === undefined ? matchingChat : options.chat),
+    openConversation: async () => {
+      const identity = options.chat === undefined ? matchingChat : options.chat;
+      return identity === null
+        ? { kind: "blocked", reason: "selector-missing", evidence: "chat did not open" }
+        : { kind: "ready", identity };
+    },
     readEditor: () => null,
     outgoingCount: () => 0,
     prepareMessage: async () => {
@@ -92,8 +98,8 @@ const runner = (
   action: CommunicationAction,
   clock: Clock,
   overrides: Partial<Parameters<typeof createCommunicationRunner>[0]> = {},
-) =>
-  createCommunicationRunner({
+) => {
+  const instance = createCommunicationRunner({
     action,
     logger: createNullLogger(),
     clock,
@@ -101,6 +107,14 @@ const runner = (
     clearIntent: async () => {},
     ...overrides,
   });
+  return {
+    run: (value: CommunicationIntent, options: Parameters<typeof instance.run>[1] = {}) =>
+      instance.run(value, {
+        authorizeSend: async () => ({ allowed: true, detail: "test authorized" }),
+        ...options,
+      }),
+  };
+};
 
 describe("communication runner", () => {
   describe("the happy path", () => {
@@ -157,6 +171,41 @@ describe("communication runner", () => {
       const { action, calls } = makeAction({});
       await runner(action, clock).run(intent());
       expect(calls.dispatch).toBe(1);
+    });
+
+    it("never replays a transaction already committed at the point of no return", async () => {
+      const clock = makeClock();
+      const { action, calls } = makeAction({});
+      const committed: CommunicationIntent = {
+        ...intent(),
+        phase: "send-attempted",
+        sendAttemptedAt: 1_700_000_000_100,
+      };
+      const outcome = await runner(action, clock, {
+        readPersistedIntent: async () => committed,
+      }).run(intent());
+
+      expect(outcome.kind).toBe("uncertain");
+      expect(calls.prepare).toBe(0);
+      expect(calls.dispatch).toBe(0);
+    });
+
+    it("recovery verification observes only and never prepares or dispatches", async () => {
+      const clock = makeClock();
+      const { action, calls } = makeAction({});
+      const recovered: CommunicationIntent = {
+        ...intent(),
+        phase: "send-attempted",
+        sendAttemptedAt: 1_700_000_000_100,
+      };
+      const outcome = await runner(action, clock, {
+        readPersistedIntent: async () => recovered,
+      }).run(recovered, { verificationOnly: true });
+
+      expect(outcome.kind).toBe("sent");
+      expect(calls.prepare).toBe(0);
+      expect(calls.dispatch).toBe(0);
+      expect(calls.observe).toBe(1);
     });
 
     it("does not click send when the conversation cannot be confirmed", async () => {
@@ -378,6 +427,7 @@ describe("composition with the real adapter contract", () => {
     const action: CommunicationAction = {
       findCommunicateButton: () => null,
       readCurrentChat: () => matchingChat,
+      openConversation: async () => ({ kind: "ready", identity: matchingChat }),
       readEditor: () => null,
       outgoingCount: () => clicks.length,
       prepareMessage: async () => ({ kind: "ready", text: MESSAGE }),
