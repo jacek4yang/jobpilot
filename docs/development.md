@@ -63,11 +63,44 @@ All of these are real entries in `package.json`. Nothing here is aspirational.
 | `pnpm test:watch` | `vitest` | Watch mode |
 | `pnpm test:browser` | `playwright test` | Browser suite. Needs `pnpm build` first |
 | `pnpm verify:dist` | `tsx scripts/verify-build.ts` | Asserts the built artifact is installable and safe to ship |
+| `pnpm recon:dom` | `tsx scripts/recon/live-dom-recon.ts` | **Maintainer-only** live-DOM reconnaissance. Contacts the real zhipin.com; see the boundary rules below |
 | `pnpm check` | `pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm verify:dist` | The full gate. Run this before pushing |
 
 `pnpm check` builds, and `pnpm verify:dist` reads `dist/jobpilot.user.js`, so the
 order in `check` is load-bearing: running `verify:dist` on its own against a stale
 `dist/` verifies the stale bundle.
+
+### 3.1 `pnpm recon:dom` — the live-DOM reconnaissance harness
+
+`scripts/recon/live-dom-recon.ts` is **maintainer-only development tooling**. It
+exists for exactly one reason: the BOSS adapter's selectors are written down with
+explicit `fixture-only`/`unverified` confidence, and the only honest way to
+promote one is cited evidence from the real DOM. The harness reads that DOM.
+
+It is governed by hard boundaries, stated in its header comment and repeated
+here because they are load-bearing:
+
+- **Never runs in CI.** It contacts the live site. A guard refuses to start
+  when `CI` is set. CI stays loopback-only.
+- **Never shipped.** Nothing under `src/` imports it; it is not part of any
+  build output.
+- **Anti-detection lives here, and only here.** The harness launches Camoufox
+  (a Firefox-based automation browser, devDependency) because an unmodified
+  automation Chromium is risk-flagged by the site before any structure can be
+  read. The shipped userscript still runs in the user's own real browser and
+  does no fingerprint spoofing whatsoever — the "Safety model" list in
+  README.md binds the product, not this dev tool.
+- **Read-only on the site.** It never clicks a communicate/send control, never
+  opens a conversation, never types into an editor. Navigation and DOM reads
+  only; login (including any CAPTCHA) is completed by hand.
+- **Output stays private.** Captures are written under
+  `test-results/live/<date>/recon/` (gitignored). Only a reduced, sanitized
+  fixture may be committed, per [`../docs/diagnostics/PRIVACY.md`](../docs/diagnostics/PRIVACY.md).
+
+Usage: `pnpm recon:dom [output-dir]`. A headed browser opens on zhipin.com;
+log in by hand, then the harness captures the search list (several cities), one
+job detail, and the chat list automatically. The profile persists under the run
+directory, so re-runs do not need a new login.
 
 ---
 
