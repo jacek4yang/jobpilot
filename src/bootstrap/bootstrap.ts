@@ -36,6 +36,7 @@ import {
 import { createOrchestrator } from "../application/orchestrator";
 import { toDomainProfile } from "../application/profile-mapping";
 import { createRepository } from "../application/repository";
+import { filterSummariesBySelection } from "../application/selection";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
@@ -173,6 +174,11 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   let matches: readonly Match[] = [];
   let discoveryNote: string | undefined;
 
+  // Operator's batch selection: which discovered jobs the next run may touch.
+  // Empty = no restriction (legacy whole-listing behaviour). Populated from
+  // the accepted matches at discovery time; the user can toggle entries.
+  let selectedJobIds: ReadonlySet<string> = new Set();
+
   const discoveryService = createDiscoveryService({
     platform: deps.platform,
     logger: deps.logger,
@@ -214,7 +220,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     const stored = effectiveConfig.profiles.find((entry) => entry.enabled);
     const active = stored === undefined ? undefined : toDomainProfile(stored);
     if (active === undefined) {
-      discoveryNote = "No enabled search profile. Create one before discovering.";
+      discoveryNote = "还没有启用的求职意向，请先在「搜索」页设置意向。";
       render();
       panel.toast("warn", discoveryNote);
       return;
@@ -222,13 +228,13 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
     if (controller !== undefined && controller.context().state !== "idle") {
       // Never silently destroy queue progress by starting a search mid-run.
-      discoveryNote = "Stop the current run before starting a new search.";
+      discoveryNote = "当前正在运行，请先停止后再开始新搜索。";
       render();
       panel.toast("warn", discoveryNote);
       return;
     }
 
-    discoveryNote = "Discovering…";
+    discoveryNote = "正在扫描职位…";
     render();
 
     const result = await discoveryService.run(active);
@@ -242,22 +248,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
 
     matches = result.matches;
-
-    // Enqueue the accepted matches for review and execution. Deduplication is
-    // by job id inside the queue, and a job already contacted is filtered by
-    // stage A, so this cannot reintroduce a completed job.
-    let enqueued = 0;
-    for (const match of matches) {
-      if (!match.accepted) continue;
-      if (queue.enqueue({ jobId: String(match.summary.id), now: deps.clock.now() })) {
-        enqueued += 1;
-      }
-    }
+    // Default the batch selection to every accepted match; the user can
+    // uncheck entries on the Home page before starting the run.
+    selectedJobIds = new Set(matches.filter((m) => m.accepted).map((m) => String(m.summary.id)));
 
     const accepted = matches.filter((match) => match.accepted).length;
-    discoveryNote =
-      `Found ${matches.length} jobs, ${accepted} matched "${active.name}"` +
-      (enqueued > 0 ? `, ${enqueued} queued.` : ".");
+    discoveryNote = `共找到 ${matches.length} 个职位，${accepted} 个符合你的意向，已默认勾选。`;
     render();
     deps.logger.info("bootstrap", "discovery complete", {
       total: matches.length,
@@ -270,16 +266,16 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     switch (failure.kind) {
       case "city":
         return failure.suggestions.length > 0
-          ? `City "${failure.city}" is not a recognised BOSS city. Did you mean: ${failure.suggestions.join(", ")}?`
-          : `City "${failure.city}" is not a recognised BOSS city.`;
+          ? `城市「${failure.city}」不是有效的 BOSS 城市。你是不是想填：${failure.suggestions.join("、")}？`
+          : `城市「${failure.city}」不是有效的 BOSS 城市。`;
       case "page-kind":
-        return `This page is not a job list (detected: ${failure.pageKind}). Nothing was scanned.`;
+        return `当前页面不是职位列表（识别为：${failure.pageKind}），没有扫描。`;
       case "no-jobs":
-        return "No jobs found on this page.";
+        return "这个页面上没有找到职位。";
       case "aborted":
-        return "Discovery was cancelled.";
+        return "扫描已取消。";
       case "error":
-        return `Discovery failed: ${failure.message}`;
+        return `扫描失败：${failure.message}`;
     }
   }
 
@@ -301,21 +297,29 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const panelCallbacks: UiCallbacks = {
     discover: () => {
       if (!isOwner) {
-        panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
         return;
       }
       void runDiscovery();
     },
+    onToggleMatchSelect: (jobId: string) => {
+      if (!isOwner) {
+        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
+        return;
+      }
+      const next = new Set(selectedJobIds);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      selectedJobIds = next;
+      render();
+    },
     start: () => {
       if (!isOwner) {
-        panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+        panel.toast("warn", "JobPilot 正在另一个标签页运行，请切换到那个页面操作。");
         return;
       }
       if (verification.isBlocked()) {
-        panel.toast(
-          "warn",
-          "BOSS is asking for manual verification. Complete it, then press Re-check Page.",
-        );
+        panel.toast("warn", "BOSS 需要人工验证。请手动完成验证，然后点「重新检查页面」。");
         return;
       }
       deps.recorder.record({
@@ -343,9 +347,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       );
       panel.toast(
         result.result.ok ? "success" : "warn",
-        result.result.ok
-          ? "The page looks safe. Press Resume when you are ready."
-          : result.result.detail,
+        result.result.ok ? "页面看起来正常了。准备好之后点「继续」。" : result.result.detail,
       );
       render();
     },
@@ -370,8 +372,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         panel.toast(
           "warn",
           state.phase === "still-blocked"
-            ? `JobPilot cannot resume yet: ${state.lastCheckDetail ?? "a challenge is still present"}.`
-            : "Complete the verification in the page, then press Re-check Page.",
+            ? `暂时无法继续：${state.lastCheckDetail ?? "验证仍未完成"}。`
+            : "请先在页面中完成验证，然后点「重新检查页面」。",
         );
         return;
       }
@@ -798,8 +800,18 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     },
   });
 
+  // The execution pipeline only ever sees operator-selected jobs once a
+  // selection exists. Discovery keeps the raw platform (step 1 must see the
+  // whole listing). The filter only narrows; an empty selection changes
+  // nothing.
+  const platformForRun: typeof deps.platform = {
+    ...deps.platform,
+    scanJobs: async (options) =>
+      filterSummariesBySelection(await deps.platform.scanJobs(options), selectedJobIds),
+  };
+
   const orchestrator = createOrchestrator({
-    platform: deps.platform,
+    platform: platformForRun,
     engine,
     history,
     storage: deps.storage,
@@ -888,8 +900,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     panel.toast(
       result.ok ? "success" : "error",
       result.ok
-        ? `Diagnostic bundle exported: ${result.fileName ?? "bundle"}`
-        : `Export failed: ${result.error ?? "unknown error"} — diagnostic memory kept`,
+        ? `诊断证据包已导出：${result.fileName ?? "bundle"}`
+        : `导出失败：${result.error ?? "未知错误"}（诊断数据仍保留，可重试）`,
     );
     render();
   };
@@ -922,18 +934,18 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         context.state === "paused" || context.state === "blocked" || context.state === "failed",
 
       ...(context.pauseReason === undefined
-        ? context.lastMessage === undefined && discoveryNote === undefined
+        ? context.lastMessage === undefined
           ? {}
           : {
               message: {
                 tone: context.lastError === undefined ? ("info" as const) : ("error" as const),
-                text: discoveryNote ?? context.lastMessage ?? "",
+                text: context.lastMessage ?? "",
               },
             }
         : {
             blocked: {
               reason: describePauseReason(context.pauseReason),
-              body: "JobPilot has stopped all actions. Your queue and progress are saved. Resolve the page state, then choose Resume.",
+              body: "JobPilot 已暂停所有操作。你的队列和进度都已保存。处理好页面状态后，点「继续」即可恢复。",
               canResume: true,
             },
           }),
@@ -956,12 +968,11 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           kind: "uncertain-send" as const,
           jobId: String(record.jobId),
           title: String(record.jobId),
-          message:
-            "A message may have been sent. Check the conversation before continuing; this job will not be retried automatically.",
+          message: t("decisions.uncertainSend"),
           actions: [
-            { id: "open", label: "Open conversation" },
-            { id: "mark-sent", label: "Mark as sent" },
-            { id: "mark-not-sent", label: "Mark as not sent" },
+            { id: "open", label: t("decisions.openChat") },
+            { id: "mark-sent", label: t("decisions.markSent") },
+            { id: "mark-not-sent", label: t("decisions.markNotSent") },
           ],
         })),
 
@@ -985,7 +996,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           .join(" · "),
         score: match.score,
         accepted: match.accepted,
-        selected: match.accepted,
+        selected: selectedJobIds.has(String(match.summary.id)),
         reasons: formatReasons(match.reasons),
       })),
       queue: queue
@@ -1001,7 +1012,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
             detail:
               task.lastError ??
               (task.attempts > 0
-                ? `attempt ${task.attempts}`
+                ? `已尝试 ${task.attempts} 次`
                 : new Date(task.enqueuedAt).toLocaleTimeString()),
           };
         }),
@@ -1036,6 +1047,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         decisions: partial.decisions,
         stats: partial.stats,
         matches: partial.matches,
+        discoveryNote,
         queue: partial.queue,
         history: partial.history,
         logs: partial.logs,
@@ -1115,24 +1127,24 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
                 build: deps.build,
               }),
             );
-            panel.toast("info", `Started diagnostic session ${scenarioId}`);
+            panel.toast("info", `已开始诊断会话 ${scenarioId}`);
             render();
           },
           finishAndExport: () => {
             // Close the session first so the bundle's manifest carries the
             // final status, then run the same export path as "Export Now".
             deps.recorder.finishSession("completed");
-            panel.toast("info", "Diagnostic session finished — exporting bundle…");
+            panel.toast("info", "诊断会话已结束，正在导出证据包…");
             void runExport();
           },
           exportNow: () => {
-            panel.toast("info", "Exporting diagnostic bundle…");
+            panel.toast("info", "正在导出诊断证据包…");
             void runExport();
           },
           copySessionId: () => {
             if (globalThis.navigator?.clipboard) {
               void globalThis.navigator.clipboard.writeText(deps.recorder.sessionId());
-              panel.toast("success", "Session ID copied");
+              panel.toast("success", "会话 ID 已复制");
             }
           },
           recheckPage: () => {
@@ -1140,7 +1152,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
           },
           resetBuffers: () => {
             deps.recorder.resetBuffers();
-            panel.toast("info", "Diagnostic buffers cleared");
+            panel.toast("info", "已清空诊断记录缓存");
             render();
           },
         },
@@ -1342,7 +1354,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
                   ? { kind: "login-expired", evidence: "page detected as a login wall" }
                   : { kind: "unknown-dom", evidence: "page could not be classified" },
           });
-          panel.toast("warn", `${VERIFICATION_MESSAGE[challenge]} Then press Re-check Page.`);
+          panel.toast("warn", `${VERIFICATION_MESSAGE[challenge]}完成后点「重新检查页面」。`);
         }
       }
 
@@ -1416,7 +1428,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       });
       panel.toast(
         "warn",
-        `A message may have been sent to ${recovered.jobId}. JobPilot will not check it automatically: ${gate.message ?? "a safety gate is blocking"}.`,
+        `可能已向 ${recovered.jobId} 发送过消息。JobPilot 不会自动核查：${gate.message ?? "安全门正在阻止"}。`,
       );
       return;
     }
@@ -1442,8 +1454,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     panel.toast(
       outcome.kind === "sent" ? "success" : "warn",
       outcome.kind === "sent"
-        ? "Recovered: the earlier message was confirmed sent."
-        : "A message may have been sent. Check the conversation; it will not be re-sent.",
+        ? "已确认：之前的消息发送成功。"
+        : "可能已发送过消息。请打开对话确认，JobPilot 不会重复发送。",
     );
   };
 

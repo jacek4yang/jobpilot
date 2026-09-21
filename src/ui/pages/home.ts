@@ -1,32 +1,21 @@
 /**
- * Calm Home Dashboard page.
+ * Home page: the three-step batch flow.
  *
- * Provides a gentle, reassuring overview:
- * - Localized personal greeting (without countdown or pressure)
- * - Login guidance prompt when not logged in
- * - Blocked / human verification banner when applicable
- * - Pending decisions
- * - "Today's low-pressure guidance" cards (Favorites, Queue, Pipeline)
- * - Current viewing job companion preview
- * - Clean progress indicators
+ * The core loop is exactly three steps, all on this page:
+ * - ① 搜索岗位: scan the current listing and filter by the active intent
+ * - ② 选择职位: review the discovered matches and uncheck what to skip
+ * - ③ 批量投递: start / pause / resume / stop the gated batch run
+ *
+ * Everything else stays calm and out of the way: a login prompt when BOSS
+ * signs the user out, a blocked / human-verification card, a message banner,
+ * and pending decisions.
  */
 
-import type { JobAnnotation, StoredJob } from "../../domain/workspace/types";
 import { el } from "../components/chips";
-import { getGreeting, t } from "../i18n";
-import type {
-  BlockedView,
-  CurrentItemView,
-  PendingDecisionView,
-  StatTile,
-  UiCallbacks,
-} from "../view-model";
+import { t } from "../i18n";
+import type { BlockedView, MatchRowView, PendingDecisionView, UiCallbacks } from "../view-model";
 
 export interface HomePageInput {
-  readonly displayName?: string | undefined;
-  readonly state: string;
-  readonly running: boolean;
-  readonly paused: boolean;
   readonly message?:
     | {
         readonly tone: "info" | "warn" | "error" | "success";
@@ -34,33 +23,20 @@ export interface HomePageInput {
       }
     | undefined;
   readonly blocked?: BlockedView | undefined;
-  readonly current?: CurrentItemView | undefined;
   readonly decisions: readonly PendingDecisionView[];
-  readonly stats: readonly StatTile[];
   readonly callbacks: UiCallbacks;
-  readonly isDiagnostic?: boolean | undefined;
-
-  // Workspace integration
-  readonly pageKind?: string | undefined;
+  /** Discovered matches for step ②. Empty until the first scan. */
+  readonly matches?: readonly MatchRowView[] | undefined;
+  /** Human-readable result of the last scan, shown under step ①. */
+  readonly discoveryNote?: string | undefined;
   readonly isLoggedIn?: boolean | undefined;
-  readonly favoriteCount?: number | undefined;
-  readonly queueCount?: number | undefined;
-  readonly pipelineCount?: number | undefined;
-  readonly currentJob?: StoredJob | undefined;
-  readonly currentAnnotation?: JobAnnotation | undefined;
+  readonly pageKind?: string | undefined;
 }
 
 export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement => {
   const container = el(doc, "div", "jobpilot-page-home");
 
-  // --- 1. Gentle Personalized Greeting ------------------------------------
-  const greetingCard = el(doc, "div", "jobpilot-greeting-card");
-  const greetingText = el(doc, "p", "jobpilot-greeting-text", getGreeting(input.displayName));
-  const greetingSub = el(doc, "p", "jobpilot-greeting-sub", t("search.subtitle"));
-  greetingCard.append(greetingText, greetingSub);
-  container.append(greetingCard);
-
-  // --- 2. Login Guidance Prompt (Calm & Non-intrusive) ---------------------
+  // --- 1. Login Guidance Prompt (Calm & Non-intrusive) ---------------------
   const isLoginRequired =
     input.isLoggedIn === false ||
     input.pageKind === "login-required" ||
@@ -92,7 +68,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
     container.append(loginCard);
   }
 
-  // --- 3. Blocked / Human Verification Card -------------------------------
+  // --- 2. Blocked / Human Verification Card -------------------------------
   if (input.blocked !== undefined) {
     const isVerification =
       input.blocked.reason.includes("verification") ||
@@ -151,7 +127,7 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
     container.append(msg);
   }
 
-  // --- 4. Decisions Card (e.g. uncertain send, draft detected) ------------
+  // --- 3. Decisions Card (e.g. uncertain send, draft detected) ------------
   if (input.decisions.length > 0) {
     const decisionWrapper = el(doc, "div", "jobpilot-section");
     decisionWrapper.append(el(doc, "span", "jobpilot-section-title", t("decisions.title")));
@@ -178,194 +154,164 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
     container.append(decisionWrapper);
   }
 
-  // --- 5. Today's Guidance Cards (Gentle entry points) --------------------
-  const guideWrapper = el(doc, "div", "jobpilot-section");
-  guideWrapper.append(el(doc, "span", "jobpilot-section-title", "今天可以做什么"));
+  // --- 4. The Three-Step Batch Flow ----------------------------------------
+  const stepsWrapper = el(doc, "div", "jobpilot-section");
+  stepsWrapper.append(el(doc, "span", "jobpilot-section-title", t("home.stepsTitle")));
 
-  const guideGrid = el(doc, "div", "jobpilot-guidance-grid");
+  // Step ①: 搜索岗位
+  const step1 = el(doc, "div", "jobpilot-card");
+  const step1Header = el(doc, "div", "jobpilot-step-header");
+  step1Header.style.display = "flex";
+  step1Header.style.alignItems = "center";
+  step1Header.style.gap = "8px";
+  const step1Badge = el(doc, "span", "jobpilot-step-badge", "①");
+  step1Badge.style.fontSize = "18px";
+  step1Header.append(step1Badge, el(doc, "span", "jobpilot-step-title", t("home.step1Title")));
+  step1.append(step1Header);
+  const step1Hint = el(doc, "p", "jobpilot-step-hint", t("home.step1Hint"));
+  step1Hint.style.margin = "4px 0 8px";
+  step1Hint.style.color = "var(--jp-text-secondary)";
+  step1.append(step1Hint);
 
-  // Card A: 喜欢的职位
-  const favCount = input.favoriteCount ?? 0;
-  const favCard = el(doc, "div", "jobpilot-guidance-card");
-  favCard.setAttribute("data-action", "goto-favorites");
-  const favIcon = el(doc, "span", "jobpilot-guidance-icon", "💗");
-  const favContent = el(doc, "div", "jobpilot-guidance-content");
-  const favTitle = el(doc, "div", "jobpilot-guidance-title", "喜欢的职位");
-  const favMeta = el(
-    doc,
-    "div",
-    "jobpilot-guidance-meta",
-    favCount > 0 ? `${favCount} 个已收藏` : "挑选心仪职位",
-  );
-  favContent.append(favTitle, favMeta);
-  favCard.append(favIcon, favContent);
-  favCard.addEventListener("click", () => {
-    input.callbacks.onSelectTab?.("jobs");
+  const scanBtn = el(doc, "button", "jobpilot-btn", t("home.step1Button"));
+  scanBtn.type = "button";
+  scanBtn.setAttribute("data-action", "discover-jobs");
+  scanBtn.setAttribute("data-variant", "primary");
+  scanBtn.addEventListener("click", () => {
+    input.callbacks.discover();
   });
-  guideGrid.append(favCard);
+  step1.append(scanBtn);
 
-  // Card B: 待沟通队列
-  const queueCount = input.queueCount ?? 0;
-  const queueCard = el(doc, "div", "jobpilot-guidance-card");
-  queueCard.setAttribute("data-action", "goto-queue");
-  const queueIcon = el(doc, "span", "jobpilot-guidance-icon", "💬");
-  const queueContent = el(doc, "div", "jobpilot-guidance-content");
-  const queueTitle = el(doc, "div", "jobpilot-guidance-title", "待沟通队列");
-  const queueMeta = el(
-    doc,
-    "div",
-    "jobpilot-guidance-meta",
-    queueCount > 0 ? `${queueCount} 个待处理` : "准备开始沟通",
-  );
-  queueContent.append(queueTitle, queueMeta);
-  queueCard.append(queueIcon, queueContent);
-  queueCard.addEventListener("click", () => {
-    input.callbacks.onSelectTab?.("queue");
-  });
-  guideGrid.append(queueCard);
-
-  // Card C: 求职进展
-  const pipelineCount = input.pipelineCount ?? 0;
-  const pipelineCard = el(doc, "div", "jobpilot-guidance-card");
-  pipelineCard.setAttribute("data-action", "goto-pipeline");
-  const pipelineIcon = el(doc, "span", "jobpilot-guidance-icon", "📩");
-  const pipelineContent = el(doc, "div", "jobpilot-guidance-content");
-  const pipelineTitle = el(doc, "div", "jobpilot-guidance-title", "求职进展");
-  const pipelineMeta = el(
-    doc,
-    "div",
-    "jobpilot-guidance-meta",
-    pipelineCount > 0 ? `${pipelineCount} 个推进中` : "跟进面试与回复",
-  );
-  pipelineContent.append(pipelineTitle, pipelineMeta);
-  pipelineCard.append(pipelineIcon, pipelineContent);
-  pipelineCard.addEventListener("click", () => {
-    input.callbacks.onSelectTab?.("pipeline");
-  });
-  guideGrid.append(pipelineCard);
-
-  guideWrapper.append(guideGrid);
-  container.append(guideWrapper);
-
-  // --- 6. Current Activity or Current Job Companion -----------------------
-  const currentWrapper = el(doc, "div", "jobpilot-section");
-  currentWrapper.append(el(doc, "span", "jobpilot-section-title", t("home.currentActionTitle")));
-
-  if (input.currentJob !== undefined) {
-    // Show current job preview card
-    const cJob = input.currentJob;
-    const curCard = el(doc, "div", "jobpilot-current-card");
-    curCard.setAttribute("data-current-job-id", cJob.id);
-
-    const phase = el(doc, "div", "jobpilot-current-phase", `👀 正在浏览的职位`);
-
-    const titleRow = el(doc, "div", "jobpilot-current-title", cJob.title);
-    const metaParts = [cJob.companyName, cJob.salaryRaw, cJob.city].filter(Boolean);
-    const metaRow = el(doc, "div", "jobpilot-current-meta", metaParts.join(" · "));
-
-    // Quick preference buttons
-    const prefRow = el(doc, "div", "jobpilot-pref-actions");
-    prefRow.style.marginTop = "8px";
-    prefRow.style.gap = "6px";
-
-    const currentPref = input.currentAnnotation?.preference ?? "unset";
-
-    const favBtn = el(
-      doc,
-      "button",
-      "jobpilot-btn",
-      currentPref === "favorite" ? "💗 已喜欢" : "💗 喜欢",
-    );
-    favBtn.type = "button";
-    favBtn.setAttribute("data-action", "quick-pref-favorite");
-    if (currentPref === "favorite") favBtn.setAttribute("data-variant", "primary");
-    favBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      input.callbacks.onSetPreference?.(cJob.id, currentPref === "favorite" ? "unset" : "favorite");
-    });
-
-    const maybeBtn = el(
-      doc,
-      "button",
-      "jobpilot-btn",
-      currentPref === "maybe" ? "☆ 已放再看看" : "☆ 再看看",
-    );
-    maybeBtn.type = "button";
-    maybeBtn.setAttribute("data-action", "quick-pref-maybe");
-    maybeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      input.callbacks.onSetPreference?.(cJob.id, currentPref === "maybe" ? "unset" : "maybe");
-    });
-
-    const openWorkspaceBtn = el(doc, "button", "jobpilot-btn", "记笔记与详情 →");
-    openWorkspaceBtn.type = "button";
-    openWorkspaceBtn.setAttribute("data-variant", "subtle");
-    openWorkspaceBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      input.callbacks.onSelectTab?.("jobs");
-    });
-
-    prefRow.append(favBtn, maybeBtn, openWorkspaceBtn);
-
-    curCard.append(phase, titleRow, metaRow, prefRow);
-    currentWrapper.append(curCard);
-  } else if (input.current !== undefined) {
-    const currentCard = el(doc, "div", "jobpilot-current-card");
-    const phase = el(
-      doc,
-      "div",
-      "jobpilot-current-phase",
-      `${t("home.currentPhase")}: ${input.current.phase}`,
-    );
-    const jobTitle = el(doc, "div", "jobpilot-current-title", input.current.title);
-    const jobMeta = el(
-      doc,
-      "div",
-      "jobpilot-current-meta",
-      input.current.score === undefined
-        ? input.current.company
-        : `${input.current.company} · ${t("matches.scoreBadge", { score: input.current.score })}`,
-    );
-    currentCard.append(phase, jobTitle, jobMeta);
-    currentWrapper.append(currentCard);
-  } else {
-    const idleCard = el(doc, "div", "jobpilot-card");
-    const idleText = el(doc, "p", undefined, t("home.currentIdle"));
-    idleText.style.margin = "0";
-    idleText.style.color = "var(--jp-text-secondary)";
-    idleCard.append(idleText);
-    currentWrapper.append(idleCard);
+  if (input.discoveryNote !== undefined) {
+    const note = el(doc, "p", "jobpilot-step-note", input.discoveryNote);
+    note.style.margin = "8px 0 0";
+    note.style.color = "var(--jp-text-secondary)";
+    step1.append(note);
   }
-  container.append(currentWrapper);
+  stepsWrapper.append(step1);
 
-  // --- 7. Today's Progress Numbers ----------------------------------------
-  const statsWrapper = el(doc, "div", "jobpilot-section");
-  statsWrapper.append(el(doc, "span", "jobpilot-section-title", t("home.todayProgress")));
+  const matches = input.matches ?? [];
 
-  const statsGrid = el(doc, "div", "jobpilot-stats-grid");
+  // Step ②: 选择职位 (only once something has been discovered)
+  if (matches.length > 0) {
+    const step2 = el(doc, "div", "jobpilot-card");
+    step2.style.marginTop = "8px";
+    const step2Header = el(doc, "div", "jobpilot-step-header");
+    step2Header.style.display = "flex";
+    step2Header.style.alignItems = "center";
+    step2Header.style.gap = "8px";
+    const step2Badge = el(doc, "span", "jobpilot-step-badge", "②");
+    step2Badge.style.fontSize = "18px";
+    step2Header.append(step2Badge, el(doc, "span", "jobpilot-step-title", t("home.step2Title")));
+    step2.append(step2Header);
 
-  const statLabelsMap: Record<string, string> = {
-    Scanned: t("home.scanned"),
-    Accepted: t("home.accepted"),
-    Applied: t("home.applied"),
-    Skipped: t("home.skipped"),
-    Blocked: t("home.blocked"),
-    Failed: t("home.failed"),
-  };
+    const list = el(doc, "div", "jobpilot-step-match-list");
+    list.style.maxHeight = "180px";
+    list.style.overflowY = "auto";
+    list.style.marginTop = "8px";
+    list.style.display = "flex";
+    list.style.flexDirection = "column";
+    list.style.gap = "4px";
 
-  for (const tile of input.stats) {
-    const card = el(doc, "div", "jobpilot-stat-card");
-    card.setAttribute("data-key", tile.label.toLowerCase());
+    for (const match of matches.slice(0, 20)) {
+      const row = el(doc, "label", "jobpilot-step-match-row");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "6px";
+      row.style.fontSize = "13px";
+      const checkbox = el(doc, "input");
+      checkbox.type = "checkbox";
+      checkbox.checked = match.selected;
+      checkbox.setAttribute("data-job-id", match.jobId);
+      checkbox.addEventListener("change", () => {
+        input.callbacks.onToggleMatchSelect?.(match.jobId);
+      });
+      const labelText = el(
+        doc,
+        "span",
+        undefined,
+        `${match.title} · ${match.company} · ${match.score}分`,
+      );
+      row.append(checkbox, labelText);
+      list.append(row);
+    }
+    step2.append(list);
 
-    const label = el(doc, "span", "jobpilot-stat-label", statLabelsMap[tile.label] ?? tile.label);
-    const value = el(doc, "span", "jobpilot-stat-value", String(tile.value));
-
-    card.append(label, value);
-    statsGrid.append(card);
+    const step2Hint = el(doc, "p", "jobpilot-step-hint", t("home.step2Hint"));
+    step2Hint.style.margin = "8px 0 0";
+    step2Hint.style.color = "var(--jp-text-secondary)";
+    step2.append(step2Hint);
+    stepsWrapper.append(step2);
   }
 
-  statsWrapper.append(statsGrid);
-  container.append(statsWrapper);
+  // Step ③: 批量投递
+  const step3 = el(doc, "div", "jobpilot-card");
+  step3.style.marginTop = "8px";
+  const step3Header = el(doc, "div", "jobpilot-step-header");
+  step3Header.style.display = "flex";
+  step3Header.style.alignItems = "center";
+  step3Header.style.gap = "8px";
+  const step3Badge = el(doc, "span", "jobpilot-step-badge", "③");
+  step3Badge.style.fontSize = "18px";
+  step3Header.append(step3Badge, el(doc, "span", "jobpilot-step-title", t("home.step3Title")));
+  step3.append(step3Header);
+
+  const selectedCount = matches.filter((match) => match.selected).length;
+  const step3Count = el(
+    doc,
+    "p",
+    "jobpilot-step-count",
+    t("home.step3Selected", { count: selectedCount }),
+  );
+  step3Count.style.margin = "4px 0 8px";
+  step3Count.style.color = "var(--jp-text-secondary)";
+  step3.append(step3Count);
+
+  const step3Actions = el(doc, "div", "jobpilot-step-actions");
+  step3Actions.style.display = "flex";
+  step3Actions.style.flexWrap = "wrap";
+  step3Actions.style.gap = "6px";
+
+  const startBtn = el(doc, "button", "jobpilot-btn", t("home.step3Start"));
+  startBtn.type = "button";
+  startBtn.setAttribute("data-action", "start-batch");
+  startBtn.setAttribute("data-variant", "primary");
+  startBtn.addEventListener("click", () => {
+    input.callbacks.start();
+  });
+
+  const pauseBtn = el(doc, "button", "jobpilot-btn", t("common.pause"));
+  pauseBtn.type = "button";
+  pauseBtn.setAttribute("data-action", "pause-batch");
+  pauseBtn.addEventListener("click", () => {
+    input.callbacks.pause();
+  });
+
+  const resumeBtn = el(doc, "button", "jobpilot-btn", t("common.resume"));
+  resumeBtn.type = "button";
+  resumeBtn.setAttribute("data-action", "resume-batch");
+  resumeBtn.addEventListener("click", () => {
+    input.callbacks.resume();
+  });
+
+  const stopBtn = el(doc, "button", "jobpilot-btn", t("common.stop"));
+  stopBtn.type = "button";
+  stopBtn.setAttribute("data-action", "stop-batch");
+  stopBtn.setAttribute("data-variant", "danger");
+  stopBtn.addEventListener("click", () => {
+    input.callbacks.stop();
+  });
+
+  step3Actions.append(startBtn, pauseBtn, resumeBtn, stopBtn);
+  step3.append(step3Actions);
+
+  const step3Hint = el(doc, "p", "jobpilot-step-hint", t("home.step3Hint"));
+  step3Hint.style.margin = "8px 0 0";
+  step3Hint.style.color = "var(--jp-text-secondary)";
+  step3.append(step3Hint);
+  stepsWrapper.append(step3);
+
+  container.append(stepsWrapper);
 
   return container;
 };

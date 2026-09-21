@@ -118,7 +118,7 @@ export const reduce = (
       if (isActive(context.state)) return { context, effects: noEffects };
       const started = clearFields(
         enter(context, "scanning", now, {
-          lastMessage: "Scanning for jobs",
+          lastMessage: "正在扫描职位",
           consecutiveFailures: 0,
         }),
         ["pauseReason"],
@@ -140,7 +140,7 @@ export const reduce = (
       // because a half-completed apply must be re-verified from the top.
       const resumed = clearFields(
         enter(context, "scanning", now, {
-          lastMessage: "Resumed",
+          lastMessage: "已继续",
           consecutiveFailures: 0,
         }),
         ["pauseReason", "lastError", "currentJob", "currentStatus"],
@@ -152,7 +152,7 @@ export const reduce = (
     }
 
     case "STOP": {
-      const stopped = clearFields(enter(context, "idle", now, { lastMessage: "Stopped" }), [
+      const stopped = clearFields(enter(context, "idle", now, { lastMessage: "已停止" }), [
         "pauseReason",
         "currentJob",
         "currentStatus",
@@ -176,12 +176,12 @@ export const reduce = (
         queueDepth: event.summaries.length,
         lastMessage:
           event.skipped > 0
-            ? `Scanned ${event.summaries.length} jobs (${event.skipped} cards unparsed)`
-            : `Scanned ${event.summaries.length} jobs`,
+            ? `已扫描 ${event.summaries.length} 个职位（${event.skipped} 张卡片无法解析）`
+            : `已扫描 ${event.summaries.length} 个职位`,
       });
       if (event.summaries.length === 0) {
         return {
-          context: enter(next, "idle", now, { lastMessage: "No jobs found on this page" }),
+          context: enter(next, "idle", now, { lastMessage: "这个页面上没有找到职位" }),
           effects: [{ type: "persist" }],
         };
       }
@@ -191,7 +191,7 @@ export const reduce = (
     case "SCAN_FAILED": {
       const next = enter(context, "failed", now, {
         lastError: event.error,
-        lastMessage: `Scan failed on a ${event.pageKind} page`,
+        lastMessage: `页面类型为 ${event.pageKind} 时扫描失败`,
       });
       return { context: next, effects: [{ type: "persist" }, { type: "stop" }] };
     }
@@ -212,7 +212,7 @@ export const reduce = (
       return {
         context: enter(context, "failed", now, {
           lastError: event.error,
-          lastMessage: `Failed to open job detail: ${event.error}`,
+          lastMessage: `打开职位详情失败：${event.error}`,
           consecutiveFailures: context.consecutiveFailures + 1,
         }),
         effects: [{ type: "persist" }, { type: "stop" }],
@@ -237,13 +237,13 @@ export const reduce = (
       if (!evaluation.accepted) {
         const reasonText =
           evaluation.reasons.find((reason) => reason.ruleId === "score.threshold")?.message ??
-          "below accept threshold";
+          "未达到接收分数线";
         return {
           context: enter(base, "cooldown", now, {
-            lastMessage: `Skipped: ${reasonText}`,
+            lastMessage: `已跳过：${reasonText}`,
           }),
           effects: [
-            { type: "notify", level: "info", message: `Skipped job: ${reasonText}` },
+            { type: "notify", level: "info", message: `已跳过职位：${reasonText}` },
             { type: "persist" },
           ],
         };
@@ -254,12 +254,16 @@ export const reduce = (
       }
 
       const approved = enter(base, "validating", now, {
-        lastMessage: `Approved (score ${evaluation.score})`,
+        lastMessage: `已符合（评分 ${evaluation.score}）`,
       });
       return {
         context: approved,
         effects: [
-          { type: "notify", level: "info", message: `Approved job with score ${evaluation.score}` },
+          {
+            type: "notify",
+            level: "info",
+            message: `职位符合要求（评分 ${evaluation.score}）`,
+          },
           { type: "persist" },
         ],
       };
@@ -276,7 +280,7 @@ export const reduce = (
       // The platform reported success, but we still verify before trusting it.
       const next = enter(context, "verifying", now, {
         currentStatus: "submitted",
-        lastMessage: "Submitted — verifying",
+        lastMessage: "已提交，正在核实",
       });
       if (context.currentJob === undefined)
         return { context: next, effects: [{ type: "persist" }] };
@@ -291,7 +295,7 @@ export const reduce = (
       const base = withStats(context, { skipped: context.stats.skipped + 1 }, now);
       const next = enter(base, "cooldown", now, {
         currentStatus: "verified",
-        lastMessage: `Already applied: ${event.evidence}`,
+        lastMessage: `已投递过：${event.evidence}`,
       });
       return { context: next, effects: [{ type: "persist" }] };
     }
@@ -315,7 +319,7 @@ export const reduce = (
           context: enter(base, "cooldown", now, {
             consecutiveFailures: failures,
             lastError: event.error,
-            lastMessage: `Attempt failed, retrying: ${event.error}`,
+            lastMessage: `尝试失败，正在重试：${event.error}`,
           }),
           effects: [{ type: "persist" }],
         };
@@ -325,10 +329,10 @@ export const reduce = (
         context: enter(base, "failed", now, {
           consecutiveFailures: failures,
           lastError: event.error,
-          lastMessage: `Application failed: ${event.error}`,
+          lastMessage: `投递失败：${event.error}`,
         }),
         effects: [
-          { type: "notify", level: "error", message: `Application failed: ${event.error}` },
+          { type: "notify", level: "error", message: `投递失败：${event.error}` },
           { type: "persist" },
           { type: "stop" },
         ],
@@ -344,16 +348,13 @@ export const reduce = (
           sessionApplications: context.sessionApplications + 1,
           applicationTimestamps: [...context.applicationTimestamps, appliedAt],
           consecutiveFailures: 0,
-          lastMessage: `Applied and verified (${event.evidence})`,
+          lastMessage: `已投递并核实（${event.evidence}）`,
         }),
         ["currentJob", "currentStatus"],
       );
       return {
         context: next,
-        effects: [
-          { type: "notify", level: "info", message: "Application confirmed" },
-          { type: "persist" },
-        ],
+        effects: [{ type: "notify", level: "info", message: "投递已确认" }, { type: "persist" }],
       };
     }
 
@@ -362,7 +363,7 @@ export const reduce = (
       // The platform never received the application. Safe to treat as a
       // non-event so the job can be retried within the session policy.
       const next = enter(context, "cooldown", now, {
-        lastMessage: `Not applied: ${event.evidence}`,
+        lastMessage: `未投递：${event.evidence}`,
         currentStatus: "approved",
       });
       return { context: next, effects: [{ type: "persist" }] };
@@ -415,7 +416,7 @@ export const reduce = (
         return { context, effects: noEffects };
       }
       return {
-        context: clearFields({ ...context, lastMessage: "Cleared" }, ["lastError"]),
+        context: clearFields({ ...context, lastMessage: "已清除" }, ["lastError"]),
         effects: noEffects,
       };
     }

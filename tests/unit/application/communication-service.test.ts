@@ -185,9 +185,7 @@ describe("communication service", () => {
       const h = harness();
       h.setHealth(false);
       const result = await h.service.communicate({ job: job() });
-      expect(result.kind === "refused" ? result.message : "").toContain(
-        "Persistence is unavailable",
-      );
+      expect(result.kind === "refused" ? result.message : "").toContain("本地存储不可用");
     });
 
     it("logs an invariant violation when storage is unhealthy", async () => {
@@ -274,8 +272,8 @@ describe("communication service", () => {
       const result = await h.service.communicate({ job: job() });
       expect(result.kind).toBe("refused");
       if (result.kind === "refused") {
-        expect(result.message).toContain("manual verification");
-        expect(result.message).toContain("re-check");
+        expect(result.message).toContain("人工验证");
+        expect(result.message).toContain("重新检查");
       }
       expect(h.runnerCalls).toHaveLength(0);
     });

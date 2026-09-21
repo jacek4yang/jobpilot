@@ -50,7 +50,10 @@ const TAB_DEFS: readonly { readonly id: PanelTab; readonly key: string }[] = [
   { id: "pipeline", key: "nav.pipeline" },
   { id: "search", key: "nav.search" },
   { id: "matches", key: "nav.matches" },
-  { id: "queue", key: "nav.queue" },
+  // The 队列 tab is hidden while the legacy task queue has no producer — the
+  // batch selection on Home replaced it. The queue infrastructure (and this
+  // tab) returns when queue-driven execution ships; the section still exists
+  // in the DOM, it is just not reachable.
   { id: "history", key: "nav.history" },
   { id: "rules", key: "nav.rules" },
   { id: "messages", key: "nav.messages" },
@@ -460,7 +463,9 @@ export const createPanel = (options: PanelOptions): Panel => {
           ? t("header.modeManual")
           : t("header.modeAssist");
 
-    pageChip.textContent = view.pageKind;
+    const pageKindLabel = t(`pageKind.${view.pageKind}`);
+    pageChip.textContent =
+      pageKindLabel === `pageKind.${view.pageKind}` ? view.pageKind : pageKindLabel;
     pageChip.setAttribute("data-page-kind", view.pageKind);
 
     safetyChip.textContent = view.safetyLabel;
