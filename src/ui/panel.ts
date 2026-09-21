@@ -476,15 +476,13 @@ export const createPanel = (options: PanelOptions): Panel => {
       diagTabButton.classList.remove("jobpilot-hidden");
     }
 
-    // Populate section contents
-    for (const section of panels.values()) {
-      section.replaceChildren();
-    }
-
+    // Populate section contents. Re-appending an unchanged element would blur
+    // any focus inside it (Vue-backed sections return the same element each
+    // render), so a section is only rebuilt when its content identity changes.
     for (const [tabId, section] of panels) {
-      // Check for content in view.sections, mapping logs to search/home if needed
       const content = view.sections[tabId];
-      if (content !== undefined) section.append(content);
+      if (content === undefined) continue;
+      if (section.firstChild !== content) section.replaceChildren(content);
     }
 
     // Action button states

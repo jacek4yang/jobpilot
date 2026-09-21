@@ -36,6 +36,7 @@
     "@biomejs/biome": "2.5.14",
     "@playwright/test": "1.63.0",
     "@types/node": "^26.6.2",
+    "@vitejs/plugin-vue": "^6.0.9",
     "camoufox": "^0.1.19",
     "happy-dom": "20.14.5",
     "tsx": "4.23.15",
@@ -43,5 +44,8 @@
     "vite": "7.3.6",
     "vite-plugin-monkey": "7.1.9",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "vue": "^3.5.43"
   }
 }

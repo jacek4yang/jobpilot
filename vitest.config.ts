@@ -1,7 +1,13 @@
 import { fileURLToPath } from "node:url";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [
+    // Unit tests resolve .vue SFCs (the Vue-backed Search page), so the test
+    // runner needs the same transform pipeline as the app build.
+    vue(),
+  ],
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],

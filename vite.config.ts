@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 import monkey from "vite-plugin-monkey";
 
@@ -125,6 +126,9 @@ export function createConfig(channel: BuildChannel = resolveChannel()) {
       __JOBPILOT_CHANNEL__: JSON.stringify(channel),
     },
     plugins: [
+      // Must run before monkey(): the userscript entry imports .vue SFCs, and
+      // monkey resolves the bundle after all transforms have been applied.
+      vue(),
       monkey({
         entry: "src/main.ts",
         userscript: {
