@@ -35,3 +35,14 @@ pnpm-debug.log*
 !.env.example
 .review-tmp/
 tests/unit/__probe/
+
+# Public-repository privacy invariants.
+#
+# This repository is PUBLIC. Real-site testing evidence must never enter it:
+# a diagnostic bundle contains real page structure and could contain
+# operator-specific content even after redaction.
+test-results/live/
+diagnostic-analysis/
+*.diagnostic.zip
+*.diag.zip
+artifacts/live-test/*/*.zip
