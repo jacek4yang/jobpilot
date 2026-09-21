@@ -15,6 +15,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createCommunicationService } from "../src/application/communication-service";
 import { initialContext } from "../src/application/state";
 import { createBuildInfo } from "../src/diagnostics/build-info";
 import { buildBundle, REQUIRED_BUNDLE_FILES } from "../src/diagnostics/bundle/bundle";
@@ -35,13 +36,16 @@ import {
   recordDraftCheck,
   recordIdentityCheck,
   recordIntentCreated,
-  recordSendClicked,
+  // recordSendClicked was removed: the service cannot observe the click.
+  recordSendAttemptPersisted,
   recordTransactionTerminal,
   recordVerification,
 } from "../src/diagnostics/instrument/transaction-trace";
 import { createDiagnosticRecorder } from "../src/diagnostics/recorder";
 import { bundleFileName, newSessionId, startSession } from "../src/diagnostics/session";
 import { traceQueue, traceStorage } from "../src/diagnostics/trace";
+import { createTemplate } from "../src/domain/communication/template";
+import { createNullLogger } from "../src/infrastructure/logging/logger";
 import { createTaskQueue } from "../src/infrastructure/queue/queue";
 import { analyzeBundle } from "./analyze-bundle";
 import { loadBundle } from "./diagnostics/bundle-reader";
@@ -174,50 +178,163 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
     ]),
   );
 
-  // Communication transaction, through the real tracers.
-  const txn = { transactionId: "txn-42", jobId: "job-42" };
-  const MESSAGE = "您好，我对该职位很感兴趣。";
+  // Communication transaction, driven through the REAL service.
+  //
+  // This must not call the tracers directly. An earlier revision did, which
+  // made the coverage gate unable to distinguish "the service fired the
+  // callback" from "the selftest called the tracer" — so removing the callback
+  // invocations from the service entirely still produced 38/38. Driving the
+  // service is the only way the gate can detect that regression.
+  interface FakeJob {
+    readonly id: string;
+    readonly title: string;
+    readonly company: { readonly name: string };
+    readonly recruiters: readonly { readonly name: string }[];
+    readonly url: string;
+  }
 
-  recordIntentCreated(recorder, txn, {
-    templateId: "default",
-    messageText: MESSAGE,
-    variablesUsed: ["jobTitle"],
-    outgoingBaseline: 0,
-    expiresAt: now + 180_000,
+  const fakeJob = (id: string): FakeJob => ({
+    id,
+    title: "后端开发工程师",
+    company: { name: "示例科技有限公司" },
+    recruiters: [{ name: "李女士" }],
+    url: `https://www.zhipin.com/job_detail/${id}.html`,
   });
-  recordDraftCheck(recorder, txn, false);
-  recordIdentityCheck(recorder, txn, {
-    kind: "match",
-    signals: { titleMatched: true, companyMatched: true, idsCompared: true },
-  });
-  recordSendClicked(recorder, txn);
-  recordVerification(recorder, txn, { kind: "verified", outgoingCount: 1, baseline: 0 });
-  recordTransactionTerminal(recorder, txn, { kind: "completed" });
 
-  // A second transaction that ends uncertain, which is the case the analyzer
-  // must flag and a maintainer must never see rounded to success.
-  const uncertainTxn = { transactionId: "txn-43", jobId: "job-43" };
-  recordIntentCreated(recorder, uncertainTxn, {
-    templateId: "default",
-    messageText: MESSAGE,
-    variablesUsed: ["jobTitle"],
-    outgoingBaseline: 0,
-    expiresAt: now + 180_000,
+  /** Builds a service whose runner returns a scripted outcome. */
+  const serviceWithOutcome = (
+    outcome:
+      | { readonly kind: "sent"; readonly evidence: string }
+      | { readonly kind: "uncertain"; readonly detail: string },
+    options: { readonly draftPresent?: boolean } = {},
+  ) => {
+    let persisted: unknown;
+
+    /**
+     * Mirrors bootstrap's persistIntent.
+     *
+     * The attempt is recorded once it is DURABLE, not when it is attempted, so
+     * the event means "this survived a write" — which is what the analyzer
+     * needs when judging whether a reload could have lost the point of no
+     * return.
+     */
+    const persistIntent = async (intent: {
+      readonly id: string;
+      readonly jobId: string;
+      readonly sendAttemptedAt?: number;
+      readonly phase: string;
+    }): Promise<void> => {
+      persisted = intent;
+      if (intent.sendAttemptedAt !== undefined) {
+        recordSendAttemptPersisted(
+          recorder,
+          { transactionId: String(intent.id), jobId: String(intent.jobId) },
+          intent as never,
+        );
+      }
+    };
+
+    return createCommunicationService({
+      runner: {
+        run: async (intent) => {
+          // The real runner commits the point of no return before clicking.
+          // Without this the attempt event could never fire and the gate would
+          // be asserting something unreachable.
+          await persistIntent({
+            id: String(intent.id),
+            jobId: String(intent.jobId),
+            phase: "send-attempted",
+            sendAttemptedAt: now,
+          });
+          return outcome;
+        },
+      },
+      recorder,
+      clock: { now: () => now },
+      logger: createNullLogger(),
+      baseGateInput: () => ({
+        mode: "assist",
+        humanVerificationActive: false,
+        storage: { healthy: true },
+        isQueueOwner: true,
+        sessionLimitReached: false,
+        hourlyLimitReached: false,
+        rateLimited: false,
+      }),
+      verifyChat: () => ({ verified: true, detail: "conversation open" }),
+      isDraftPresent: () => options.draftPresent ?? false,
+      outgoingCount: () => 0,
+      readPersistedIntent: () => persisted as never,
+      persistIntent,
+      clearIntent: async () => {
+        persisted = undefined;
+      },
+      storageHealth: () => ({ healthy: true }),
+      templates: () => [
+        createTemplate({
+          id: "default",
+          name: "Default",
+          content: "您好，我想应聘{{jobTitle}}",
+          isDefault: true,
+        }),
+      ],
+      newIntentId: () => "txn-selftest",
+      // The affordance is observed, not gated: a chat page has no pre-chat
+      // button, which is the state this path always runs in.
+      resolveCommunicateAction: () => null,
+      onCommunicateButtonResolved: (outcome) => recordSelectorOutcome(recorder, outcome),
+      onIntentCreated: (details) =>
+        recordIntentCreated(
+          recorder,
+          { transactionId: details.transactionId, jobId: details.jobId },
+          details,
+        ),
+      onDraftChecked: (details) =>
+        recordDraftCheck(
+          recorder,
+          { transactionId: details.transactionId, jobId: details.jobId },
+          details.present,
+        ),
+      onIdentityChecked: (details) =>
+        recordIdentityCheck(
+          recorder,
+          { transactionId: details.transactionId, jobId: details.jobId },
+          { kind: details.verdict, signals: details.signals },
+        ),
+      onVerified: (details) =>
+        recordVerification(
+          recorder,
+          { transactionId: details.transactionId, jobId: details.jobId },
+          { kind: details.kind, outgoingCount: details.outgoingCount, baseline: details.baseline },
+        ),
+      onTerminal: (details) =>
+        recordTransactionTerminal(
+          recorder,
+          { transactionId: details.transactionId, jobId: details.jobId },
+          details.reason === undefined
+            ? { kind: details.kind }
+            : { kind: details.kind, reason: details.reason },
+        ),
+    });
+  };
+
+  // A completed send.
+  await serviceWithOutcome({ kind: "sent", evidence: "outgoing bubble observed" }).communicate({
+    job: fakeJob("job-42") as never,
   });
-  recordIdentityCheck(recorder, uncertainTxn, {
-    kind: "match",
-    signals: { titleMatched: true },
-  });
-  recordSendClicked(recorder, uncertainTxn);
-  recordVerification(recorder, uncertainTxn, { kind: "uncertain", outgoingCount: 0, baseline: 0 });
-  recordTransactionTerminal(recorder, uncertainTxn, {
+
+  // A send whose outcome could not be determined. The analyzer must flag it and
+  // a maintainer must never see it rounded to success.
+  await serviceWithOutcome({
     kind: "uncertain",
-    reason: "no outgoing message observed",
-  });
+    detail: "no outgoing message observed",
+  }).communicate({ job: fakeJob("job-43") as never });
 
-  // A draft block, the intended safe outcome.
-  const draftTxn = { transactionId: "txn-44", jobId: "job-44" };
-  recordDraftCheck(recorder, draftTxn, true);
+  // A draft block: the intended safe outcome.
+  await serviceWithOutcome(
+    { kind: "sent", evidence: "should not be reached" },
+    { draftPresent: true },
+  ).communicate({ job: fakeJob("job-44") as never });
 
   // A storage failure, through the REAL decorator. Hand-writing this record
   // would let the coverage gate pass even if the decorator were broken.
@@ -430,16 +547,16 @@ const run = async (): Promise<void> => {
     // not proceed on it. Each entry names a trace the phase brief requires and
     // asserts the exported bundle actually contains it.
     const coverage: readonly (readonly [string, readonly string[]])[] = [
-      ["route trace", ["route.changed"]],
-      ["page fingerprint", ["page.fingerprinted"]],
-      ["state transitions", ["state.transition"]],
-      ["effect trace", ["effect.started", "effect.completed"]],
-      ["selector trace", ["selector.miss", "selector.match"]],
-      ["queue trace", ["queue.item.enqueued", "queue.item.started"]],
-      ["storage trace", ["storage.write.failed"]],
-      ["transaction trace", ["communication.intent.created", "communication.send.attempted"]],
-      ["chat identity trace", ["chat.identity.matched", "chat.identity.evaluated"]],
-      ["send verification trace", ["communication.send.verified", "communication.send.uncertain"]],
+      ["route trace", [EVENTS.routeChanged]],
+      ["page fingerprint", [EVENTS.pageFingerprinted]],
+      ["state transitions", [EVENTS.stateTransition]],
+      ["effect trace", [EVENTS.effectStarted]],
+      ["selector trace", [EVENTS.selectorMatch]],
+      ["queue trace", [EVENTS.queueItemEnqueued]],
+      ["storage trace", [EVENTS.storageWriteFailed]],
+      ["transaction trace", [EVENTS.intentCreated, EVENTS.sendAttemptPersisted]],
+      ["chat identity trace", [EVENTS.identityMatched]],
+      ["send verification trace", [EVENTS.sendVerified]],
     ];
 
     const coverageEvents = capturedFiles?.get("events.ndjson");
@@ -464,11 +581,14 @@ const run = async (): Promise<void> => {
           }),
       );
       for (const [label, names] of coverage) {
-        const found = names.some((name) => recorded.has(name));
+        // `every`, not `some`: an entry listing two events claims both are
+        // present. With `some`, a dead second alternative passed unnoticed —
+        // which is how a never-emitted event name survived in this table.
+        const missing = names.filter((name) => !recorded.has(name));
         check(
           `bundle carries ${label}`,
-          found,
-          found ? "" : `expected one of: ${names.join(", ")}`,
+          missing.length === 0,
+          missing.length === 0 ? "" : `missing: ${missing.join(", ")}`,
         );
       }
     }
