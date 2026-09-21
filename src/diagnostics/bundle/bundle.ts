@@ -15,11 +15,12 @@
  *    depth.
  */
 
-import type { BuildInfo } from "../build-info";
+import { type BuildInfo, buildTag } from "../build-info";
 import type { DiagnosticEvent } from "../event";
 import { EVENTS } from "../event";
 import { redactForBundle } from "../redact";
 import type { DiagnosticSession } from "../session";
+import { bundleFileName } from "../session";
 import { sha256Hex } from "./hash";
 import { createZip, type ZipResult } from "./zip";
 
@@ -304,7 +305,14 @@ export const buildBundle = (input: BundleInputs): BundleResult => {
 
   return {
     bytes: zip.bytes,
-    fileName: "",
+    // Deterministic, runbook-spelled filename: the operator is told exactly
+    // which file to expect, so a mismatch is visible before analysis starts.
+    fileName: bundleFileName({
+      scenarioId: input.session?.scenarioId ?? "pre-session",
+      sessionId: input.sessionId,
+      createdAt: input.createdAt,
+      buildTag: buildTag(input.build),
+    }),
     files: allFiles,
     manifest,
   };
