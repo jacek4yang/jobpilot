@@ -100,6 +100,7 @@ export const en = {
     step3Selected: "{count} selected",
     step3Start: "Start Applying",
     step3Hint: "In assist mode, JobPilot pauses before every send and waits for your confirmation.",
+    runLogTitle: "Run Log",
   },
   blocked: {
     verificationTitle: "Verification Required",

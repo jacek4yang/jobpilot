@@ -30,8 +30,9 @@ export interface HomePageInput {
   /** Human-readable result of the last scan, shown under step ①. */
   readonly discoveryNote?: string | undefined;
   /**
-   * Operator-facing run log, newest first. Rendered by a follow-up; the field
-   * exists now so callers can thread it without a signature change later.
+   * Operator-facing run log of the current batch, newest first. Rendered as a
+   * calm record under step ③ so the operator can see what the batch did
+   * without opening the diagnostics view.
    */
   readonly runLog?: readonly { readonly time: string; readonly text: string }[] | undefined;
   /** Number of currently selected matches. Defaults to counting `matches`. */
@@ -317,6 +318,41 @@ export const renderHomePage = (doc: Document, input: HomePageInput): HTMLElement
   step3Hint.style.color = "var(--jp-text-secondary)";
   step3.append(step3Hint);
   stepsWrapper.append(step3);
+
+  // Operator run log: what the batch did, newest first. Rendered only once
+  // something has actually happened; hidden entirely otherwise so the Home
+  // page stays calm before the first run.
+  const runLog = input.runLog ?? [];
+  if (runLog.length > 0) {
+    const runLogCard = el(doc, "div", "jobpilot-card");
+    runLogCard.style.marginTop = "8px";
+    runLogCard.append(el(doc, "div", "jobpilot-step-title", t("home.runLogTitle")));
+
+    const logList = el(doc, "div", "jobpilot-step-run-log");
+    logList.style.marginTop = "8px";
+    logList.style.maxHeight = "140px";
+    logList.style.overflowY = "auto";
+    logList.style.display = "flex";
+    logList.style.flexDirection = "column";
+    logList.style.gap = "2px";
+
+    for (const entry of runLog.slice(0, 20)) {
+      const row = el(doc, "div", "jobpilot-step-run-log-row");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.fontSize = "12px";
+      row.style.color = "var(--jp-text-secondary)";
+      const time = el(doc, "span", undefined, entry.time);
+      time.style.flexShrink = "0";
+      const text = el(doc, "span", undefined, entry.text);
+      text.style.minWidth = "0";
+      text.style.overflowWrap = "anywhere";
+      row.append(time, text);
+      logList.append(row);
+    }
+    runLogCard.append(logList);
+    stepsWrapper.append(runLogCard);
+  }
 
   container.append(stepsWrapper);
 

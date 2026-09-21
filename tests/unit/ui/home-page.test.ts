@@ -131,4 +131,35 @@ describe("renderHomePage three-step flow", () => {
     expect(page.textContent).toContain("已选择 1 个职位");
     expect(page.textContent).toContain("共找到 2 个职位");
   });
+
+  it("hides the run log entirely before anything has run", () => {
+    const doc = makeDoc();
+    const page = renderHomePage(doc, {
+      decisions: [],
+      callbacks: callbacksWith(),
+    });
+
+    expect(page.querySelector(".jobpilot-step-run-log")).toBeNull();
+    expect(page.textContent).not.toContain("本次运行记录");
+  });
+
+  it("renders the operator run log newest-first under the steps", () => {
+    const doc = makeDoc();
+    const page = renderHomePage(doc, {
+      decisions: [],
+      callbacks: callbacksWith(),
+      runLog: [
+        { time: "10:00:01", text: "开始投递" },
+        { time: "10:00:00", text: "开始扫描职位" },
+      ],
+    });
+
+    const logRows = Array.from(page.querySelectorAll(".jobpilot-step-run-log-row"));
+    expect(logRows).toHaveLength(2);
+    expect(logRows[0]?.textContent).toBe("10:00:01开始投递");
+    expect(logRows[1]?.textContent).toBe("10:00:00开始扫描职位");
+    // The log appears after the three-step cards, keeping the flow calm.
+    const steps = page.querySelector(".jobpilot-section");
+    expect(steps?.querySelector(".jobpilot-step-run-log")).not.toBeNull();
+  });
 });
