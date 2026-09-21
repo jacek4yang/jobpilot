@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { BrowserContext, Page } from "@playwright/test";
 /**
  * Live-DOM reconnaissance harness — DEVELOPMENT-ONLY maintainer tooling.
  *
@@ -43,7 +41,15 @@ import type { BrowserContext, Page } from "@playwright/test";
  * header chat entry, then captures proceed automatically. The profile is
  * persisted under the run directory so a re-run does not need a new login.
  */
-import { Camoufox } from "camoufox";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import type { BrowserContext, Page } from "@playwright/test";
+
+// camoufox's ESM build dynamically requires Node built-ins ("events") and
+// crashes under tsx ("Dynamic require of events is not supported"). Its CJS
+// build is fine, so load that through createRequire, which resolves the
+// package's `require` condition.
+const { Camoufox } = createRequire(import.meta.url)("camoufox") as typeof import("camoufox");
 
 if (process.env.CI !== undefined) {
   process.stderr.write(
