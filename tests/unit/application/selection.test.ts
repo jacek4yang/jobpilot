@@ -9,7 +9,7 @@
  *     renders and toggles job ids.
  */
 import { describe, expect, it } from "vitest";
-import { filterSummariesBySelection } from "../../../src/application/selection";
+import { filterSummariesBySelection, isSelectionCurrent } from "../../../src/application/selection";
 
 interface Summary {
   readonly id: unknown;
@@ -57,5 +57,35 @@ describe("filterSummariesBySelection", () => {
     const before = [...summaries];
     filterSummariesBySelection(summaries, new Set(["job-2"]));
     expect(summaries).toEqual(before);
+  });
+});
+
+describe("isSelectionCurrent", () => {
+  it("applies only when the selection was made on the current page", () => {
+    expect(
+      isSelectionCurrent(
+        "https://www.zhipin.com/web/geek/jobs?query=java",
+        "https://www.zhipin.com/web/geek/jobs?query=java",
+      ),
+    ).toBe(true);
+  });
+
+  it("is stale on any other page, even same-origin", () => {
+    expect(
+      isSelectionCurrent(
+        "https://www.zhipin.com/web/geek/jobs?query=java",
+        "https://www.zhipin.com/web/geek/jobs?query=python",
+      ),
+    ).toBe(false);
+    expect(
+      isSelectionCurrent(
+        "https://www.zhipin.com/web/geek/jobs?query=java",
+        "https://www.zhipin.com/web/geek/chat",
+      ),
+    ).toBe(false);
+  });
+
+  it("is stale when no selection href was recorded", () => {
+    expect(isSelectionCurrent(undefined, "https://www.zhipin.com/web/geek/jobs")).toBe(false);
   });
 });

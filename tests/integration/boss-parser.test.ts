@@ -341,6 +341,30 @@ describe("boss platform facade", () => {
     expect(jobs.every((job) => job.platform === "boss")).toBe(true);
   });
 
+  it("scans a listing even when the detail drawer is open over it", async () => {
+    // Live regression 2026-09-21: with a card selected, the page classifies
+    // as job-detail (the drawer root is positive detail evidence) and the old
+    // kind !== "job-list" guard emptied the scan — "the page has jobs but the
+    // run says none". The drawer never replaces the listing, so scanning must
+    // proceed whenever the list container is present.
+    const drawer = `
+      <div class="job-detail-container">
+        <div class="job-detail-box">
+          <div class="job-detail-op clearfix">
+            <a href="javascript:;" class="op-btn op-btn-like">收藏</a>
+            <a href="javascript:;" class="op-btn op-btn-chat">立即沟通</a>
+          </div>
+          <div class="job-boss-info"><h2 class="name">测试招聘者</h2></div>
+        </div>
+      </div>`;
+    const window = loadFixture("job-list.html");
+    window.document.body.insertAdjacentHTML("beforeend", drawer);
+    const platform = createBossPlatform(makeDeps(window));
+    expect(platform.detectPage()).toBe("job-detail");
+    const jobs = await platform.scanJobs();
+    expect(jobs.length).toBe(4);
+  });
+
   it("honours the scan limit", async () => {
     const platform = createBossPlatform(makeDeps(loadFixture("job-list.html")));
     const limited = await platform.scanJobs({ limit: 2 });
