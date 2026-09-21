@@ -29,12 +29,14 @@
     "diag:compare": "tsx scripts/compare-bundles.ts",
     "diag:selftest": "tsx scripts/diag-selftest.ts",
     "build:all": "node scripts/run-build.mjs production --clean && node scripts/run-build.mjs diagnostic",
-    "live:prepare": "tsx scripts/prepare-live-artifact.ts"
+    "live:prepare": "tsx scripts/prepare-live-artifact.ts",
+    "recon:dom": "tsx scripts/recon/live-dom-recon.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
     "@playwright/test": "1.63.0",
     "@types/node": "^26.6.2",
+    "camoufox": "^0.1.19",
     "happy-dom": "20.14.5",
     "tsx": "4.23.15",
     "typescript": "7.0.2",

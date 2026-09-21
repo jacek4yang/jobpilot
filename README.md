@@ -210,6 +210,16 @@ or optimise for being "harder to flag as automated traffic". See
 for the reasoning, including which ideas were adopted and which were explicitly
 rejected.
 
+This list binds **the shipped userscript**. There is exactly one place in the
+repository where an exception exists, and it is maintainer-only development
+tooling: `scripts/recon/live-dom-recon.ts` (`pnpm recon:dom`) launches Camoufox,
+a Firefox-based automation browser, to *read* the real DOM so selector updates
+can be evidence-backed. It never ships, never runs in CI, performs no writes on
+the site (no clicks into conversations, no typing, no sends), and its captures
+stay under gitignored `test-results/`. If you install JobPilot, none of this
+runs on your machine. See
+[`docs/development.md`](docs/development.md) §3.1.
+
 **You are responsible for how you use this.** Unattended messaging may violate a
 platform's terms of service. The `automatic` mode exists because some users
 accept that trade-off knowingly; the default is `assist`, which does not send
