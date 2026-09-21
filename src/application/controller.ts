@@ -4,7 +4,7 @@ import type { Logger } from "../ports/logger";
 import type { AutomationEvent, Effect } from "./events";
 import type { ApplicationHistory } from "./history";
 import type { Orchestrator } from "./orchestrator";
-import { reduce } from "./reducer";
+import { type ReduceOptions, type ReduceResult, reduce } from "./reducer";
 import type { AutomationContext } from "./state";
 import { initialContext, isActive } from "./state";
 
@@ -17,9 +17,24 @@ export interface ControllerOptions {
   readonly maxRetries: number;
   /** Called after every transition so the UI can re-render. */
   readonly onChange: (context: AutomationContext) => void;
+  /**
+   * The reducer to drive the machine with.
+   *
+   * Defaults to the pure `reduce`. Production injects a tracing wrapper, which
+   * is how state transitions reach the diagnostic stream without the reducer
+   * gaining a diagnostics dependency.
+   */
+  readonly reducer?: Reducer;
   /** Persists state; awaited after transitions that mark `persist`. */
   readonly onPersist: () => Promise<void>;
 }
+
+/** Signature shared by the pure reducer and any tracing wrapper. */
+export type Reducer = (
+  context: AutomationContext,
+  event: AutomationEvent,
+  options: ReduceOptions,
+) => ReduceResult;
 
 export interface Controller {
   dispatch(event: AutomationEvent): void;
@@ -38,6 +53,7 @@ export interface Controller {
  * in the orchestrator.
  */
 export const createController = (options: ControllerOptions): Controller => {
+  const activeReducer: Reducer = options.reducer ?? reduce;
   let current: AutomationContext = initialContext(options.clock.now());
   let disposed = false;
   let draining = false;
@@ -101,7 +117,10 @@ export const createController = (options: ControllerOptions): Controller => {
         if (next === undefined) break;
 
         const previousState = current.state;
-        const result = reduce(current, next, {
+        // The reducer is injected so tracing can wrap it without the reducer
+        // itself gaining any diagnostics dependency. It stays pure and remains
+        // testable with no recorder at all.
+        const result = activeReducer(current, next, {
           now: options.clock.now(),
           maxRetries: options.maxRetries,
         });

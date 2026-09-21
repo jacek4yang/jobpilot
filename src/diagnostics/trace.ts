@@ -279,9 +279,21 @@ export interface TraceableQueue {
  * and "why did job X never run" must both be answerable from the bundle.
  */
 export const traceQueue = <Q extends TraceableQueue>(inner: Q, recorder: DiagnosticRecorder): Q => {
+  // Capture the inner methods BEFORE returning anything.
+  //
+  // `Object.assign(inner, traced)` was a genuine defect: it overwrote the inner
+  // queue's own methods with the traced wrappers, so `inner.enqueue` became the
+  // wrapper calling itself — infinite recursion that presented as a stack
+  // overflow the first time the queue was used.
+  const innerEnqueue = inner.enqueue.bind(inner);
+  const innerTakeNext = inner.takeNext.bind(inner);
+  const innerUpdate = inner.update.bind(inner);
+  const innerRemove = inner.remove.bind(inner);
+  const innerClearPending = inner.clearPending.bind(inner);
+
   const traced: TraceableQueue = {
     enqueue(options) {
-      const accepted = inner.enqueue(options);
+      const accepted = innerEnqueue(options);
       recorder.record({
         level: accepted ? "info" : "debug",
         category: "queue",
@@ -293,7 +305,7 @@ export const traceQueue = <Q extends TraceableQueue>(inner: Q, recorder: Diagnos
     },
 
     takeNext(now) {
-      const task = inner.takeNext(now);
+      const task = innerTakeNext(now);
       if (task !== undefined) {
         recorder.record({
           level: "info",
@@ -307,7 +319,7 @@ export const traceQueue = <Q extends TraceableQueue>(inner: Q, recorder: Diagnos
     },
 
     update(jobId, status, now, error) {
-      inner.update(jobId, status, now, error);
+      innerUpdate(jobId, status, now, error);
       recorder.record({
         level: status === "failed" || status === "blocked" ? "warn" : "info",
         category: "queue",
@@ -318,7 +330,7 @@ export const traceQueue = <Q extends TraceableQueue>(inner: Q, recorder: Diagnos
     },
 
     remove(jobId) {
-      const removed = inner.remove(jobId);
+      const removed = innerRemove(jobId);
       if (removed) {
         recorder.record({
           level: "debug",
@@ -331,14 +343,15 @@ export const traceQueue = <Q extends TraceableQueue>(inner: Q, recorder: Diagnos
     },
 
     clearPending() {
-      inner.clearPending();
+      innerClearPending();
       recorder.record({ level: "info", category: "queue", event: EVENTS.queueCleared });
     },
   };
 
-  // The cast is required because the generic preserves the concrete queue's
-  // extra members, which the tracer passes through untouched by construction.
-  return Object.assign(inner, traced) as Q;
+  // A new object delegating to the captured inner methods. The inner queue is
+  // NOT mutated: assigning onto it would replace its methods with the wrappers.
+  // The cast preserves the concrete queue type so callers see the full surface.
+  return { ...inner, ...traced } as Q;
 };
 
 const queueEventFor = (status: string): string => {
