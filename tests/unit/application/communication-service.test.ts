@@ -438,3 +438,108 @@ describe("communication service", () => {
     });
   });
 });
+
+/**
+ * Regression: a precondition refused every legitimate send.
+ *
+ * An earlier revision resolved the contact affordance *before* the gates and
+ * refused when it returned null. But 立即沟通 belongs to the pre-chat detail
+ * pane, while the send path runs against an already-open conversation where
+ * that pane is gone. The two states are mutually exclusive, so the precondition
+ * rejected exactly the case it was meant to serve.
+ *
+ * These tests pin the two states apart explicitly, because the defect was a
+ * state-model error rather than a coding slip and would otherwise be easy to
+ * reintroduce.
+ */
+describe("the contact affordance does not gate the send", () => {
+  it("sends when the affordance cannot be resolved (chat is already open)", async () => {
+    // The chat is open, so readCurrentChat succeeds and the pre-chat button is
+    // absent. This is the normal send state and must not be refused.
+    const h = harness({
+      resolveCommunicateAction: () => null,
+      verifyChat: () => ({ verified: true, detail: "conversation open" }),
+    });
+
+    const result = await h.service.communicate({ job: job() });
+
+    expect(result.kind).toBe("sent");
+    expect(h.runnerCalls).toHaveLength(1);
+  });
+
+  it("still records the selector miss as evidence", async () => {
+    const resolved: unknown[] = [];
+    const h = harness({
+      resolveCommunicateAction: () => null,
+      onCommunicateButtonResolved: (outcome) => resolved.push(outcome),
+    });
+
+    await h.service.communicate({ job: job() });
+
+    // Reported, not fatal: the miss must be visible in the bundle so a markup
+    // change is diagnosable.
+    expect(resolved).toHaveLength(1);
+    const outcome = resolved[0] as { selected?: string; attempts: readonly unknown[] };
+    expect(outcome.selected).toBeUndefined();
+    expect(outcome.attempts.length).toBeGreaterThan(0);
+  });
+
+  it("records a resolved affordance with the winning candidate", async () => {
+    const resolved: unknown[] = [];
+    const h = harness({
+      resolveCommunicateAction: () => ({ matchedBy: ".btn-startchat", heuristic: false }),
+      onCommunicateButtonResolved: (outcome) => resolved.push(outcome),
+    });
+
+    await h.service.communicate({ job: job() });
+
+    const outcome = resolved[0] as { selected?: string; heuristic?: boolean };
+    expect(outcome.selected).toBe(".btn-startchat");
+    expect(outcome.heuristic).toBe(false);
+  });
+
+  it("does not refuse merely because the affordance is absent", async () => {
+    const h = harness({ resolveCommunicateAction: () => null });
+    const result = await h.service.communicate({ job: job() });
+    // The old code returned `refused` with reason `no-action` here.
+    expect(result.kind).not.toBe("refused");
+  });
+
+  it("reports the terminal outcome so a bundle can reconstruct the send", async () => {
+    const terminals: unknown[] = [];
+    const h = harness({ onTerminal: (details) => terminals.push(details) });
+
+    await h.service.communicate({ job: job() });
+
+    // Declared-and-wired-but-never-invoked was the companion defect: without
+    // this the bundle would carry no terminal trace at all.
+    expect(terminals).toHaveLength(1);
+    expect((terminals[0] as { kind: string }).kind).toBe("completed");
+  });
+
+  it("reports the verification outcome", async () => {
+    const verifications: unknown[] = [];
+    const h = harness({ onVerified: (details) => verifications.push(details) });
+
+    await h.service.communicate({ job: job() });
+
+    expect(verifications).toHaveLength(1);
+    expect((verifications[0] as { kind: string }).kind).toBe("verified");
+  });
+
+  it("reports an uncertain outcome as uncertain, never as verified", async () => {
+    const verifications: unknown[] = [];
+    const terminals: unknown[] = [];
+    const h = harness({
+      runner: { run: async () => ({ kind: "uncertain", detail: "no outgoing message observed" }) },
+      onVerified: (details) => verifications.push(details),
+      onTerminal: (details) => terminals.push(details),
+    });
+
+    const result = await h.service.communicate({ job: job() });
+
+    expect(result.kind).toBe("uncertain");
+    expect((verifications[0] as { kind: string }).kind).toBe("uncertain");
+    expect((terminals[0] as { kind: string }).kind).toBe("uncertain");
+  });
+});

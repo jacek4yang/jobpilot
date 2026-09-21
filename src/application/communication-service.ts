@@ -108,10 +108,6 @@ export interface CommunicationServiceDeps {
     readonly verdict: "match" | "mismatch" | "insufficient";
     readonly signals: Readonly<Record<string, import("../diagnostics/event").JsonValue>>;
   }) => void;
-  readonly onSendClicked?: (details: {
-    readonly transactionId: string;
-    readonly jobId: string;
-  }) => void;
   readonly onVerified?: (details: {
     readonly transactionId: string;
     readonly jobId: string;
@@ -170,6 +166,24 @@ export interface CommunicationService {
 }
 
 const DEFAULT_TTL_MS = 180_000;
+
+/**
+ * A human-readable reason for a non-success outcome.
+ *
+ * The outcome union does not carry `detail` on every branch, so this narrows in
+ * one place rather than at each call site.
+ */
+const reasonOf = (outcome: CommunicationOutcome): string | undefined => {
+  switch (outcome.kind) {
+    case "sent":
+      return undefined;
+    case "uncertain":
+    case "aborted":
+      return outcome.detail;
+    case "blocked":
+      return `${outcome.reason}: ${outcome.evidence}`;
+  }
+};
 
 /**
  * Maps a blocked context gate onto the invariant it protects.
@@ -322,17 +336,36 @@ export const createCommunicationService = (
       });
       deps.onDraftChecked?.({ transactionId, jobId, present: draftPresent });
 
-      // Resolve the affordance BEFORE arming anything, and report which
-      // selector candidate found it. This is the target most likely to break
-      // first when BOSS changes markup, and a missing button is the failure a
-      // maintainer most needs named rather than guessed.
+      // Report what the contact affordance resolved to, for diagnostics.
+      //
+      // This OBSERVES; it does not gate. The 立即沟通 button belongs to the
+      // pre-chat detail pane, and this path runs against an already-open
+      // conversation where that pane is gone by definition. Refusing here would
+      // reject every legitimate send, which is exactly what an earlier revision
+      // of this code did.
+      //
+      // The affordance is resolved and clicked by the runner, which acts on the
+      // page state it actually finds. What this records is which selector
+      // candidate matched, so a later markup change is diagnosable — and a miss
+      // is reported as evidence rather than treated as a refusal.
       if (deps.resolveCommunicateAction !== undefined) {
         const located = deps.resolveCommunicateAction();
         deps.onCommunicateButtonResolved?.({
           purpose: "detail.applyButton",
           heuristic: located?.heuristic ?? false,
           ...(located === null
-            ? { attempts: [] }
+            ? {
+                attempts: [
+                  {
+                    selector: "(no candidate matched)",
+                    confidence: "unverified",
+                    matches: 0,
+                    visible: 0,
+                    selected: false,
+                    rejectedBecause: "no-match" as const,
+                  },
+                ],
+              }
             : {
                 selected: located.matchedBy,
                 attempts: [
@@ -347,19 +380,14 @@ export const createCommunicationService = (
               }),
         });
         if (located === null) {
-          // Fail closed: without the affordance there is nothing to click, and
-          // guessing an alternative is exactly what must not happen.
-          reportInvariantViolation(deps.recorder, {
-            invariant: INVARIANTS.noContinuationThroughUnknownModal,
-            detail: "the communicate affordance could not be located",
-            context: { jobId, transactionId },
+          // Recorded, not fatal. The runner's own `prepareMessage` will fail
+          // closed if the affordance genuinely cannot be found when it looks.
+          deps.recorder.warnEvent("selector", EVENTS.selectorMiss, {
+            jobId,
+            transactionId,
+            purpose: "detail.applyButton",
+            detail: "the contact affordance did not resolve from the current page state",
           });
-          return {
-            kind: "refused",
-            reason: "no-action",
-            message:
-              "JobPilot could not find the contact button on this page, so it stopped rather than guess.",
-          };
         }
       }
 
@@ -486,10 +514,39 @@ export const createCommunicationService = (
         return { kind: "uncertain", detail: `the send could not be completed: ${message}` };
       }
 
+      // Terminal tracing. These were declared and wired but never invoked, so a
+      // real bundle would have had no send, verification or terminal trace at
+      // all — the three the brief cares about most.
+      deps.onTerminal?.({
+        transactionId,
+        jobId,
+        kind:
+          outcome.kind === "sent"
+            ? "completed"
+            : outcome.kind === "uncertain"
+              ? "uncertain"
+              : "failed",
+        reason: reasonOf(outcome),
+      });
+
       switch (outcome.kind) {
         case "sent":
+          deps.onVerified?.({
+            transactionId,
+            jobId,
+            kind: "verified",
+            outgoingCount: intent.outgoingBaseline + 1,
+            baseline: intent.outgoingBaseline,
+          });
           return { kind: "sent", evidence: outcome.evidence };
         case "uncertain":
+          deps.onVerified?.({
+            transactionId,
+            jobId,
+            kind: "uncertain",
+            outgoingCount: intent.outgoingBaseline,
+            baseline: intent.outgoingBaseline,
+          });
           return { kind: "uncertain", detail: outcome.detail };
         case "blocked":
           // An unknown modal reaching here is the case the invariant names: the
@@ -566,6 +623,18 @@ export const createCommunicationService = (
         deps.logger.error("communication", "recovery threw", { error: message });
         return { kind: "uncertain", detail: `recovery could not complete: ${message}` };
       }
+
+      deps.onTerminal?.({
+        transactionId: recovered.id,
+        jobId: String(recovered.jobId),
+        kind:
+          outcome.kind === "sent"
+            ? "completed"
+            : outcome.kind === "uncertain"
+              ? "uncertain"
+              : "failed",
+        reason: reasonOf(outcome),
+      });
 
       switch (outcome.kind) {
         case "sent":

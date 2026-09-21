@@ -41,7 +41,7 @@ import {
 } from "../src/diagnostics/instrument/transaction-trace";
 import { createDiagnosticRecorder } from "../src/diagnostics/recorder";
 import { bundleFileName, newSessionId, startSession } from "../src/diagnostics/session";
-import { traceQueue } from "../src/diagnostics/trace";
+import { traceQueue, traceStorage } from "../src/diagnostics/trace";
 import { createTaskQueue } from "../src/infrastructure/queue/queue";
 import { analyzeBundle } from "./analyze-bundle";
 import { loadBundle } from "./diagnostics/bundle-reader";
@@ -105,11 +105,13 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
     event: "bootstrap.ready",
     data: { version: build.appVersion },
   });
+  // The same record production emits from refreshPageKind.
   recorder.record({
     level: "info",
     category: "route",
     event: EVENTS.routeChanged,
     routeId: "job-list",
+    data: { from: "unknown", to: "job-list" },
   });
   recordPageFingerprint(recorder, {
     routePattern: "/web/geek/job",
@@ -217,13 +219,22 @@ const buildSyntheticBundle = async (): Promise<Uint8Array> => {
   const draftTxn = { transactionId: "txn-44", jobId: "job-44" };
   recordDraftCheck(recorder, draftTxn, true);
 
-  // A storage failure, which must have forced read-only mode.
-  recorder.record({
-    level: "error",
-    category: "storage",
-    event: EVENTS.storageWriteFailed,
-    data: { operation: "write", key: "jobpilot:root:v1", error: "quota exceeded" },
-  });
+  // A storage failure, through the REAL decorator. Hand-writing this record
+  // would let the coverage gate pass even if the decorator were broken.
+  const failingStorage = {
+    get: async () => undefined,
+    set: async () => {
+      throw new Error("quota exceeded");
+    },
+    delete: async () => {},
+    keys: async () => [],
+  };
+  const tracedStorage = traceStorage(failingStorage, recorder);
+  try {
+    await tracedStorage.storage.set("jobpilot:root:v1", { schemaVersion: 1 });
+  } catch {
+    // Expected: the decorator records the failure and rethrows.
+  }
 
   // Secrets in several plausible shapes. None may survive.
   recorder.infoEvent("runtime", "sensitive-probe", {

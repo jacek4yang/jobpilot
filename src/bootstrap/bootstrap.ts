@@ -46,7 +46,6 @@ import {
   recordIdentityCheck,
   recordIntentCreated,
   recordSendAttemptPersisted,
-  recordSendClicked,
   recordTransactionTerminal,
   recordVerification,
 } from "../diagnostics/instrument/transaction-trace";
@@ -533,9 +532,6 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     onIdentityChecked: ({ transactionId, jobId, verdict, signals }) => {
       recordIdentityCheck(deps.recorder, { transactionId, jobId }, { kind: verdict, signals });
     },
-    onSendClicked: ({ transactionId, jobId }) => {
-      recordSendClicked(deps.recorder, { transactionId, jobId });
-    },
     onVerified: ({ transactionId, jobId, kind, outgoingCount, baseline }) => {
       recordVerification(
         deps.recorder,
@@ -813,8 +809,21 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     try {
       const kind = deps.platform.detectPage();
       if (kind === currentPageKind) return;
+      const previousKind = currentPageKind;
       currentPageKind = kind;
       deps.logger.debug("bootstrap", "page kind", { kind });
+
+      // Emitted here because this is where a route change actually becomes
+      // observable: the observer fires on any DOM mutation, and only a change
+      // in the classified page represents a real navigation. Nothing emitted
+      // this before, so a bundle could not show that the page had moved.
+      deps.recorder.record({
+        level: "info",
+        category: "route",
+        event: EVENTS.routeChanged,
+        routeId: kind,
+        data: { from: previousKind, to: kind },
+      });
 
       // A fingerprint on every classification change. It is what lets a later
       // failure answer "did the layout move?" without anyone re-visiting the
