@@ -765,6 +765,13 @@ export const PANEL_CSS = `
   flex: none;
 }
 
+.jobpilot-backup-actions,
+.jobpilot-pref-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .jobpilot-btn {
   flex: 1;
   padding: 8px 12px;
@@ -924,6 +931,251 @@ export const PANEL_CSS = `
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   margin-bottom: 10px;
+}
+
+/* --- Phase 2: Personal Job Workspace & Guidance ------------------------- */
+.jobpilot-login-card {
+  background: linear-gradient(135deg, #fff3f5 0%, #ffffff 100%);
+  border: 1px solid var(--jp-primary-border);
+  border-radius: var(--jp-radius-md);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.jobpilot-login-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.jobpilot-login-icon {
+  font-size: 16px;
+}
+
+.jobpilot-login-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--jp-text);
+  margin: 0;
+}
+
+.jobpilot-login-desc {
+  font-size: 12px;
+  color: var(--jp-text-secondary);
+  line-height: 1.5;
+  margin: 0 0 10px;
+  white-space: pre-line;
+}
+
+.jobpilot-login-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.jobpilot-guidance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.jobpilot-guidance-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border-subtle);
+  border-radius: var(--jp-radius-md);
+  padding: 10px 8px;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.jobpilot-guidance-card:hover {
+  border-color: var(--jp-primary-border);
+  background: var(--jp-surface-soft);
+  transform: translateY(-1px);
+}
+
+.jobpilot-guidance-icon {
+  font-size: 16px;
+  flex: none;
+}
+
+.jobpilot-guidance-content {
+  min-width: 0;
+}
+
+.jobpilot-guidance-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--jp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jobpilot-guidance-meta {
+  font-size: 11px;
+  color: var(--jp-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Subnav inside Workspace ------------------------------------------- */
+.jobpilot-subnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--jp-border-subtle);
+  padding-bottom: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.jobpilot-subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.jobpilot-subnav-btn {
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--jp-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--jp-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.jobpilot-subnav-btn:hover {
+  color: var(--jp-text);
+  background: var(--jp-surface-hover);
+}
+
+.jobpilot-subnav-btn-active {
+  color: var(--jp-primary);
+  background: var(--jp-primary-soft);
+  font-weight: 600;
+}
+
+/* --- Badges and Tag Groups --------------------------------------------- */
+.jobpilot-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--jp-radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--jp-border-subtle);
+  background: var(--jp-surface);
+  color: var(--jp-text-secondary);
+  margin-right: 4px;
+  margin-bottom: 4px;
+}
+
+.jobpilot-tag-badge[data-type="positive"] {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.jobpilot-tag-badge[data-type="concern"] {
+  background: #fffbeb;
+  border-color: #fef08a;
+  color: #854d0e;
+}
+
+.jobpilot-tag-badge[data-type="question"] {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}
+
+/* --- Stage pipeline bar ------------------------------------------------ */
+.jobpilot-stage-grid {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+}
+
+.jobpilot-stage-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.jobpilot-stage-tab {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--jp-border-subtle);
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-surface);
+  color: var(--jp-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.jobpilot-stage-tab:hover {
+  border-color: var(--jp-primary-border);
+  color: var(--jp-text);
+}
+
+.jobpilot-stage-tab[data-active="true"] {
+  background: var(--jp-primary-soft);
+  border-color: var(--jp-primary-border);
+  color: var(--jp-primary);
+  font-weight: 600;
+}
+
+.jobpilot-stage-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- Compare Table ----------------------------------------------------- */
+.jobpilot-compare-table-wrapper {
+  overflow-x: auto;
+  margin-top: 10px;
+  border: 1px solid var(--jp-border-subtle);
+  border-radius: var(--jp-radius-md);
+  background: var(--jp-surface);
+}
+
+.jobpilot-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.jobpilot-compare-th, .jobpilot-compare-td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--jp-border-subtle);
+  border-right: 1px solid var(--jp-border-subtle);
+  vertical-align: top;
+}
+
+.jobpilot-compare-th {
+  background: var(--jp-surface-soft);
+  font-weight: 600;
+  color: var(--jp-text-secondary);
+  white-space: nowrap;
+}
+
+.jobpilot-compare-td:last-child, .jobpilot-compare-th:last-child {
+  border-right: none;
 }
 
 /* --- Toast -------------------------------------------------------------- */

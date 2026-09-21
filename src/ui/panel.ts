@@ -39,12 +39,15 @@ export interface Panel {
   expand(): void;
   collapse(): void;
   resetLayout(): void;
+  selectTab(tab: PanelTab): void;
   readonly expanded: boolean;
   dispose(): void;
 }
 
 const TAB_DEFS: readonly { readonly id: PanelTab; readonly key: string }[] = [
   { id: "home", key: "nav.home" },
+  { id: "jobs", key: "nav.jobs" },
+  { id: "pipeline", key: "nav.pipeline" },
   { id: "search", key: "nav.search" },
   { id: "matches", key: "nav.matches" },
   { id: "queue", key: "nav.queue" },
@@ -161,6 +164,8 @@ export const createPanel = (options: PanelOptions): Panel => {
 
   const allTabs: PanelTab[] = [
     "home",
+    "jobs",
+    "pipeline",
     "search",
     "matches",
     "queue",
@@ -187,6 +192,12 @@ export const createPanel = (options: PanelOptions): Panel => {
     for (const [tabId, section] of panels) {
       section.setAttribute("data-active", tabId === id ? "true" : "false");
     }
+  };
+
+  const originalOnSelectTab = callbacks.onSelectTab;
+  (callbacks as { onSelectTab?: (tab: PanelTab) => void }).onSelectTab = (tab: PanelTab) => {
+    selectTab(tab);
+    originalOnSelectTab?.(tab);
   };
 
   // Action Bar
@@ -510,6 +521,7 @@ export const createPanel = (options: PanelOptions): Panel => {
     expand,
     collapse,
     resetLayout,
+    selectTab,
     get expanded() {
       return expanded;
     },

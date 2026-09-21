@@ -201,3 +201,80 @@ const safeQueryAll = (root: ParentNode, candidates: readonly string[]): readonly
   }
   return [];
 };
+
+export type BossPageKind =
+  | "public-home"
+  | "login-required"
+  | "home"
+  | "search"
+  | "job-list"
+  | "job-detail"
+  | "chat"
+  | "human-verification"
+  | "blocked"
+  | "unknown";
+
+export interface BossDetailedPageDecision {
+  readonly kind: BossPageKind;
+  readonly baseKind: PageKind;
+  readonly reason: string;
+}
+
+/**
+ * Enhanced contextual page classifier for personal workspace.
+ * Builds upon the base safety-gated `detectBossPageKind` and enriches with
+ * high-level user context (chat, search, public home, human verification).
+ */
+export const detectBossDetailedPageKind = (
+  root: Document,
+  location: Location,
+): BossDetailedPageDecision => {
+  const baseKind = detectBossPageKind(root, location);
+  const pathname = location.pathname || "";
+
+  if (baseKind === "captcha") {
+    return { kind: "human-verification", baseKind, reason: "captcha-detected" };
+  }
+  if (baseKind === "login-required") {
+    return { kind: "login-required", baseKind, reason: "login-wall" };
+  }
+  if (baseKind === "unsupported") {
+    return { kind: "unknown", baseKind, reason: "unsupported-host" };
+  }
+  if (baseKind === "job-detail") {
+    return { kind: "job-detail", baseKind, reason: "job-detail-root" };
+  }
+
+  // Check chat URL or DOM
+  if (
+    pathname.includes("/chat") ||
+    pathname.includes("/geek/chat") ||
+    root.querySelector(".chat-conversation, .chat-message-list, [data-jobpilot-chat]") !== null
+  ) {
+    return { kind: "chat", baseKind, reason: "chat-url-or-dom" };
+  }
+
+  // Check search vs job-list
+  if (baseKind === "job-list" || baseKind === "empty-result") {
+    if (
+      pathname.includes("/job_detail") ||
+      location.search.includes("query=") ||
+      pathname.includes("/web/geek/job")
+    ) {
+      return { kind: "search", baseKind, reason: "search-query-or-path" };
+    }
+    return { kind: "job-list", baseKind, reason: "list-cards" };
+  }
+
+  // Check home / public-home
+  if (pathname === "/" || pathname === "" || pathname === "/web/geek/") {
+    const isLoggedOut = queryFirst(root, SELECTORS.guards.loginRequired) !== null;
+    return {
+      kind: isLoggedOut ? "public-home" : "home",
+      baseKind: isLoggedOut ? "login-required" : "unknown",
+      reason: "root-home-page",
+    };
+  }
+
+  return { kind: "unknown", baseKind, reason: "no-specific-evidence" };
+};

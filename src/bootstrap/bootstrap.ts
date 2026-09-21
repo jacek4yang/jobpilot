@@ -11,8 +11,11 @@
  */
 
 import { readBossRecruiterActivity } from "../adapters/boss/activity";
+import { extractBenefits } from "../adapters/boss/benefits";
 import { createCommunicationAction } from "../adapters/boss/communication";
+import { extractConcerns } from "../adapters/boss/concerns";
 import { resolveCityCodes } from "../adapters/boss/data/city-resolver";
+import { detectBossDetailedPageKind } from "../adapters/boss/parser/page-kind";
 import { createNavigatorLock } from "../adapters/userscript/navigator-lock";
 import { createCommunicationRunner } from "../application/communication-runner";
 import { createCommunicationService } from "../application/communication-service";
@@ -53,11 +56,24 @@ import { startSession as createDiagnosticSession, newSessionId } from "../diagno
 import { traceStorage } from "../diagnostics/trace";
 import type { CommunicationIntent } from "../domain/communication/intent";
 import { createTemplate } from "../domain/communication/template";
+import { mergeJobSnapshot } from "../domain/workspace/merge";
+import type {
+  CustomTag,
+  InterviewRecord,
+  JobAnnotation,
+  JobStage,
+  PersonalPreference,
+  PipelineRecord,
+  StoredJob,
+} from "../domain/workspace/types";
 import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { DEFAULT_LOCK_TTL_MS } from "../ports/lock";
+import type { JobPilotBackupV1 } from "../storage/backup/backup-service";
+import { openWorkspaceStorage } from "../storage/workspace-storage";
 import { renderDiagnostics } from "../ui/diagnostics-view";
+import { createHostEnhancer } from "../ui/host-enhancement/enhancer";
 import { setLocale, t } from "../ui/i18n";
 import { createPanel } from "../ui/panel";
 import { buildSections } from "../ui/sections";
@@ -98,6 +114,34 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   setLocale(effectiveConfig.general.locale);
   const engine = createEngineFor(effectiveConfig);
   const history = createApplicationHistory(loaded.applications);
+
+  // --- Workspace Storage (IndexedDB with in-memory fallback) ----------------
+  const workspaceStorage = await openWorkspaceStorage();
+
+  let workspaceJobs: readonly StoredJob[] = await workspaceStorage.jobs.listJobs();
+  let workspaceAnnotations: readonly JobAnnotation[] =
+    await workspaceStorage.annotations.listAnnotations();
+  let workspacePipeline: readonly PipelineRecord[] = await workspaceStorage.pipeline.listAll();
+  let workspaceInterviews: readonly InterviewRecord[] =
+    await workspaceStorage.interviews.listInterviews();
+  let workspaceTags: readonly CustomTag[] = await workspaceStorage.tags.listTags();
+
+  let currentViewingJob: StoredJob | undefined;
+  let currentViewingAnnotation: JobAnnotation | undefined;
+
+  const reloadWorkspaceData = async (): Promise<void> => {
+    workspaceJobs = await workspaceStorage.jobs.listJobs();
+    workspaceAnnotations = await workspaceStorage.annotations.listAnnotations();
+    workspacePipeline = await workspaceStorage.pipeline.listAll();
+    workspaceInterviews = await workspaceStorage.interviews.listInterviews();
+    workspaceTags = await workspaceStorage.tags.listTags();
+    if (currentViewingJob) {
+      currentViewingAnnotation = await workspaceStorage.annotations.getAnnotation(
+        currentViewingJob.id,
+      );
+    }
+  };
+
   // The execution queue. Populated from an explicit selection over the
   // discovered matches — discovery itself never enqueues, which is the central
   // product rule that keeps a search from turning into unattended contact.
@@ -407,6 +451,114 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       void persist();
       render();
     },
+
+    // Personal Job Workspace callbacks
+    onSetPreference: async (jobId: string, preference: PersonalPreference) => {
+      await workspaceStorage.annotations.updatePreference(jobId, preference, deps.clock.now());
+      if (preference === "favorite") {
+        await workspaceStorage.pipeline.setStage(jobId, "favorite", deps.clock.now());
+      }
+      await reloadWorkspaceData();
+      hostEnhancer.refresh();
+      render();
+    },
+    onSaveNote: async (jobId: string, note: string) => {
+      await workspaceStorage.annotations.updateNote(jobId, note, deps.clock.now());
+      await reloadWorkspaceData();
+      hostEnhancer.refresh();
+      render();
+    },
+    onTogglePin: async (jobId: string) => {
+      await workspaceStorage.annotations.togglePin(jobId, deps.clock.now());
+      await reloadWorkspaceData();
+      render();
+    },
+    onToggleTag: async (
+      jobId: string,
+      category: "positive" | "concern" | "question" | "custom",
+      tag: string,
+    ) => {
+      await workspaceStorage.annotations.toggleTag(jobId, category, tag, deps.clock.now());
+      await reloadWorkspaceData();
+      render();
+    },
+    onUpdateQuestions: async (jobId: string, questions) => {
+      const ann = await workspaceStorage.annotations.getOrCreateAnnotation(jobId, deps.clock.now());
+      await workspaceStorage.annotations.saveAnnotation({
+        ...ann,
+        questions,
+        updatedAt: deps.clock.now(),
+      });
+      await reloadWorkspaceData();
+      render();
+    },
+    onSetPipelineStage: async (jobId: string, stage: JobStage, note?: string) => {
+      await workspaceStorage.pipeline.setStage(jobId, stage, deps.clock.now(), note);
+      await reloadWorkspaceData();
+      hostEnhancer.refresh();
+      render();
+    },
+    onSaveInterview: async (record: InterviewRecord) => {
+      await workspaceStorage.interviews.saveInterview(record);
+      await reloadWorkspaceData();
+      render();
+    },
+    onDeleteInterview: async (id: string) => {
+      await workspaceStorage.interviews.deleteInterview(id);
+      await reloadWorkspaceData();
+      render();
+    },
+    onExportBackup: async () => {
+      const backup = await workspaceStorage.backup.exportBackup(VERSION, deps.clock.now());
+      const jsonStr = JSON.stringify(backup, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = globalThis.document.createElement("a");
+      a.href = url;
+      a.download = `jobpilot-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      globalThis.document.body.append(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      panel.toast("success", "已成功导出备份文件");
+    },
+    onImportBackup: async (backup: JobPilotBackupV1, mode: "merge" | "replace") => {
+      try {
+        const result = await workspaceStorage.backup.importBackup(backup, mode);
+        panel.toast(
+          "success",
+          t("backup.importSuccess", {
+            jobs: result.importedJobs,
+            notes: result.importedAnnotations,
+          }),
+        );
+        await reloadWorkspaceData();
+        hostEnhancer.refresh();
+        render();
+      } catch {
+        panel.toast("error", t("backup.importInvalid"));
+      }
+    },
+    onPruneData: async () => {
+      await workspaceStorage.prune(deps.clock.now());
+      panel.toast("success", t("backup.cleanSuccess"));
+      await reloadWorkspaceData();
+      render();
+    },
+    onClearAllData: async () => {
+      await workspaceStorage.jobs.clearAll();
+      await workspaceStorage.annotations.clearAll();
+      await workspaceStorage.pipeline.clearAll();
+      await workspaceStorage.tags.clearAll();
+      await workspaceStorage.interviews.clearAll();
+      panel.toast("success", t("backup.clearSuccess"));
+      await reloadWorkspaceData();
+      hostEnhancer.refresh();
+      render();
+    },
+    onSelectTab: (tab) => {
+      panel.selectTab(tab);
+    },
   };
 
   const panel = createPanel({
@@ -423,6 +575,25 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   });
 
   globalThis.document.body.append(panel.host);
+
+  const hostEnhancer = createHostEnhancer({
+    document: globalThis.document,
+    getBadgeData: async (jobId: string) => {
+      const ann = await workspaceStorage.annotations.getAnnotation(jobId);
+      const pipe = await workspaceStorage.pipeline.getPipeline(jobId);
+      if (!ann && !pipe) return undefined;
+      return {
+        preference: ann?.preference,
+        stage: pipe?.stage,
+        hasNote: Boolean(ann?.note && ann.note.trim().length > 0),
+      };
+    },
+    onOpenJobSummary: () => {
+      panel.selectTab("jobs");
+      panel.expand();
+    },
+  });
+  hostEnhancer.start();
 
   const watchdog = createWatchdog({
     clock: deps.clock,
@@ -817,6 +988,28 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         running: partial.running,
         paused: partial.paused,
         channel: deps.build.channel,
+
+        // Personal Job Workspace integration
+        pageKind: currentPageKind,
+        isLoggedIn: currentPageKind !== "login-required",
+        favoriteCount: workspaceAnnotations.filter((a) => a.preference === "favorite").length,
+        queueCount: queue.pendingCount(),
+        pipelineCount: workspacePipeline.filter(
+          (p) => !["not-interested", "closed"].includes(p.stage),
+        ).length,
+        currentJob: currentViewingJob,
+        currentAnnotation: currentViewingAnnotation,
+        allJobs: workspaceJobs,
+        allAnnotations: workspaceAnnotations,
+        pipelineRecords: workspacePipeline,
+        interviews: workspaceInterviews,
+        customTags: workspaceTags,
+        storageStats: {
+          jobCount: workspaceJobs.length,
+          favoriteCount: workspaceAnnotations.filter((a) => a.preference === "favorite").length,
+          noteCount: workspaceAnnotations.filter((a) => Boolean(a.note && a.note.trim().length > 0))
+            .length,
+        },
       }),
     };
 
@@ -936,13 +1129,90 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
   };
 
+  const refreshCurrentJob = async (): Promise<void> => {
+    try {
+      const doc = globalThis.document;
+      const detailEl = doc.querySelector(
+        ".job-detail-section, .job-banner, [data-jobpilot-detail]",
+      );
+      if (detailEl) {
+        const titleEl = doc.querySelector(".name, .job-title, [data-jobpilot-job-title], h1");
+        const title = titleEl?.textContent?.trim() ?? "";
+        const companyEl = doc.querySelector(
+          ".company-info a, .company-name, [data-jobpilot-company]",
+        );
+        const companyName = companyEl?.textContent?.trim() ?? "";
+        const salaryEl = doc.querySelector(".salary, [data-jobpilot-salary]");
+        const salaryRaw = salaryEl?.textContent?.trim() ?? undefined;
+        const cityEl = doc.querySelector(".text-city, .job-location, [data-jobpilot-location]");
+        const city = cityEl?.textContent?.trim() ?? undefined;
+        const descEl = doc.querySelector(".job-sec-text, .job-detail-desc, [data-jobpilot-desc]");
+        const description = descEl?.textContent?.trim() ?? "";
+
+        const urlMatch = globalThis.location?.pathname?.match(/\/job_detail\/([^./?#]+)/);
+        const dataJobId =
+          detailEl.getAttribute("data-job-id") ||
+          detailEl.getAttribute("data-jobpilot-job-id") ||
+          detailEl.getAttribute("data-jobpilot-id");
+        const id = dataJobId || (urlMatch ? urlMatch[1] : undefined);
+
+        if (id && title) {
+          const now = deps.clock.now();
+          const existing = await workspaceStorage.jobs.getJob(id);
+          const benefits = extractBenefits(description);
+          const potentialConcerns = extractConcerns(description);
+
+          const merged = mergeJobSnapshot(
+            existing,
+            {
+              id,
+              platform: "boss",
+              title,
+              companyName: companyName || "未知公司",
+              salaryRaw,
+              city,
+              description,
+              benefits,
+              potentialConcerns,
+              canonicalUrl: globalThis.location?.href,
+            },
+            { now },
+          );
+
+          await workspaceStorage.jobs.saveJob(merged);
+          currentViewingJob = merged;
+          currentViewingAnnotation = await workspaceStorage.annotations.getOrCreateAnnotation(
+            id,
+            now,
+          );
+        }
+      }
+    } catch (err) {
+      deps.logger.debug("bootstrap", "current job extraction failed", { err });
+    }
+  };
+
   const refreshPageKind = (): void => {
     try {
-      const kind = deps.platform.detectPage();
-      if (kind === currentPageKind) return;
+      const detailed = detectBossDetailedPageKind(globalThis.document, globalThis.location);
+      const kind =
+        detailed.kind === "login-required" ? "login-required" : deps.platform.detectPage();
+
+      if (kind === currentPageKind) {
+        void refreshCurrentJob().then(() => {
+          hostEnhancer.refresh();
+          render();
+        });
+        return;
+      }
       const previousKind = currentPageKind;
       currentPageKind = kind;
       deps.logger.debug("bootstrap", "page kind", { kind });
+
+      void refreshCurrentJob().then(() => {
+        hostEnhancer.refresh();
+        render();
+      });
 
       // Emitted here because this is where a route change actually becomes
       // observable: the observer fires on any DOM mutation, and only a change
@@ -1123,6 +1393,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       if (heartbeat !== undefined) clearInterval(heartbeat);
       if (isOwner) void lock.release(ownerId);
       pageObserver.dispose();
+      hostEnhancer.dispose();
+      void workspaceStorage.close();
       controller?.dispose();
       watchdog.reset();
       watchdog.stop();

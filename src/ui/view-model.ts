@@ -3,10 +3,19 @@
  */
 
 import type { AutomationMode, JobPilotConfig } from "../config/schema";
+import type {
+  InterviewRecord,
+  JobStage,
+  PersonalPreference,
+  QuestionItem,
+} from "../domain/workspace/types";
+import type { JobPilotBackupV1 } from "../storage/backup/backup-service";
 import { t } from "./i18n";
 
 export type PanelTab =
   | "home"
+  | "jobs"
+  | "pipeline"
   | "search"
   | "matches"
   | "queue"
@@ -31,15 +40,44 @@ export interface UiCallbacks {
   readonly skipCurrent: () => void;
   readonly stop: () => void;
   readonly setCollapsed: (collapsed: boolean) => void;
-  readonly onSaveLayout?: (geometry: {
-    readonly width: number;
-    readonly height: number;
-    readonly x: number;
-    readonly y: number;
-    readonly collapsed: boolean;
-  }) => void;
-  readonly onResetLayout?: () => void;
-  readonly onSaveDisplayName?: (name: string) => void;
+  readonly onSaveLayout?:
+    | ((geometry: {
+        readonly width: number;
+        readonly height: number;
+        readonly x: number;
+        readonly y: number;
+        readonly collapsed: boolean;
+      }) => void)
+    | undefined;
+  readonly onResetLayout?: (() => void) | undefined;
+  readonly onSaveDisplayName?: ((name: string) => void) | undefined;
+
+  // Personal Job Workspace callbacks
+  readonly onSetPreference?: ((jobId: string, preference: PersonalPreference) => void) | undefined;
+  readonly onSaveNote?: ((jobId: string, note: string) => void) | undefined;
+  readonly onTogglePin?: ((jobId: string) => void) | undefined;
+  readonly onToggleTag?:
+    | ((
+        jobId: string,
+        category: "positive" | "concern" | "question" | "custom",
+        tag: string,
+      ) => void)
+    | undefined;
+  readonly onUpdateQuestions?:
+    | ((jobId: string, questions: readonly QuestionItem[]) => void)
+    | undefined;
+  readonly onSetPipelineStage?:
+    | ((jobId: string, stage: JobStage, note?: string) => void)
+    | undefined;
+  readonly onSaveInterview?: ((record: InterviewRecord) => void) | undefined;
+  readonly onDeleteInterview?: ((id: string) => void) | undefined;
+  readonly onExportBackup?: (() => void) | undefined;
+  readonly onImportBackup?:
+    | ((backup: JobPilotBackupV1, mode: "merge" | "replace") => Promise<void>)
+    | undefined;
+  readonly onPruneData?: (() => void) | undefined;
+  readonly onClearAllData?: (() => void) | undefined;
+  readonly onSelectTab?: ((tab: PanelTab) => void) | undefined;
 }
 
 export interface StatTile {
