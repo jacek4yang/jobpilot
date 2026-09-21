@@ -7,10 +7,11 @@
  * - 界面 (Reset layout button, compact mode)
  * - 自动化 (Mode selection and acknowledgment)
  * - 安全限制 (Safety rate limits)
- * - 高级 (Reset diagnostic buffers)
+ * - 数据与备份 (Local storage, export/import, pruning, danger zone)
  */
 
 import type { JobPilotConfig } from "../../config/schema";
+import type { JobPilotBackupV1 } from "../../storage/backup/backup-service";
 import { el } from "../components/chips";
 import { getLocale, SUPPORTED_LOCALES, setLocale, t } from "../i18n";
 import type { UiCallbacks } from "../view-model";
@@ -20,6 +21,13 @@ export interface SettingsPageInput {
   readonly callbacks: UiCallbacks;
   readonly onSaveDisplayName?: ((name: string) => void) | undefined;
   readonly onResetLayout?: (() => void) | undefined;
+  readonly storageStats?:
+    | {
+        readonly jobCount: number;
+        readonly favoriteCount: number;
+        readonly noteCount: number;
+      }
+    | undefined;
 }
 
 export const renderSettingsPage = (doc: Document, input: SettingsPageInput): HTMLElement => {
@@ -139,6 +147,115 @@ export const renderSettingsPage = (doc: Document, input: SettingsPageInput): HTM
 
   limitsCard.append(limitsTitle, perSession, perHour, delay);
   container.append(limitsCard);
+
+  // --- 6. 数据与备份 (Data & Backup Center) -------------------------------
+  const backupCard = el(doc, "div", "jobpilot-card");
+  backupCard.setAttribute("data-section", "backup");
+
+  const backupTitle = el(doc, "h4", undefined, t("backup.title"));
+  backupTitle.style.margin = "0 0 6px";
+  backupTitle.style.fontSize = "13px";
+
+  const backupDesc = el(doc, "p", "jobpilot-field-hint", t("backup.desc"));
+  backupDesc.style.marginBottom = "10px";
+
+  // Data stats
+  const statsRow = el(doc, "div", "jobpilot-diag-grid");
+  const stats = input.storageStats ?? { jobCount: 0, favoriteCount: 0, noteCount: 0 };
+
+  const addStatRow = (label: string, value: number) => {
+    const row = el(doc, "div", "jobpilot-diag-row");
+    const l = el(doc, "span", "jobpilot-diag-label", label);
+    const v = el(doc, "span", "jobpilot-diag-value", String(value));
+    row.append(l, v);
+    statsRow.append(row);
+  };
+
+  addStatRow(t("backup.jobsCount", { count: stats.jobCount }), stats.jobCount);
+  addStatRow(t("backup.favoritesCount", { count: stats.favoriteCount }), stats.favoriteCount);
+  addStatRow(t("backup.notesCount", { count: stats.noteCount }), stats.noteCount);
+
+  // Action Buttons
+  const actionsRow = el(doc, "div", "jobpilot-backup-actions");
+  actionsRow.style.marginTop = "12px";
+  actionsRow.style.gap = "8px";
+
+  const exportBtn = el(doc, "button", "jobpilot-btn", t("backup.exportBtn"));
+  exportBtn.type = "button";
+  exportBtn.setAttribute("data-action", "export-backup");
+  exportBtn.setAttribute("data-variant", "primary");
+  exportBtn.addEventListener("click", () => {
+    input.callbacks.onExportBackup?.();
+  });
+
+  const fileInput = el(doc, "input") as HTMLInputElement;
+  fileInput.type = "file";
+  fileInput.accept = ".json";
+  fileInput.style.display = "none";
+  fileInput.setAttribute("data-action", "backup-file-input");
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as JobPilotBackupV1;
+      // Default to merge mode for safety
+      await input.callbacks.onImportBackup?.(parsed, "merge");
+    } catch {
+      // Handled in callback / error toast
+    } finally {
+      fileInput.value = "";
+    }
+  });
+
+  const importBtn = el(doc, "button", "jobpilot-btn", t("backup.importBtn"));
+  importBtn.type = "button";
+  importBtn.setAttribute("data-action", "import-backup");
+  importBtn.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  const pruneBtn = el(doc, "button", "jobpilot-btn", t("backup.cleanBtn"));
+  pruneBtn.type = "button";
+  pruneBtn.setAttribute("data-action", "prune-data");
+  pruneBtn.setAttribute("data-variant", "subtle");
+  pruneBtn.addEventListener("click", () => {
+    input.callbacks.onPruneData?.();
+  });
+
+  actionsRow.append(exportBtn, importBtn, pruneBtn, fileInput);
+
+  // Danger Zone
+  const dangerBox = el(doc, "div", "jobpilot-danger-zone");
+  dangerBox.style.marginTop = "16px";
+  dangerBox.style.paddingTop = "12px";
+  dangerBox.style.borderTop = "1px solid var(--jp-border-subtle)";
+
+  const dangerTitle = el(doc, "div", undefined, t("backup.dangerTitle"));
+  dangerTitle.style.fontSize = "11px";
+  dangerTitle.style.fontWeight = "600";
+  dangerTitle.style.color = "var(--jp-danger)";
+  dangerTitle.style.marginBottom = "6px";
+
+  const clearAllBtn = el(doc, "button", "jobpilot-btn", t("backup.clearAllBtn"));
+  clearAllBtn.type = "button";
+  clearAllBtn.setAttribute("data-action", "clear-all-data");
+  clearAllBtn.setAttribute("data-variant", "danger");
+  clearAllBtn.addEventListener("click", () => {
+    const confirmed =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(t("backup.clearConfirmPrompt"))
+        : true;
+    if (confirmed) {
+      input.callbacks.onClearAllData?.();
+    }
+  });
+
+  dangerBox.append(dangerTitle, clearAllBtn);
+
+  backupCard.append(backupTitle, backupDesc, statsRow, actionsRow, dangerBox);
+  container.append(backupCard);
 
   return container;
 };

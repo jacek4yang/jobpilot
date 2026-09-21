@@ -6,11 +6,20 @@
  */
 
 import type { JobPilotConfig } from "../config/schema";
+import type {
+  CustomTag,
+  InterviewRecord,
+  JobAnnotation,
+  PipelineRecord,
+  StoredJob,
+} from "../domain/workspace/types";
 import { el } from "./components/chips";
 import { renderHistoryPage } from "./pages/history";
 import { renderHomePage } from "./pages/home";
+import { renderJobsWorkspacePage } from "./pages/jobs-workspace";
 import { renderMatchesPage } from "./pages/matches";
 import { renderMessagesPage } from "./pages/messages";
+import { renderPipelinePage } from "./pages/pipeline";
 import { renderQueuePage } from "./pages/queue";
 import { renderRulesPage } from "./pages/rules";
 import { renderSearchPage } from "./pages/search";
@@ -170,6 +179,27 @@ export interface BuildSectionsInput {
   readonly running?: boolean | undefined;
   readonly paused?: boolean | undefined;
   readonly channel?: string | undefined;
+
+  // Personal Job Workspace integration
+  readonly currentJob?: StoredJob | undefined;
+  readonly currentAnnotation?: JobAnnotation | undefined;
+  readonly allJobs?: readonly StoredJob[] | undefined;
+  readonly allAnnotations?: readonly JobAnnotation[] | undefined;
+  readonly pipelineRecords?: readonly PipelineRecord[] | undefined;
+  readonly interviews?: readonly InterviewRecord[] | undefined;
+  readonly customTags?: readonly CustomTag[] | undefined;
+  readonly storageStats?:
+    | {
+        readonly jobCount: number;
+        readonly favoriteCount: number;
+        readonly noteCount: number;
+      }
+    | undefined;
+  readonly isLoggedIn?: boolean | undefined;
+  readonly pageKind?: string | undefined;
+  readonly favoriteCount?: number | undefined;
+  readonly queueCount?: number | undefined;
+  readonly pipelineCount?: number | undefined;
 }
 
 export const buildSections = (
@@ -190,6 +220,29 @@ export const buildSections = (
     stats: input.stats,
     callbacks,
     isDiagnostic: input.channel === "diagnostic",
+    pageKind: input.pageKind,
+    isLoggedIn: input.isLoggedIn,
+    favoriteCount: input.favoriteCount,
+    queueCount: input.queueCount,
+    pipelineCount: input.pipelineCount,
+    currentJob: input.currentJob,
+    currentAnnotation: input.currentAnnotation,
+  });
+
+  const jobsPage = renderJobsWorkspacePage(doc, {
+    currentJob: input.currentJob,
+    currentAnnotation: input.currentAnnotation,
+    allJobs: input.allJobs ?? [],
+    allAnnotations: input.allAnnotations ?? [],
+    customTags: input.customTags ?? [],
+    callbacks,
+  });
+
+  const pipelinePage = renderPipelinePage(doc, {
+    jobs: input.allJobs ?? [],
+    pipelineRecords: input.pipelineRecords ?? [],
+    interviews: input.interviews ?? [],
+    callbacks,
   });
 
   const searchPage = renderSearchPage(doc, {
@@ -219,6 +272,7 @@ export const buildSections = (
   const settingsPage = renderSettingsPage(doc, {
     config: input.config,
     callbacks,
+    storageStats: input.storageStats,
     onSaveDisplayName: (name) => {
       callbacks.onSaveDisplayName?.(name);
     },
@@ -229,6 +283,8 @@ export const buildSections = (
 
   return {
     home: homePage,
+    jobs: jobsPage,
+    pipeline: pipelinePage,
     search: searchPage,
     matches: matchesPage,
     queue: queuePage,
