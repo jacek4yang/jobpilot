@@ -3,38 +3,50 @@
  * query the BOSS adapter performs.
  *
  * ============================ HONESTY NOTICE ============================
- * The real BOSS Zhipin DOM was NOT inspected while writing this file. Roughly
- * one in three entries below is therefore a *guess* about the live site.
+ * This file was written blind, then partially grounded: on 2026-09-21 a
+ * read-only recon harness captured the REAL live-site DOM (logged-in session)
+ * under `test-results/live/2026-09-21/recon/result/` (list page, detail
+ * drawer, chat list, open conversation). Entries that cite that capture are
+ * marked accordingly; everything else remains a guess.
  *
- * Every entry carries an explicit `confidence` field:
- *   - "fixture-only" — asserted by the synthetic fixtures under
+ * Every entry carries an explicit `confidence` field, in a strict ladder:
+ *   - "fixture-only"   — asserted by the synthetic fixtures under
  *     `tests/fixtures/boss/`, which were authored to match this file. Matching
  *     a fixture proves the parser plumbing works; it says NOTHING about the
- *     real site.
- *   - "unverified"   — a heuristic guess about real BOSS markup. It may match
+ *     real site. Weakest rung.
+ *   - "unverified"     — a heuristic guess about real BOSS markup. It may match
  *     nothing, or match the wrong element, on the live site.
+ *   - "recon-verified" — observed in the 2026-09-21 read-only capture of the
+ *     live site. The element exists and looks as described in that capture;
+ *     it may still drift in future site updates, and capture coverage is
+ *     partial (see each entry's note for what was and was not seen).
+ *   - "verified"       — NOT USED. Reserved for selectors proven by a
+ *     live-shipped diagnostic bundle. Do not invent this value.
  *
- * Consequently `BOSS_METADATA.automationVerified` is `false` and must remain so
- * until someone validates these selectors against the real site and updates
- * this table with evidence. Do not promote an entry to "verified" without that
- * evidence.
+ * Consequently `BOSS_METADATA.automationVerified` is `false` and must remain
+ * so: recon evidence is not shipped-diagnostic evidence. Promoting any entry
+ * beyond "recon-verified" requires the bundle evidence described above.
  *
- * Candidates are ordered by robustness: semantic attributes (itemprop, role,
- * data-*) first, then ARIA, then stable structure, then stable class names,
- * and only then a limited text fallback. `queryFirst` walks them in order and
- * reports which one won, so diagnostics can tell a stable anchor from a guess.
+ * Candidates are ordered real-first: recon-verified live-site anchors lead,
+ * then fixture/semantic hooks, then structural guesses. `queryFirst` walks
+ * them in order and reports which one won, so diagnostics can tell a captured
+ * anchor from a guess.
  * =======================================================================
  */
 
 import type { LocatedElement } from "../../ports/job-platform";
 
 /**
- * Confidence in a selector.
+ * Confidence in a selector, in the ladder documented in the header:
+ * fixture-only < unverified < recon-verified < verified.
  *
  * `"fixture-only"` is deliberately NOT called "verified": it only asserts
  * agreement with our own synthetic fixture, never with the real site.
+ * `"recon-verified"` cites the 2026-09-21 read-only live-site capture.
+ * `"verified"` is intentionally absent: it requires shipped-diagnostic
+ * evidence and must not be claimed until that exists.
  */
-export type SelectorConfidence = "fixture-only" | "unverified";
+export type SelectorConfidence = "fixture-only" | "unverified" | "recon-verified";
 
 /** One logical DOM target, with an ordered list of ways to find it. */
 export interface SelectorEntry {
@@ -101,16 +113,22 @@ export interface SelectorProvenance {
 
 const FIXTURE_ONLY = "fixture-only" as const;
 const UNVERIFIED = "unverified" as const;
+const RECON_VERIFIED = "recon-verified" as const;
 
 /**
- * One shared candidate list reused by several targets in a group.
- * Kept as named constants so the note explaining the ordering is written once.
+ * Card candidates, real-first.
+ *
+ * The 2026-09-21 list-page capture (002-list.json) shows cards as
+ * `<div class="job-card-wrap">` (carrying `.active` when selected) wrapping an
+ * inner `<li class="job-card-box">`; 150 `.job-card-wrap` nodes were present
+ * on one scrolled list. The remaining candidates are the fixture hook and
+ * structural fallbacks, kept so fixture-shaped and older markup still parse.
  */
 const CARD_CANDIDATES: readonly string[] = [
+  // Observed on the live site (2026-09-21 capture).
+  ".job-card-wrap",
   // Semantic author hooks the fixture sets explicitly.
   "[data-jobpilot-card]",
-  // `itemprop` from schema.org JobPosting microdata — real sites often emit it.
-  "[itemprop='jobPosting']",
   // Structural fallbacks scoped to the fixture list container.
   "ul.job-list > li.job-card",
   "li.job-card",
@@ -127,70 +145,85 @@ export const SELECTORS = {
   list: {
     card: {
       candidates: CARD_CANDIDATES,
-      confidence: FIXTURE_ONLY,
-      note: "Fixture defines data-jobpilot-card on every card. The itemprop and class candidates are shape guesses about real BOSS markup and may match nothing or too much.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: 150 `.job-card-wrap` cards on one scrolled list, each wrapping an inner `li.job-card-box` (002-list.json). The data-jobpilot-card and class candidates are fixture/fallback shapes kept for older markup.",
     },
     link: {
       candidates: [
-        "a.job-card__link[href]",
-        "[data-jobpilot-link][href]",
+        "a.job-name[href]",
         "a[href*='/job_detail/']",
+        "[data-jobpilot-link][href]",
+        "a.job-card__link[href]",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Fixture uses a.job-card__link. The href substring is a durable-looking real-site guess but is unverified.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: the card title is an `a.job-name` whose href is `/job_detail/{jobId}.html` (152 matches, 002-list.json). The href-substring and fixture candidates are fallbacks.",
     },
     title: {
-      candidates: ["[itemprop='title']", "[data-jobpilot-field='title']", "h3.job-card__title"],
-      confidence: FIXTURE_ONLY,
-      note: "itemprop first because schema.org microdata is the most stable author signal. The class candidate is fixture-shaped.",
+      candidates: [
+        ".job-name",
+        "[itemprop='title']",
+        "[data-jobpilot-field='title']",
+        "h3.job-card__title",
+      ],
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: the card title anchor carries class `job-name` (151 matches, 002-list.json). The itemprop and class candidates are fixture/fallback shapes.",
     },
     company: {
       candidates: [
+        ".job-card-footer .boss-name",
+        ".boss-info .boss-name",
         "[itemprop='hiringOrganization'] [itemprop='name']",
         "[data-jobpilot-field='company']",
         ".job-card__company",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Nested itemprop mirrors real JobPosting microdata shape. Unverified on the live site.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: on the current list UI the `span.boss-name` inside `.job-card-footer a.boss-info` carries the COMPANY name (e.g. 意聪科技, 150 matches), NOT a recruiter name — do not read it as a person. 002-list.json.",
     },
     salary: {
       candidates: [
+        ".job-salary",
         "[itemprop='baseSalary']",
         "[data-jobpilot-field='salary']",
         ".job-card__salary",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Salary is display-only here: it is always re-parsed through parseSalary, which fails soft.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: `span.job-salary` present on all 151 cards (002-list.json). PUA font obfuscation observed in the capture: the text is PUA codepoints, not digits, so parseSalary fails soft and salary.parsed stays false on the live list.",
     },
     location: {
       candidates: [
+        ".company-location",
         "[itemprop='jobLocation']",
         "[data-jobpilot-field='location']",
         ".job-card__location",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Feeds parseLocation. An empty match yields an unknown city rather than a wrong one.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: `span.company-location` in the card footer carries `{city}·{district}·{area}` (e.g. 西安·雁塔区·鱼化寨, 002-list.json). Feeds parseLocation; an empty match yields an unknown city rather than a wrong one.",
     },
     jobIdAttribute: {
       candidates: ["data-job-id", "data-jobid", "data-jid"],
       confidence: FIXTURE_ONLY,
-      note: "Attribute names, not selectors. The first attribute present on the card wins; if none is present the id falls back to fingerprintJob and idIsPlatformNative stays false.",
+      note: "Attribute names, not selectors. The 2026-09-21 capture found NO id attribute on any of the 151 live cards — the id lives only in the detail-link href path — so readPlatformJobId reads the href first and consults these attributes last, as fallbacks for fixture-shaped or older markup.",
     },
     tags: {
-      candidates: ["[data-jobpilot-field='tags'] .job-card__tag", ".job-card__tags .job-card__tag"],
-      confidence: UNVERIFIED,
-      note: "Purely heuristic. Tag text on real BOSS cards is not a documented contract; consumers must treat it as advisory.",
+      candidates: [
+        ".tag-list li",
+        "[data-jobpilot-field='tags'] .job-card__tag",
+        ".job-card__tags .job-card__tag",
+      ],
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: the card carries `ul.tag-list` with bare `<li>` chips such as 1-3年 / 本科 (303 `<li>` across 151 cards, 002-list.json). Tag text is still advisory for downstream rules.",
     },
   },
   detail: {
     root: {
       candidates: [
+        ".job-detail-container",
         "[data-jobpilot-detail]",
         "[itemtype='https://schema.org/JobPosting']",
         "main.job-detail",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Presence of this root is one of the two positive requirements for classifyJobDetail.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21 for the DETAIL DRAWER: clicking a list card opens `div.job-detail-container > div.job-detail-box` inline, URL unchanged (004-detail.json, 006-detail2.json). CAVEAT: the full standalone detail page (the `.job-sec-info` family) is NOT yet evidenced — it probed zero in the drawer capture — so the non-drawer candidates remain unverified fallbacks within this entry. Presence of this root is one of the two positive requirements for classifyJobDetail.",
     },
     title: {
       candidates: ["[itemprop='title']", "h1.job-detail__title"],
@@ -248,23 +281,32 @@ export const SELECTORS = {
       note: "Heuristic keyword chips on the real site are not a documented contract; consumers treat them as advisory hints.",
     },
     recruiterName: {
-      candidates: ["[data-jobpilot-field='recruiter']", ".job-detail__recruiter-name"],
-      confidence: UNVERIFIED,
-      note: "Heuristic. Absence simply yields no recruiter, which the headhunter rule treats as 'no headhunter detected'.",
+      candidates: [
+        ".job-boss-info .name",
+        "[data-jobpilot-field='recruiter']",
+        ".job-detail__recruiter-name",
+      ],
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: the drawer recruiter card is `div.job-boss-info` with `h2.name` (e.g. 曹蕾蕾, 004-detail.json). CAUTION: that h2 nests a `span.boss-online-tag` (在线/activity labels), so plain textContent appends the status text — the detail parser reads the name with that child excluded.",
     },
     recruiterTitle: {
-      candidates: ["[data-jobpilot-field='recruiter-title']", ".job-detail__recruiter-title"],
-      confidence: UNVERIFIED,
-      note: "Heuristic. Used only for display and the 猎头 substring check.",
+      candidates: [
+        ".job-boss-info .boss-info-attr",
+        "[data-jobpilot-field='recruiter-title']",
+        ".job-detail__recruiter-title",
+      ],
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: `div.job-boss-info .boss-info-attr` carries `{company} · {role}` (capture evidence: 芝麻数据 · 招聘者, 004-detail.json). Used only for display and the 猎头 substring check.",
     },
     applyButton: {
       candidates: [
+        ".op-btn-chat",
         "button[data-jobpilot-action='apply']",
         "[role='button'][data-jobpilot-action='apply']",
         ".job-detail__apply",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "SAFETY-CRITICAL. The apply action will never click a node that one of these candidates did not match; a miss yields BlockReason 'selector-missing' rather than a blind click.",
+      confidence: RECON_VERIFIED,
+      note: "SAFETY-CRITICAL. The apply action will never click a node that one of these candidates did not match; a miss yields BlockReason 'selector-missing' rather than a blind click. Recon-verified 2026-09-21: on the live drawer the control is `<a class=\"op-btn op-btn-chat\">立即沟通</a>` inside `div.job-detail-op`, and its `ka` attribute embeds the jobId (`cpc_job_list_chat_{jobId}`); the sibling `a.op-btn-like` is 收藏 and must never be clicked. Consumers must still verify the ENTIRE label is exactly 立即沟通 before any click — the apply action enforces this in the same style as the send-button 发送 filter.",
     },
     alreadyAppliedMarker: {
       candidates: ["[data-jobpilot-state='applied']", ".job-detail__applied-badge"],
@@ -316,11 +358,10 @@ export const SELECTORS = {
         "[data-jobpilot-guard='login-required']",
         "[data-jobpilot-guard='login-expired']",
         ".login-register",
-        ".sign-wrap",
         "[class*='login-dialog']",
       ],
       confidence: FIXTURE_ONLY,
-      note: "Fixture uses the data-jobpilot-guard hooks. Real BOSS login surfaces are guessed and may be absent or renamed.",
+      note: 'Fixture uses the data-jobpilot-guard hooks. `.sign-wrap` was REMOVED as a candidate: the 2026-09-21 capture shows `.sign-wrap` login markup present in the DOM with `style="display: none"` on LOGGED-IN pages — a proven false positive as a login-required structural selector. Real logged-out BOSS surfaces are still only guessed (the capture saw none); the page-kind login text fallback remains the live backstop.',
     },
     loginForm: {
       candidates: [
@@ -338,17 +379,23 @@ export const SELECTORS = {
     },
     jobDetailRoot: {
       candidates: [
+        ".job-detail-container",
         "[data-jobpilot-detail]",
         "[itemtype='https://schema.org/JobPosting']",
         "main.job-detail",
       ],
-      confidence: FIXTURE_ONLY,
-      note: "Positive structural evidence for classifyJobDetail. Its absence keeps classification at 'unknown'.",
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21 for the DETAIL DRAWER (`div.job-detail-container`, 004-detail.json) with the same caveat as detail.root: the full standalone detail page (`.job-sec-info` family) is NOT yet evidenced and the remaining candidates are unverified fallbacks. Positive structural evidence for classifyJobDetail; its absence keeps classification at 'unknown'.",
     },
     jobListRoot: {
-      candidates: ["[data-jobpilot-list]", "ul.job-list", "[class*='job-list-wrapper']"],
-      confidence: FIXTURE_ONLY,
-      note: "Positive structural evidence for classifyJobList. Its absence keeps classification at 'unknown'.",
+      candidates: [
+        ".job-list-container",
+        "[data-jobpilot-list]",
+        "ul.job-list",
+        "[class*='job-list-wrapper']",
+      ],
+      confidence: RECON_VERIFIED,
+      note: "Recon-verified 2026-09-21: `div.job-list-container` wraps `ul.rec-job-list` on the live search page (002-list.json). The remaining candidates are fixture/fallback shapes. Positive structural evidence for classifyJobList; its absence keeps classification at 'unknown'.",
     },
   },
 } as const;

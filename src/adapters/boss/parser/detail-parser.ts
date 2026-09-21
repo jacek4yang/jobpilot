@@ -2,10 +2,14 @@
  * BOSS Zhipin job-detail parser.
  *
  * ============================ HONESTY NOTICE ============================
- * Written without access to the real BOSS Zhipin detail DOM. Validated only
- * against the synthetic fixture `tests/fixtures/boss/job-detail.html`. Real-site
- * detail parsing, including the education/experience chip vocabulary, is
- * UNVERIFIED.
+ * Written without access to the real BOSS Zhipin detail DOM, then partially
+ * grounded: on 2026-09-21 a read-only recon harness captured the live DETAIL
+ * DRAWER (`test-results/live/2026-09-21/recon/result/004-detail.json`,
+ * `006-detail2.json`), which the drawer-facing handling below cites. The FULL
+ * standalone detail page (the `.job-sec-info` family) is NOT yet evidenced.
+ * It is additionally validated against the synthetic fixture
+ * `tests/fixtures/boss/job-detail.html`. This is still NOT "verified":
+ * `automationVerified` stays false.
  * =======================================================================
  *
  * Contract:
@@ -31,6 +35,48 @@ import { queryAllFirst, queryFirst, SELECTORS } from "../selectors";
 /** Normalises whitespace for display text and chip matching. */
 const clean = (value: string | null | undefined): string =>
   (value ?? "").replace(/\s+/g, " ").trim();
+
+/**
+ * Descendants of the recruiter-name element that carry online/activity status
+ * rather than the person's name.
+ *
+ * The 2026-09-21 capture (004-detail.json) shows the drawer name element as
+ * `<h2 class="name"> 曹蕾蕾 <i class="icon-vip"></i><span class="boss-online-tag">在线</span></h2>`
+ * — so a plain `textContent` read would append 在线 (or another activity
+ * label) to the name.
+ */
+const RECRUITER_STATUS_SELECTORS: readonly string[] = [".boss-online-tag", ".boss-active-time"];
+
+/** Pre-joined exclusion selector, so the loop below does not recompute it. */
+const RECRUITER_STATUS_QUERY: string = RECRUITER_STATUS_SELECTORS.join(",");
+
+/**
+ * Text of the first recruiter-name candidate that yields non-empty content,
+ * with BOSS's inline status descendants excluded.
+ *
+ * The read happens on a DETACHED clone: `cloneNode` copies the subtree and the
+ * status children are removed from the copy only, so the live DOM is never
+ * written. Elements without status descendants (fixtures, other candidates)
+ * read exactly as before, making the exclusion a no-op for them.
+ */
+const recruiterNameOf = (root: ParentNode): string | undefined => {
+  for (const candidate of SELECTORS.detail.recruiterName.candidates) {
+    let element: Element | null = null;
+    try {
+      element = root.querySelector(candidate);
+    } catch {
+      continue;
+    }
+    if (element === null) continue;
+    const clone = element.cloneNode(true) as Element;
+    for (const status of Array.from(clone.querySelectorAll(RECRUITER_STATUS_QUERY))) {
+      status.remove();
+    }
+    const text = clean(clone.textContent);
+    if (text.length > 0) return text;
+  }
+  return undefined;
+};
 
 /** Text of the first candidate that yields non-empty content. */
 const textOf = (root: ParentNode, candidates: readonly string[]): string | undefined => {
@@ -201,7 +247,7 @@ export const parseBossJobDetail = (
     isOutsourcing,
   });
 
-  const recruiterName = textOf(root, SELECTORS.detail.recruiterName.candidates);
+  const recruiterName = recruiterNameOf(root);
   const recruiterTitle = textOf(root, SELECTORS.detail.recruiterTitle.candidates);
   const recruiters =
     recruiterName === undefined

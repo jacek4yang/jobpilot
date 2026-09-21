@@ -21,6 +21,16 @@ import { el } from "../components/chips";
 import { t } from "../i18n";
 import type { UiCallbacks } from "../view-model";
 
+/**
+ * The active workspace subtab, kept at module scope on purpose. The panel is
+ * fully re-rendered whenever any async state update lands (storage reads,
+ * badge data, annotations), and a re-render re-invokes this function with a
+ * fresh closure — an `activeSubTab` local would silently reset the user's
+ * place. Module scope survives re-renders within the page lifetime; a full
+ * page reload resets to the default, which is the desired behaviour.
+ */
+let persistedActiveSubTab: string | null = null;
+
 export interface JobsWorkspaceInput {
   readonly currentJob?: StoredJob | undefined;
   readonly currentAnnotation?: JobAnnotation | undefined;
@@ -43,7 +53,7 @@ export const renderJobsWorkspacePage = (doc: Document, input: JobsWorkspaceInput
     { id: "archive", label: t("workspace.tabArchive") },
   ];
 
-  let activeSubTab = input.currentJob ? "current" : "favorites";
+  let activeSubTab = persistedActiveSubTab ?? (input.currentJob ? "current" : "favorites");
   const views = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
 
@@ -54,6 +64,7 @@ export const renderJobsWorkspacePage = (doc: Document, input: JobsWorkspaceInput
     if (tab.id === activeSubTab) btn.classList.add("jobpilot-subnav-btn-active");
     btn.addEventListener("click", () => {
       activeSubTab = tab.id;
+      persistedActiveSubTab = tab.id;
       for (const [id, b] of buttons) {
         b.classList.toggle("jobpilot-subnav-btn-active", id === activeSubTab);
       }

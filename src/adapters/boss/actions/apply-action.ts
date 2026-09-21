@@ -177,6 +177,35 @@ const describeButton = (element: Element): string => {
   return `label="${label}" class="${classes}"${disabled}`;
 };
 
+/** The one acceptable visible label for the detail-pane apply control. */
+const COMMUNICATE_LABEL = "立即沟通";
+
+/**
+ * Normalises whitespace the same way the communication readers do, so the
+ * label comparison is layout-insensitive. Mirrors `findSendButton`: a
+ * non-empty aria-label wins, otherwise the *entire* textContent is used.
+ */
+const normalisedLabel = (element: Element): string => {
+  const aria = (element.getAttribute("aria-label") ?? "").replace(/\s+/g, " ").trim();
+  if (aria.length > 0) return aria;
+  return (element.textContent ?? "").replace(/\s+/g, " ").trim();
+};
+
+/**
+ * Reports whether the element is the detail-pane 立即沟通 control, in the same
+ * style as the send-button label filter (`chat-reader.findSendButton`): the
+ * aria-label wins when present, otherwise the *entire* normalised textContent
+ * must equal 立即沟通 exactly. A substring match is rejected — the 2026-09-21
+ * capture shows the drawer's action block also contains an `a.op-btn-like`
+ * labelled 收藏, and any control whose label is not exactly 立即沟通 must never
+ * be clicked.
+ *
+ * Failure mode: `false` for anything else; the caller blocks rather than
+ * clicking an unidentified control.
+ */
+const hasCommunicateLabel = (element: Element): boolean =>
+  normalisedLabel(element) === COMMUNICATE_LABEL;
+
 /**
  * Reports whether the control looks permanently unavailable.
  *
@@ -226,6 +255,20 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
           job,
           "selector-missing",
           `no candidate matched for applyButton: ${SELECTORS.detail.applyButton.candidates.join(", ")}`,
+        );
+      }
+
+      // Exact-label check, same discipline as the send-button filter in
+      // chat-reader: the 2026-09-21 capture shows this control is an
+      // `<a class="op-btn op-btn-chat">立即沟通</a>` whose action block also
+      // contains an `a.op-btn-like` (收藏). A matched node whose ENTIRE
+      // normalised label is not exactly 立即沟通 is NOT the apply control, so
+      // the attempt blocks here rather than clicking an unidentified node.
+      if (!hasCommunicateLabel(located.element)) {
+        return blocked(
+          job,
+          "selector-missing",
+          `no candidate matched for applyButton with the exact label ${COMMUNICATE_LABEL} (${describeButton(located.element)})`,
         );
       }
 
@@ -322,10 +365,16 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
         };
       }
 
-      // The apply control is still present and enabled => the posting is
-      // probably still un-applied. This is a *positive* not-applied signal.
+      // The apply control is still present, labelled exactly 立即沟通 and
+      // enabled => the posting is probably still un-applied. This is a
+      // *positive* not-applied signal; a control with any other label is not
+      // trusted as evidence either way.
       const button = queryFirst(root, SELECTORS.detail.applyButton);
-      if (button !== null && !looksDisabled(button.element)) {
+      if (
+        button !== null &&
+        hasCommunicateLabel(button.element) &&
+        !looksDisabled(button.element)
+      ) {
         return {
           outcome: {
             kind: "not-applied",
@@ -343,7 +392,9 @@ export const createApplyAction = (deps: ApplyActionDeps): ApplyAction => {
           evidence:
             button === null
               ? "apply control absent and no confirmation marker present"
-              : "apply control present but disabled with no confirmation marker",
+              : hasCommunicateLabel(button.element)
+                ? "apply control present but disabled with no confirmation marker"
+                : `apply control present but its label is not exactly ${COMMUNICATE_LABEL}, so it is not trusted as apply evidence`,
         },
         jobId: jobIdOf(job),
       };

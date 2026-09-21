@@ -2,18 +2,25 @@
  * BOSS Zhipin communication-flow selector registry.
  *
  * ============================ HONESTY NOTICE ============================
- * The real BOSS Zhipin chat DOM was NOT inspected while writing this file.
+ * The real BOSS Zhipin chat DOM was NOT inspected while writing this file;
+ * on 2026-09-21 a read-only recon harness captured the live chat list and an
+ * open conversation (`test-results/live/2026-09-21/recon/result/008-chat.json`,
+ * `012-chat.json`), which grounds the entries marked "recon-verified".
  * Additional agents are working on a minimal *scrape* extraction; this module
  * deliberately does not depend on their work and does not import it.
  *
  * Every group carries an explicit `confidence` field, using exactly the same
- * vocabulary as `src/adapters/boss/selectors.ts`:
- *   - "fixture-only" — asserted by the synthetic fixtures under
+ * ladder as `src/adapters/boss/selectors.ts`:
+ *   - "fixture-only"   — asserted by the synthetic fixtures under
  *     `tests/fixtures/boss/`, which were authored to match this file. Matching
  *     a fixture proves the reader plumbing works; it says NOTHING about the
  *     real site.
- *   - "unverified"   — a heuristic guess about real BOSS markup. It may match
+ *   - "unverified"     — a heuristic guess about real BOSS markup. It may match
  *     nothing, or match the wrong element, on the live site.
+ *   - "recon-verified" — observed in the 2026-09-21 read-only live-site capture.
+ *     The element exists and looks as described there; coverage is partial and
+ *     the site may drift (see each group's note).
+ *   - "verified"       — NOT USED. Reserved for shipped-diagnostic evidence.
  *
  * Sending a message is irreversible, so the risk profile here is worse than for
  * a read-only scan. Two consequences run through the whole module:
@@ -49,6 +56,7 @@ export type CommunicationSelectorKey =
 
 const FIXTURE_ONLY = "fixture-only" as const;
 const UNVERIFIED = "unverified" as const;
+const RECON_VERIFIED = "recon-verified" as const;
 
 /**
  * Communication-flow selectors.
@@ -64,9 +72,9 @@ export const COMMUNICATION_SELECTORS = {
    * panes) cannot be mistaken for conversation content.
    */
   chatRoot: {
-    candidates: ["[data-jobpilot-chat]", ".chat-panel", ".chat-content"],
-    confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-chat]. Without a chat root, job ids and job title/company fall back to scanning the whole root — so a missing anchor degrades evidence quality rather than blocking outright.",
+    candidates: [".chat-conversation", "[data-jobpilot-chat]", ".chat-panel", ".chat-content"],
+    confidence: RECON_VERIFIED,
+    note: "Recon-verified 2026-09-21: the right-hand conversation panel is `div.chat-conversation` (012-chat.json, one open conversation on /web/geek/chat). Without a chat root, job ids and job title/company fall back to scanning the whole root — so a missing anchor degrades evidence quality rather than blocking outright.",
   },
   /**
    * The message input. Both shapes are listed because BOSS has shipped both a
@@ -75,13 +83,14 @@ export const COMMUNICATION_SELECTORS = {
    */
   chatEditor: {
     candidates: [
+      "#chat-input",
       "[data-jobpilot-editor]",
       "[contenteditable='true'][role='textbox']",
       "textarea.chat-editor",
       ".chat-editor [contenteditable='true']",
     ],
-    confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-editor]. The reader handles textarea/input and contenteditable differently, so a *wrong* match here could write text into an unrelated contenteditable region.",
+    confidence: RECON_VERIFIED,
+    note: 'Recon-verified 2026-09-21: the live editor is `div#chat-input.chat-input` with contenteditable="true" (012-chat.json). The textarea fallback is retained from the old dual-shape note; the fixture asserts [data-jobpilot-editor]. The reader handles textarea/input and contenteditable differently, so a *wrong* match here could write text into an unrelated contenteditable region.',
   },
   /** Header of the conversation, which carries the recruiter/company identity. */
   chatHeader: {
@@ -92,17 +101,23 @@ export const COMMUNICATION_SELECTORS = {
   jobTitleInChat: {
     candidates: [
       "[data-jobpilot-chat-title]",
+      "a.job-card-title",
       ".chat-header__job-title",
       ".chat-panel__job-title",
       "a[href*='/job_detail/']",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-chat-title]. The detail-link fallback is a real-site guess and is UNVERIFIED.",
+    note: "Fixture asserts [data-jobpilot-chat-title]. a.job-card-title is the fixture's real-shape class (2026-09-21 fixture rewrite) — NOT live-observed; promote only on capture evidence. The detail-link fallback works wherever a /job_detail/ link is present.",
   },
   companyInChat: {
-    candidates: ["[data-jobpilot-chat-company]", ".chat-header__company", ".chat-panel__company"],
+    candidates: [
+      "[data-jobpilot-chat-company]",
+      ".company-name",
+      ".chat-header__company",
+      ".chat-panel__company",
+    ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-chat-company]. Absence is tolerated: matchChatIdentity then requires a recruiter or title corroboration.",
+    note: "Fixture asserts [data-jobpilot-chat-title]'s sibling [data-jobpilot-chat-company]. .company-name is the fixture's real-shape class — NOT live-observed. Absence is tolerated: matchChatIdentity then requires a recruiter or title corroboration.",
   },
   /**
    * Attributes that may carry a platform job id inside the chat region.
@@ -119,54 +134,66 @@ export const COMMUNICATION_SELECTORS = {
   commonPhraseToggle: {
     candidates: [
       "[data-jobpilot-action='common-phrases']",
+      ".phrase-toggle",
       ".chat-editor__phrase-toggle",
       ".chat-tools__phrase",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-action='common-phrases']. Clicking this opens a panel; the adapter treats its text as user-authored and refuses to overwrite a draft containing it.",
+    note: "Fixture asserts [data-jobpilot-action='common-phrases']. .phrase-toggle is the fixture's real-shape class — NOT live-observed. Clicking this opens a panel; the adapter treats its text as user-authored and refuses to overwrite a draft containing it.",
   },
   commonPhrasePanel: {
     candidates: ["[data-jobpilot-common-phrases]", ".common-phrase-panel"],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-common-phrases]. A panel rendered into a portal outside the chat root will not be found here.",
+    note: "Fixture asserts [data-jobpilot-common-phrases]. .common-phrase-panel is the fixture's real-shape class — NOT live-observed. A panel rendered into a portal outside the chat root will not be found here.",
   },
   commonPhraseItem: {
-    candidates: ["[data-jobpilot-common-phrases] li", "[data-jobpilot-common-phrase]"],
+    candidates: [
+      ".common-phrase-panel li.phrase-item",
+      "[data-jobpilot-common-phrases] li",
+      "[data-jobpilot-common-phrase]",
+    ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture puts each phrase in a <li> carrying data-jobpilot-common-phrase. Order is document order, so 'the first common phrase' is well defined but is only as trustworthy as BOSS's own ordering.",
+    note: "Fixture puts each phrase in li.phrase-item under .common-phrase-panel (fixture-shape, NOT live-observed). Order is document order, so 'the first common phrase' is well defined but is only as trustworthy as BOSS's own ordering.",
   },
   /**
    * SAFETY-CRITICAL. The send control.
    *
    * This is the ONE group that is allowed to be narrowed by text, because
-   * clicking the wrong control here sends an irreversible message. The extra
-   * `filter` below re-checks that the button's *entire* normalised label is
-   * exactly `发送`, which rejects decorative icons, `发送中`, `重新发送` and any
-   * container whose text merely contains the word.
+   * clicking the wrong control here sends an irreversible message. The label
+   * filter in `chat-reader.findSendButton` re-checks that the button's
+   * *entire* normalised label is exactly `发送`, which rejects decorative
+   * icons, `发送中`, `重新发送` and any container whose text merely contains
+   * the word.
    */
   sendButton: {
     candidates: [
-      "[data-jobpilot-action='send']",
+      ".btn-send",
+      "button[data-jobpilot-action='send']",
       "button.chat-editor__send",
       ".chat-editor button[type='button']",
     ],
-    confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-action='send'] with the exact label 发送. On the real site a wrong match would send a message, so a miss yields BlockReason 'selector-missing' and there is NO fallback that clicks a text-similar node.",
+    confidence: RECON_VERIFIED,
+    note: "Recon-verified 2026-09-21: the live send control is `button.btn-send` (also `btn-v2 btn-sure-v2`, with a `.disabled` class when not sendable) labelled exactly 发送 (012-chat.json). The `filter` in chat-reader re-checks that the *entire* normalised label is exactly 发送 — rejecting 发送中, 重新发送 and icon containers. A miss yields BlockReason 'selector-missing' and there is NO fallback that clicks a text-similar node.",
   },
   /** An outgoing bubble. Used only to enumerate; text is read from the body. */
   outgoingMessage: {
-    candidates: ["[data-jobpilot-outgoing]", ".message-item.is-outgoing"],
-    confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-outgoing]. This group must NOT be used to count successes on its own — failed bubbles are also outgoing, so callers must filter through messageSendFailed.",
+    candidates: [
+      ".message-item.item-myself",
+      "[data-jobpilot-outgoing]",
+      ".message-item.is-outgoing",
+    ],
+    confidence: RECON_VERIFIED,
+    note: "Recon-verified 2026-09-21: outgoing messages are `li.message-item.item-myself` carrying `data-mid` (e.g. 388458078278148); incoming are `li.message-item.item-friend` (012-chat.json). This group must NOT be used to count successes on its own — failed bubbles are also outgoing, so callers must filter through messageSendFailed.",
   },
   /** The text node inside an outgoing bubble. */
   outgoingMessageBody: {
     candidates: [
+      ".message-item.item-myself .item-message-body",
       "[data-jobpilot-outgoing] [data-jobpilot-body]",
       ".message-item.is-outgoing .message-item__body",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-body] inside each outgoing bubble. If the body selector misses, the outer bubble text is used (which includes the 发送失败 marker) — so the failure filter is applied to the OUTER element, not to the body.",
+    note: "Fixture-shape: li.message-item.item-myself > .item-message-body (NOT live-observed — the 2026-09-21 capture did not isolate a body node). If the body selector misses, the outer bubble text is used (which includes the 发送失败 marker) — so the failure filter is applied to the OUTER element, not to the body.",
   },
   /**
    * Failure markers. MUST be excluded from success counts: a bubble that says
@@ -175,13 +202,14 @@ export const COMMUNICATION_SELECTORS = {
    */
   messageSendFailed: {
     candidates: [
+      ".message-item.item-myself.send-failed",
       "[data-jobpilot-status='failed']",
       "[data-jobpilot-status='sending']",
       ".message-item__status--failed",
       ".message-item__status--sending",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture marks status with data-jobpilot-status on the outgoing bubble. Real BOSS status markup is UNVERIFIED; the reader additionally falls back to the visible text 发送失败 / 发送中 so a renamed attribute does not silently turn a failure into a success.",
+    note: "Fixture-shape: a failed outgoing item carries the extra class .send-failed plus the visible text 发送失败 (NOT live-observed). The reader additionally falls back to the visible text 发送失败 / 发送中 so a renamed attribute does not silently turn a failure into a success.",
   },
   /** Confirmation dialog shown after a successful first contact. */
   successModal: {

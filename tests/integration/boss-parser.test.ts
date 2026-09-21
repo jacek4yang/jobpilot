@@ -136,7 +136,7 @@ describe("boss list parsing — job-list.html", () => {
     const window = loadFixture("job-list.html");
     const root = documentOf(window);
     parseBossJobList(root, BOSS_PLATFORM_ID);
-    const anchor = root.querySelector("a.job-card__link");
+    const anchor = root.querySelector("a.job-name");
     expect(anchor?.getAttribute("href")).toBe("/job_detail/boss-1001.html?ka=search-list-1&lid=x9");
   });
 
@@ -185,12 +185,8 @@ describe("boss list parsing — fail closed", () => {
     const window = loadFixture("job-list.html");
     const root = documentOf(window);
     // Strip the company block from the first card only.
-    const firstCard = first(Array.from(root.querySelectorAll("[data-jobpilot-card]")));
-    for (const element of firstCard.querySelectorAll(
-      "[itemprop='hiringOrganization'], .job-card__company",
-    )) {
-      element.remove();
-    }
+    const firstCard = first(Array.from(root.querySelectorAll(".job-card-wrap")));
+    firstCard.querySelector(".boss-info")?.remove();
 
     const result = parseBossJobList(root, BOSS_PLATFORM_ID);
     expect(result.considered).toBe(4);

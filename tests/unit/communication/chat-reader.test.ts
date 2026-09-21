@@ -3,9 +3,10 @@
  * fixtures under `tests/fixtures/boss/`.
  *
  * ============================ HONESTY NOTICE ============================
- * Every fixture used here was hand-authored to match our own selectors. A green
- * test proves the reader plumbing; it proves NOTHING about the real BOSS Zhipin
- * chat DOM, which was never inspected.
+ * The six chat fixtures (chat-*.html) mirror the REAL BOSS Zhipin chat DOM
+ * captured on 2026-09-21 by the read-only recon harness, with sanitized
+ * synthetic content. The modal/risk fixtures (success-modal, unknown-modal,
+ * risk-page) remain hand-authored: no real capture exists for them yet.
  * =======================================================================
  *
  * The happy-dom `document.write` + doctype dance mirrors
@@ -171,9 +172,9 @@ describe("outgoing message counting", () => {
     const root = load("chat-message-failed.html");
 
     // The fixture really does contain two outgoing bubbles...
-    expect(root.querySelectorAll("[data-jobpilot-outgoing]").length).toBe(2);
+    expect(root.querySelectorAll(".message-item.item-myself").length).toBe(2);
     // ...and the second one really is flagged as failed.
-    const bubbles = Array.from(root.querySelectorAll("[data-jobpilot-outgoing]"));
+    const bubbles = Array.from(root.querySelectorAll(".message-item.item-myself"));
     expect(bubbles.map((bubble) => isFailedOutgoing(bubble))).toEqual([false, true]);
 
     const bodies = readOutgoingMessageBodies(root);

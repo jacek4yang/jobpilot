@@ -307,8 +307,14 @@ export const findSendButton = (root: ParentNode): Element | null => {
       continue;
     }
     for (const element of matches) {
+      // Recon 2026-09-21 (012-chat.json): the live send button carries a
+      // `.disabled` CLASS when not sendable (no disabled attribute), so both
+      // shapes must be treated as disabled. Skipping a disabled control only
+      // ever refuses a click — the safe direction.
       const disabled =
-        element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true";
+        element.hasAttribute("disabled") ||
+        element.getAttribute("aria-disabled") === "true" ||
+        element.classList.contains("disabled");
       if (disabled) continue;
       const label = normalizeText(element.getAttribute("aria-label")) || textOf(element);
       if (label === SEND_LABEL) return element;

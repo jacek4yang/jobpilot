@@ -2,10 +2,13 @@
  * BOSS Zhipin job-list parser.
  *
  * ============================ HONESTY NOTICE ============================
- * This parser was written blind: the real BOSS Zhipin list markup was never
- * inspected. It is validated ONLY against the synthetic fixture
- * `tests/fixtures/boss/job-list.html`, which was authored to match
- * `selectors.ts`. Real-site list parsing is UNVERIFIED.
+ * This parser was written blind, then partially grounded: on 2026-09-21 a
+ * read-only recon harness captured the REAL live list page (151 cards,
+ * `test-results/live/2026-09-21/recon/result/002-list.json`). The list
+ * selectors and the id extraction below now follow that capture where noted.
+ * It is additionally validated against the synthetic fixture
+ * `tests/fixtures/boss/job-list.html`. This is still NOT "verified": no
+ * shipped-diagnostic evidence exists and `automationVerified` stays false.
  * =======================================================================
  *
  * Contract:
@@ -68,13 +71,54 @@ const readHref = (root: ParentNode): string | undefined => {
 };
 
 /**
+ * Percent-decodes a captured id component, keeping the raw value when the
+ * encoding is malformed.
+ *
+ * `decodeURIComponent` throws on a dangling `%`, and hrefs are untrusted
+ * input; a throw here would abort an otherwise-parseable card, so the failure
+ * mode is the un-decoded string rather than an exception.
+ */
+const safeDecode = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+/**
  * Finds the platform-native job id on a card.
  *
- * Failure mode: returns `undefined` when no known attribute is present. Callers
- * then fall back to `fingerprintJob`; they must NOT invent an id from the DOM
- * position, which would change between reloads.
+ * Precedence, grounded in the 2026-09-21 capture (002-list.json): all 151
+ * captured cards carry the id ONLY in the detail-link href path
+ * `/job_detail/{id}.html`, so that path is read FIRST. The legacy query-param
+ * shapes and the id attributes are kept as fallbacks for older or
+ * fixture-shaped markup.
+ *
+ * Failure mode: returns `undefined` when none of the sources yield an id.
+ * Callers then fall back to `fingerprintJob`; they must NOT invent an id from
+ * the DOM position, which would change between reloads.
  */
 export const readPlatformJobId = (card: Element): string | undefined => {
+  const href = readHref(card);
+  if (href !== undefined) {
+    // (1) Path shape: /job_detail/{id}.html. The ONLY id carrier observed on
+    //     the live list capture (002-list.json); `?securityId=` params that
+    //     sometimes accompany it are tracking, not the id.
+    const path = /\/job_detail\/([^/?]+)\.html/.exec(href);
+    const fromPath = clean(safeDecode(path?.[1] ?? ""));
+    if (fromPath.length > 0) return fromPath;
+
+    // (2) Query-string fallbacks for hrefs that carry the id as a param.
+    const query = /[?&](?:jobId|job_id|jid)=([^&#]+)/i.exec(href);
+    const captured = query?.[1];
+    if (captured !== undefined) {
+      const decoded = clean(safeDecode(captured));
+      if (decoded.length > 0) return decoded;
+    }
+  }
+
+  // (3) Id attributes on the card itself (fixture-shaped and older markup).
   for (const attribute of JOB_ID_ATTRIBUTES) {
     const value = card.getAttribute(attribute);
     if (value !== null) {
@@ -82,14 +126,7 @@ export const readPlatformJobId = (card: Element): string | undefined => {
       if (trimmed.length > 0) return trimmed;
     }
   }
-  // Fall back to an id embedded in the detail link's query string.
-  const href = readHref(card);
-  if (href === undefined) return undefined;
-  const match = /[?&](?:jobId|job_id|jid)=([^&#]+)/i.exec(href);
-  const captured = match?.[1];
-  if (captured === undefined) return undefined;
-  const decoded = clean(decodeURIComponent(captured));
-  return decoded.length > 0 ? decoded : undefined;
+  return undefined;
 };
 
 /** Best-effort absolute URL for a detail link, with tracking params dropped. */
