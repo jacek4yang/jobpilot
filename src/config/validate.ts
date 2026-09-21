@@ -211,24 +211,37 @@ const validateGeneral = (
   section: Record<string, unknown>,
   fallback: GeneralConfig,
   report: Report,
-): GeneralConfig => ({
-  enabled: readBoolean(section, "enabled", fallback.enabled, report, "general.enabled"),
-  locale: readString(section, "locale", fallback.locale, report, "general.locale"),
-  enabledPlatforms: readStringArray(
-    section,
-    "enabledPlatforms",
-    fallback.enabledPlatforms,
-    report,
-    "general.enabledPlatforms",
-  ),
-  pauseOnNavigation: readBoolean(
-    section,
-    "pauseOnNavigation",
-    fallback.pauseOnNavigation,
-    report,
-    "general.pauseOnNavigation",
-  ),
-});
+): GeneralConfig => {
+  const rawDisplayName: unknown = section["displayName"];
+  let displayName: string | undefined = fallback.displayName;
+  if (rawDisplayName !== undefined) {
+    if (typeof rawDisplayName === "string") {
+      displayName = rawDisplayName.trim();
+    } else {
+      report("general.displayName must be a string");
+    }
+  }
+
+  return {
+    enabled: readBoolean(section, "enabled", fallback.enabled, report, "general.enabled"),
+    locale: readString(section, "locale", fallback.locale, report, "general.locale"),
+    ...(displayName !== undefined ? { displayName } : {}),
+    enabledPlatforms: readStringArray(
+      section,
+      "enabledPlatforms",
+      fallback.enabledPlatforms,
+      report,
+      "general.enabledPlatforms",
+    ),
+    pauseOnNavigation: readBoolean(
+      section,
+      "pauseOnNavigation",
+      fallback.pauseOnNavigation,
+      report,
+      "general.pauseOnNavigation",
+    ),
+  };
+};
 
 const validateFilters = (
   section: Record<string, unknown>,
@@ -532,12 +545,61 @@ const validateUi = (
     if (isPanelPosition(rawPosition)) {
       panelPosition = rawPosition;
     } else {
-      report("ui.panelPosition must be one of top-left | top-right | bottom-left | bottom-right");
+      report(
+        "ui.panelPosition must be one of top-left | top-right | bottom-left | bottom-right or { x: number, y: number }",
+      );
     }
   }
+
+  const rawWidth = section["panelWidth"];
+  let panelWidth = fallback.panelWidth;
+  if (rawWidth !== undefined) {
+    panelWidth = readNumber(
+      section,
+      "panelWidth",
+      fallback.panelWidth ?? 460,
+      report,
+      "ui.panelWidth",
+      {
+        min: 300,
+        max: 1600,
+      },
+    );
+  }
+
+  const rawHeight = section["panelHeight"];
+  let panelHeight = fallback.panelHeight;
+  if (rawHeight !== undefined) {
+    panelHeight = readNumber(
+      section,
+      "panelHeight",
+      fallback.panelHeight ?? 620,
+      report,
+      "ui.panelHeight",
+      {
+        min: 350,
+        max: 2000,
+      },
+    );
+  }
+
+  const rawCollapsed = section["collapsed"];
+  let collapsed = fallback.collapsed;
+  if (rawCollapsed !== undefined) {
+    collapsed = readBoolean(
+      section,
+      "collapsed",
+      fallback.collapsed ?? false,
+      report,
+      "ui.collapsed",
+    );
+  }
+
   return {
     showPanel: readBoolean(section, "showPanel", fallback.showPanel, report, "ui.showPanel"),
     panelPosition,
+    ...(panelWidth !== undefined ? { panelWidth } : {}),
+    ...(panelHeight !== undefined ? { panelHeight } : {}),
     showReasons: readBoolean(
       section,
       "showReasons",
@@ -552,6 +614,7 @@ const validateUi = (
       report,
       "ui.compactMode",
     ),
+    ...(collapsed !== undefined ? { collapsed } : {}),
   };
 };
 

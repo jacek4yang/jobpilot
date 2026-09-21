@@ -121,11 +121,49 @@ const migrateV3ToV4: MigrationStep = {
   },
 };
 
+/**
+ * v4 -> v5: introduce panel geometry and personal display name.
+ *
+ * v5 adds `ui.panelWidth`, `ui.panelHeight`, `ui.collapsed`, custom
+ * `ui.panelPosition` coordinates, and `general.displayName`. Existing v4
+ * documents have these fields missing; they are preserved if present and
+ * defaulted safely if absent.
+ */
+const migrateV4ToV5: MigrationStep = {
+  name: "v4 -> v5: add panel layout geometry and personal display name",
+  from: 4,
+  to: 5,
+  apply: (root) => {
+    const config = asRecord(root["config"]);
+    const general = asRecord(config["general"]);
+    const ui = asRecord(config["ui"]);
+    return {
+      ...root,
+      schemaVersion: 5,
+      config: {
+        ...config,
+        general: {
+          ...general,
+          locale: typeof general["locale"] === "string" ? general["locale"] : "zh-CN",
+          ...(typeof general["displayName"] === "string"
+            ? { displayName: general["displayName"] }
+            : {}),
+        },
+        ui: {
+          ...ui,
+          panelPosition: ui["panelPosition"] ?? "bottom-right",
+        },
+      },
+    };
+  },
+};
+
 /** The full chain, ascending. Append-only: never renumber or reuse a step. */
 export const MIGRATION_STEPS: readonly MigrationStep[] = [
   migrateV1ToV2,
   migrateV2ToV3,
   migrateV3ToV4,
+  migrateV4ToV5,
 ];
 
 /**

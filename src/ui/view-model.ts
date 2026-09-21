@@ -1,14 +1,12 @@
 /**
- * View models for the panel.
- *
- * A view model is plain data: the controller assembles it from application
- * state, and the panel renders it. Keeping this boundary explicit means the
- * panel can be tested by feeding it a literal object, and the controller can be
- * tested without a DOM.
+ * View models for the JobPilot panel.
  */
-import type { AutomationMode } from "../config/schema";
+
+import type { AutomationMode, JobPilotConfig } from "../config/schema";
+import { t } from "./i18n";
 
 export type PanelTab =
+  | "home"
   | "search"
   | "matches"
   | "queue"
@@ -16,6 +14,7 @@ export type PanelTab =
   | "rules"
   | "messages"
   | "settings"
+  | "diagnostics"
   | "logs";
 
 /** Drives the header indicator. */
@@ -32,6 +31,15 @@ export interface UiCallbacks {
   readonly skipCurrent: () => void;
   readonly stop: () => void;
   readonly setCollapsed: (collapsed: boolean) => void;
+  readonly onSaveLayout?: (geometry: {
+    readonly width: number;
+    readonly height: number;
+    readonly x: number;
+    readonly y: number;
+    readonly collapsed: boolean;
+  }) => void;
+  readonly onResetLayout?: () => void;
+  readonly onSaveDisplayName?: (name: string) => void;
 }
 
 export interface StatTile {
@@ -98,10 +106,6 @@ export interface PendingDecisionView {
 
 /**
  * A rendered panel section.
- *
- * Sections are DOM nodes built by the controller's renderers. Keeping nodes
- * here (rather than a declarative tree) avoids inventing a diffing layer for a
- * panel this small.
  */
 export interface PanelViewModel {
   readonly state: string;
@@ -115,12 +119,18 @@ export interface PanelViewModel {
   readonly running: boolean;
   readonly paused: boolean;
 
-  readonly message?: {
-    readonly tone: "info" | "warn" | "error" | "success";
-    readonly text: string;
-  };
-  readonly blocked?: BlockedView;
-  readonly current?: CurrentItemView;
+  readonly displayName?: string | undefined;
+  readonly config?: JobPilotConfig | undefined;
+  readonly channel?: string | undefined;
+
+  readonly message?:
+    | {
+        readonly tone: "info" | "warn" | "error" | "success";
+        readonly text: string;
+      }
+    | undefined;
+  readonly blocked?: BlockedView | undefined;
+  readonly current?: CurrentItemView | undefined;
   readonly decisions: readonly PendingDecisionView[];
 
   readonly stats: readonly StatTile[];
@@ -138,8 +148,14 @@ export const safetyFromState = (
   state: string,
   mode: AutomationMode,
 ): { readonly level: SafetyLevel; readonly label: string } => {
-  if (state === "blocked" || state === "failed") return { level: "blocked", label: "Blocked" };
-  if (state === "paused") return { level: "paused", label: "Paused" };
-  if (mode === "automatic") return { level: "auto", label: "Auto" };
-  return { level: "safe", label: "Safe" };
+  if (state === "blocked" || state === "failed") {
+    return { level: "blocked", label: t("header.safetyBlocked") };
+  }
+  if (state === "paused") {
+    return { level: "paused", label: t("header.safetyPaused") };
+  }
+  if (mode === "automatic") {
+    return { level: "auto", label: t("header.safetyAuto") };
+  }
+  return { level: "safe", label: t("header.safetySafe") };
 };
