@@ -11,6 +11,14 @@
  * - BOSS 活跃度 (Recruiter activity)
  * - 包含关键词 (Include keywords)
  * - 排除关键词 (Exclude keywords)
+ *
+ * Persistence model: every control change immediately calls
+ * `callbacks.onSaveSearchProfile` with the full profile read back from the
+ * inputs, so typed values are written through to storage. Because the panel
+ * re-renders (and therefore rebuilds this page) on every async state update,
+ * a module-scope draft is kept as well: the newest draft wins over the
+ * persisted profile on re-render, so a keystroke can never be wiped by a
+ * re-render that lands before the storage round-trip completes.
  */
 
 import type { JobPilotConfig, StoredSearchProfile } from "../../config/schema";
@@ -29,6 +37,27 @@ export interface SearchPageInput {
   readonly config?: JobPilotConfig | undefined;
   readonly callbacks: UiCallbacks;
 }
+
+/**
+ * The newest edited profile per profile id. Survives re-renders within the
+ * page lifetime; a full page reload resets it, and storage holds the truth.
+ */
+const profileDrafts = new Map<string, StoredSearchProfile>();
+
+/** Splits a comma/space-separated input into clean tokens. */
+const splitTokens = (value: string): readonly string[] =>
+  value
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/** Parses a salary input; empty or non-numeric yields undefined. */
+const salaryValue = (input: HTMLInputElement): number | undefined => {
+  const raw = input.value.trim();
+  if (raw.length === 0) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
 
 export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLElement => {
   const container = el(doc, "div", "jobpilot-page-search");
@@ -49,14 +78,44 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   headerCard.append(title, sub, runBtn);
   container.append(headerCard);
 
-  const profile: StoredSearchProfile = input.config?.profiles?.find((p) => p.enabled) ?? {
-    id: "default-profile",
+  const persisted = input.config?.profiles?.find((p) => p.enabled);
+  const fallbackId = persisted?.id ?? "default-profile";
+  const fromConfig: StoredSearchProfile = persisted ?? {
+    id: fallbackId,
     name: "默认意向",
     keywords: input.config?.filters?.includeKeywords ?? [],
     cities: input.config?.filters?.cities ?? [],
     includeKeywords: [],
     excludeKeywords: input.config?.filters?.excludeKeywords ?? [],
     enabled: true,
+  };
+  // The draft (if any) is newer than anything persisted — it wins.
+  const profile: StoredSearchProfile = profileDrafts.get(fallbackId) ?? fromConfig;
+
+  /**
+   * Writes the current inputs through to the app and stashes the draft, so
+   * both re-renders and reloads see the typed values.
+   */
+  const persistFromInputs = (): void => {
+    const minK = salaryValue(minSalary);
+    const maxK = salaryValue(maxSalary);
+    const next: StoredSearchProfile = {
+      id: profile.id,
+      name: profile.name,
+      enabled: true,
+      keywords: splitTokens(kwInput.value),
+      cities: splitTokens(cityInput.value),
+      includeKeywords: splitTokens(inInput.value),
+      excludeKeywords: splitTokens(exInput.value),
+      ...(minK === undefined ? {} : { salaryMinK: minK }),
+      ...(maxK === undefined ? {} : { salaryMaxK: maxK }),
+      ...(selectedExp.size === 0 ? {} : { experience: [...selectedExp] }),
+      ...(selectedEdu.size === 0 ? {} : { degree: [...selectedEdu] }),
+      ...(selectedScales.size === 0 ? {} : { companyScales: [...selectedScales] }),
+      ...(actSelect.value.length === 0 ? {} : { recruiterActivity: actSelect.value }),
+    };
+    profileDrafts.set(profile.id, next);
+    input.callbacks.onSaveSearchProfile?.(next);
   };
 
   // --- 1. Keywords Group ---
@@ -65,6 +124,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const kwInput = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   kwInput.placeholder = t("search.keywordsPlaceholder");
   kwInput.value = profile.keywords.join(", ");
+  kwInput.addEventListener("input", persistFromInputs);
   kwGroup.append(kwInput);
   container.append(kwGroup);
 
@@ -74,6 +134,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const cityInput = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   cityInput.placeholder = t("search.citiesPlaceholder");
   cityInput.value = profile.cities.join(", ");
+  cityInput.addEventListener("input", persistFromInputs);
   cityGroup.append(cityInput);
 
   // Common city quick chips
@@ -85,10 +146,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
     const selected = profile.cities.includes(city);
     chip.setAttribute("data-selected", String(selected));
     chip.addEventListener("click", () => {
-      const currentList = cityInput.value
-        .split(/[,，\s]+/)
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const currentList = [...splitTokens(cityInput.value)];
       const idx = currentList.indexOf(city);
       if (idx >= 0) {
         currentList.splice(idx, 1);
@@ -98,6 +156,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
         chip.setAttribute("data-selected", "true");
       }
       cityInput.value = currentList.join(", ");
+      persistFromInputs();
     });
     cityChips.append(chip);
   }
@@ -115,7 +174,8 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const minSalary = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   minSalary.type = "number";
   minSalary.placeholder = t("search.salaryMin");
-  minSalary.value = profile.salaryMinK ? String(profile.salaryMinK) : "";
+  minSalary.value = profile.salaryMinK !== undefined ? String(profile.salaryMinK) : "";
+  minSalary.addEventListener("input", persistFromInputs);
 
   const dash = el(doc, "span", undefined, "—");
   dash.style.color = "var(--jp-text-muted)";
@@ -123,7 +183,8 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const maxSalary = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   maxSalary.type = "number";
   maxSalary.placeholder = t("search.salaryMax");
-  maxSalary.value = profile.salaryMaxK ? String(profile.salaryMaxK) : "";
+  maxSalary.value = profile.salaryMaxK !== undefined ? String(profile.salaryMaxK) : "";
+  maxSalary.addEventListener("input", persistFromInputs);
 
   salaryRow.append(minSalary, dash, maxSalary);
   salaryGroup.append(salaryRow);
@@ -146,6 +207,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
         selectedExp.add(band);
         chip.setAttribute("data-selected", "true");
       }
+      persistFromInputs();
     });
     expChips.append(chip);
   }
@@ -169,6 +231,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
         selectedEdu.add(deg);
         chip.setAttribute("data-selected", "true");
       }
+      persistFromInputs();
     });
     eduChips.append(chip);
   }
@@ -192,6 +255,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
         selectedScales.add(scale);
         chip.setAttribute("data-selected", "true");
       }
+      persistFromInputs();
     });
     scaleChips.append(chip);
   }
@@ -208,6 +272,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
     if (profile.recruiterActivity === act) opt.selected = true;
     actSelect.append(opt);
   }
+  actSelect.addEventListener("change", persistFromInputs);
   actGroup.append(actSelect);
   container.append(actGroup);
 
@@ -217,6 +282,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const inInput = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   inInput.placeholder = t("search.includePlaceholder");
   inInput.value = profile.includeKeywords.join(", ");
+  inInput.addEventListener("input", persistFromInputs);
   inGroup.append(inInput);
   container.append(inGroup);
 
@@ -225,6 +291,7 @@ export const renderSearchPage = (doc: Document, input: SearchPageInput): HTMLEle
   const exInput = el(doc, "input", "jobpilot-input") as HTMLInputElement;
   exInput.placeholder = t("search.excludePlaceholder");
   exInput.value = profile.excludeKeywords.join(", ");
+  exInput.addEventListener("input", persistFromInputs);
   exGroup.append(exInput);
   container.append(exGroup);
 
