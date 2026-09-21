@@ -196,4 +196,121 @@ test.describe("JobPilot panel on a job-list fixture", () => {
     ).not.toContain(snapshot.state);
     expect(["paused", "blocked", "failed"]).toContain(snapshot.state);
   });
+
+  test("renders Chinese-first UI by default with calm tone and localized controls", async ({
+    page,
+  }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+
+    // Header chips in Chinese
+    await expect(page.locator(".jobpilot-mode-chip").first()).toHaveText("辅助模式");
+    await expect(page.locator(".jobpilot-safety-chip").first()).toHaveText("安全运行");
+
+    // Action buttons in Chinese
+    const startBtn = page.locator('.jobpilot-actions button[data-action="start"]').first();
+    await expect(startBtn).toBeVisible();
+    await expect(startBtn).toHaveText("开始");
+
+    const pauseBtn = page.locator('.jobpilot-actions button[data-action="pause"]').first();
+    await expect(pauseBtn).toHaveText("暂停");
+
+    const stopBtn = page.locator('.jobpilot-actions button[data-action="stop"]').first();
+    await expect(stopBtn).toHaveText("停止");
+
+    // Tabs in Chinese
+    const tabList = page.locator(".jobpilot-tabs .jobpilot-tab");
+    const tabTexts = await tabList.allTextContents();
+    expect(tabTexts).toEqual(
+      expect.arrayContaining(["首页", "搜索", "匹配", "队列", "历史", "规则", "消息", "设置"]),
+    );
+
+    // Calm default greeting on Home page
+    const greetingText = page.locator(".jobpilot-greeting-text").first();
+    await expect(greetingText).toBeVisible();
+    await expect(greetingText).toHaveText("你好，今天慢慢来，先看看合适的机会。");
+  });
+
+  test("supports smooth tab switching across sections", async ({ page }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+
+    // Initial tab is home
+    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // Switch to search tab
+    await page.locator('.jobpilot-tab[data-tab="search"]').first().click();
+    await expect(page.locator('.jobpilot-panel[data-panel="search"]').first()).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect(page.locator('.jobpilot-panel[data-panel="home"]').first()).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+
+    // Switch to rules tab
+    await page.locator('.jobpilot-tab[data-tab="rules"]').first().click();
+    await expect(page.locator('.jobpilot-panel[data-panel="rules"]').first()).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // Switch to messages tab
+    await page.locator('.jobpilot-tab[data-tab="messages"]').first().click();
+    await expect(page.locator('.jobpilot-panel[data-panel="messages"]').first()).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // Switch to settings tab
+    await page.locator('.jobpilot-tab[data-tab="settings"]').first().click();
+    await expect(page.locator('.jobpilot-panel[data-panel="settings"]').first()).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  test("supports collapsing to launcher pill and expanding back", async ({ page }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+
+    const panelRoot = page.locator(PANEL_ROOT).first();
+    const launcher = page.locator(PANEL_LAUNCHER).first();
+
+    // Starts expanded
+    await expect(panelRoot).toBeVisible();
+    await expect(launcher).toBeHidden();
+
+    // Click collapse button
+    await page.locator('button[data-action="collapse"]').first().click();
+    await expect(panelRoot).toBeHidden();
+    await expect(launcher).toBeVisible();
+    await expect(launcher.locator(".jobpilot-launcher-monogram")).toHaveText("JP");
+
+    // Click launcher pill to expand
+    await launcher.click();
+    await expect(panelRoot).toBeVisible();
+    await expect(launcher).toBeHidden();
+  });
+
+  test("provides resize handles and corner indicator", async ({ page }) => {
+    await loadHarness(page, "job-list.html");
+    expect(await waitForPanel(page)).toBe(true);
+
+    // All resize handles are present
+    await expect(
+      page.locator('.jobpilot-resize-handle[data-resize-handle="se"]').first(),
+    ).toBeAttached();
+    await expect(
+      page.locator('.jobpilot-resize-handle[data-resize-handle="e"]').first(),
+    ).toBeAttached();
+    await expect(
+      page.locator('.jobpilot-resize-handle[data-resize-handle="s"]').first(),
+    ).toBeAttached();
+    await expect(page.locator(".jobpilot-resize-indicator").first()).toBeAttached();
+  });
 });

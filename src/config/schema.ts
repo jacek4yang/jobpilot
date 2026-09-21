@@ -33,6 +33,11 @@ export interface GeneralConfig {
   readonly enabled: boolean;
   /** UI + logs language. Kept as a free string; unknown values fall back. */
   readonly locale: string;
+  /**
+   * Optional local-only user display name for personalized greeting (e.g. "小明").
+   * Stored locally only, never transmitted or logged.
+   */
+  readonly displayName?: string | undefined;
   /** Platform ids that automation is allowed to run on. Empty = all enabled. */
   readonly enabledPlatforms: readonly string[];
   /** `true` pauses everything as soon as a page load starts. */
@@ -129,16 +134,34 @@ export interface RateLimitConfig {
   readonly stopOnCircuitBreak: boolean;
 }
 
+export interface PanelCustomPosition {
+  readonly x: number;
+  readonly y: number;
+}
+
+export type PanelPosition =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right"
+  | PanelCustomPosition;
+
 /** Presentation-only settings. Never affects decisions. */
 export interface UiConfig {
   /** Show the floating control panel. */
   readonly showPanel: boolean;
-  /** Panel corner anchor. */
-  readonly panelPosition: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  /** Panel corner anchor or custom coordinates { x, y }. */
+  readonly panelPosition: PanelPosition;
+  /** Custom panel width in pixels. */
+  readonly panelWidth?: number | undefined;
+  /** Custom panel height in pixels. */
+  readonly panelHeight?: number | undefined;
   /** Show the per-rule explanation for rejected jobs. */
   readonly showReasons: boolean;
   /** Collapse the panel to a single button on start. */
   readonly compactMode: boolean;
+  /** Persisted collapsed state. */
+  readonly collapsed?: boolean | undefined;
 }
 
 /** Diagnostics. Telemetry is off and there is no code path that turns it on. */
@@ -201,20 +224,28 @@ export interface StoredSearchProfile {
 }
 
 /** Schema revision of {@link JobPilotConfig}. Bump together with a migration. */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
-export const PANEL_POSITIONS: readonly UiConfig["panelPosition"][] = [
-  "top-left",
-  "top-right",
-  "bottom-left",
-  "bottom-right",
-];
+export const PANEL_POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"] as const;
 
 export const isAutomationMode = (value: unknown): value is AutomationMode =>
   typeof value === "string" && (AUTOMATION_MODES as readonly string[]).includes(value);
 
-export const isPanelPosition = (value: unknown): value is UiConfig["panelPosition"] =>
-  typeof value === "string" && (PANEL_POSITIONS as readonly string[]).includes(value);
+export const isPanelPosition = (value: unknown): value is PanelPosition => {
+  if (typeof value === "string") {
+    return (PANEL_POSITIONS as readonly string[]).includes(value);
+  }
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return (
+      typeof record["x"] === "number" &&
+      Number.isFinite(record["x"]) &&
+      typeof record["y"] === "number" &&
+      Number.isFinite(record["y"])
+    );
+  }
+  return false;
+};
 
 /**
  * The default document, as a fresh object on every call so that a caller

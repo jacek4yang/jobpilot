@@ -136,9 +136,9 @@ export const PANEL_MODE_CHIP = ".jobpilot-mode-chip";
 export const PANEL_TITLE = ".jobpilot-title";
 export const PANEL_ACTIONS = ".jobpilot-actions";
 export const PANEL_LAUNCHER = ".jobpilot-launcher";
-export const PANEL_START = '.jobpilot-actions button.jobpilot-btn:has-text("Start")';
-export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn:has-text("Pause")';
-export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn:has-text("Stop")';
+export const PANEL_START = '.jobpilot-actions button.jobpilot-btn[data-action="start"]';
+export const PANEL_PAUSE = '.jobpilot-actions button.jobpilot-btn[data-action="pause"]';
+export const PANEL_STOP = '.jobpilot-actions button.jobpilot-btn[data-action="stop"]';
 
 /**
  * Page kinds observed from the built userscript, per fixture, on the loopback
@@ -351,7 +351,15 @@ export const readPanelState = async (page: Page): Promise<PanelSnapshot> =>
     const panelEl = root.querySelector(".jobpilot-root");
     const buttons: Record<string, boolean> = {};
     for (const button of Array.from(root.querySelectorAll("button.jobpilot-btn"))) {
-      buttons[(button.textContent ?? "").trim()] = (button as HTMLButtonElement).disabled;
+      const text = (button.textContent ?? "").trim();
+      const action = button.getAttribute("data-action");
+      const disabled = (button as HTMLButtonElement).disabled;
+      if (text) buttons[text] = disabled;
+      if (action) {
+        const capitalized = action.charAt(0).toUpperCase() + action.slice(1);
+        buttons[capitalized] = disabled;
+        buttons[action] = disabled;
+      }
     }
     return {
       mounted: true,

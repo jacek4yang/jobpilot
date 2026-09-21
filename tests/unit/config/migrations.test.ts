@@ -66,7 +66,7 @@ describe("migratePersistedRoot — version detection", () => {
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(result.appliedSteps.length).toBeGreaterThan(0);
     expect(result.appliedSteps[0]).toMatch(/^v1 -> v2/);
-    expect(result.appliedSteps.at(-1)).toMatch(/^v3 -> v4/);
+    expect(result.appliedSteps.at(-1)).toMatch(/^v4 -> v5/);
   });
 
   it("migrates an explicit v1 document", () => {
@@ -77,10 +77,10 @@ describe("migratePersistedRoot — version detection", () => {
       statistics: STATISTICS,
     });
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.appliedSteps).toHaveLength(3);
+    expect(result.appliedSteps).toHaveLength(4);
   });
 
-  it("migrates a v2 document with a single step", () => {
+  it("migrates a v2 document with three steps", () => {
     const result = expectOk({
       schemaVersion: 2,
       config: createDefaultConfig(),
@@ -88,9 +88,22 @@ describe("migratePersistedRoot — version detection", () => {
       statistics: STATISTICS,
     });
     expect(result.root.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
-    expect(result.appliedSteps).toHaveLength(2);
+    expect(result.appliedSteps).toHaveLength(3);
     expect(result.appliedSteps[0]).toMatch(/^v2 -> v3/);
     expect(result.appliedSteps[1]).toMatch(/^v3 -> v4/);
+    expect(result.appliedSteps[2]).toMatch(/^v4 -> v5/);
+  });
+
+  it("migrates a v4 document with a single step to v5", () => {
+    const result = expectOk({
+      schemaVersion: 4,
+      config: createDefaultConfig(),
+      applications: APPLICATIONS,
+      statistics: STATISTICS,
+    });
+    expect(result.root.schemaVersion).toBe(5);
+    expect(result.appliedSteps).toHaveLength(1);
+    expect(result.appliedSteps[0]).toMatch(/^v4 -> v5/);
   });
 
   it("names every applied step, so diagnostics can explain the upgrade", () => {
@@ -392,6 +405,55 @@ describe("migratePersistedRoot — v3 -> v4 search profiles", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect((result.root.config as Record<string, unknown>)["profiles"]).toEqual([]);
+  });
+});
+
+describe("migratePersistedRoot — v4 -> v5 panel geometry and display name", () => {
+  it("preserves existing displayName and layout preferences when present", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 4,
+      config: {
+        general: { locale: "zh-CN", displayName: "测试称呼" },
+        ui: {
+          showPanel: true,
+          panelPosition: "top-left",
+          panelWidth: 500,
+          panelHeight: 700,
+        },
+      },
+      applications: [{ jobId: "j1" }],
+      statistics: { contacted: 5 },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const config = result.root.config as JobPilotConfig;
+    expect(config.general.displayName).toBe("测试称呼");
+    expect(config.ui.panelWidth).toBe(500);
+    expect(config.ui.panelHeight).toBe(700);
+    expect(config.ui.panelPosition).toBe("top-left");
+    expect(result.appliedSteps).toContain(
+      "v4 -> v5: add panel layout geometry and personal display name",
+    );
+  });
+
+  it("safely defaults missing layout fields while preserving v4 document", () => {
+    const result = migratePersistedRoot({
+      schemaVersion: 4,
+      config: {
+        general: { locale: "en" },
+        ui: { showPanel: true },
+      },
+      applications: [],
+      statistics: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const config = result.root.config as JobPilotConfig;
+    expect(config.general.locale).toBe("en");
+    expect(config.general.displayName).toBeUndefined();
+    expect(config.ui.panelPosition).toBe("bottom-right");
   });
 });
 

@@ -49,6 +49,7 @@ import {
   recordTransactionTerminal,
   recordVerification,
 } from "../diagnostics/instrument/transaction-trace";
+import { startSession as createDiagnosticSession, newSessionId } from "../diagnostics/session";
 import { traceStorage } from "../diagnostics/trace";
 import type { CommunicationIntent } from "../domain/communication/intent";
 import { createTemplate } from "../domain/communication/template";
@@ -56,9 +57,11 @@ import { createPageObserver } from "../infrastructure/observer/page-observer";
 import { createTaskQueue } from "../infrastructure/queue/queue";
 import { createWatchdog, DEFAULT_WATCHDOG_BUDGETS } from "../infrastructure/watchdog/watchdog";
 import { DEFAULT_LOCK_TTL_MS } from "../ports/lock";
+import { renderDiagnostics } from "../ui/diagnostics-view";
+import { setLocale, t } from "../ui/i18n";
 import { createPanel } from "../ui/panel";
 import { buildSections } from "../ui/sections";
-import { type PanelViewModel, safetyFromState } from "../ui/view-model";
+import { type PanelViewModel, safetyFromState, type UiCallbacks } from "../ui/view-model";
 import { createEngineFor, createRuntimeDeps, VERSION } from "./container";
 
 export interface BootstrapResult {
@@ -91,7 +94,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   const deps = createRuntimeDeps(config);
   const repository = createRepository(deps.storage, deps.logger);
   const loaded = await repository.load();
-  const effectiveConfig = loaded.config;
+  let effectiveConfig = loaded.config;
+  setLocale(effectiveConfig.general.locale);
   const engine = createEngineFor(effectiveConfig);
   const history = createApplicationHistory(loaded.applications);
   // The execution queue. Populated from an explicit selection over the
@@ -249,112 +253,173 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     });
   }
 
+  const panelCallbacks: UiCallbacks = {
+    discover: () => {
+      if (!isOwner) {
+        panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+        return;
+      }
+      void runDiscovery();
+    },
+    start: () => {
+      if (!isOwner) {
+        panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
+        return;
+      }
+      if (verification.isBlocked()) {
+        panel.toast(
+          "warn",
+          "BOSS is asking for manual verification. Complete it, then press Re-check Page.",
+        );
+        return;
+      }
+      deps.recorder.record({
+        level: "info",
+        category: "user-action",
+        event: EVENTS.userStart,
+      });
+      controller?.dispatch({ type: "START" });
+    },
+    recheck: () => {
+      // Step one of the two-step recovery. This VALIDATES and reports; it
+      // never resumes. Resuming is a separate, explicit user action.
+      const pageKind = deps.platform.detectPage();
+      const result = verification.recheck(
+        {
+          pageKind,
+          loginValid: pageKind !== "login-required",
+          riskPresent: pageKind === "captcha" || pageKind === "unknown",
+          expectedRoute:
+            pageKind === "job-list" || pageKind === "job-detail" || pageKind === "empty-result",
+          storageHealthy: tracedStorage.health().healthy,
+          isQueueOwner: isOwner,
+        },
+        deps.clock.now(),
+      );
+      panel.toast(
+        result.result.ok ? "success" : "warn",
+        result.result.ok
+          ? "The page looks safe. Press Resume when you are ready."
+          : result.result.detail,
+      );
+      render();
+    },
+    pause: () => {
+      deps.recorder.record({
+        level: "info",
+        category: "user-action",
+        event: EVENTS.userPause,
+      });
+      controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
+    },
+    resume: () => {
+      // The two-step recovery is enforced HERE, at the only place resume can
+      // be triggered. A challenge disappearing is not sufficient: the user
+      // must have re-checked the page and been told it is safe.
+      const state = verification.state();
+      if (state.phase === "blocked" || state.phase === "still-blocked") {
+        deps.recorder.warnEvent("risk", EVENTS.humanVerificationRecheck, {
+          detail: "resume refused: the page has not been re-checked",
+          phase: state.phase,
+        });
+        panel.toast(
+          "warn",
+          state.phase === "still-blocked"
+            ? `JobPilot cannot resume yet: ${state.lastCheckDetail ?? "a challenge is still present"}.`
+            : "Complete the verification in the page, then press Re-check Page.",
+        );
+        return;
+      }
+      if (state.phase === "ready") {
+        // The user has re-checked and been told it is safe; this press is the
+        // explicit confirmation the flow requires.
+        verification.clear(deps.clock.now());
+        deps.recorder.record({
+          level: "info",
+          category: "user-action",
+          event: EVENTS.userCompletedVerification,
+        });
+      }
+      deps.recorder.record({
+        level: "info",
+        category: "user-action",
+        event: EVENTS.userResume,
+      });
+      controller?.dispatch({ type: "RESUME" });
+    },
+    skipCurrent: () => {
+      deps.logger.info("panel", "skip requested");
+      controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
+    },
+    stop: () => controller?.dispatch({ type: "STOP" }),
+    setCollapsed: (collapsed: boolean) => {
+      effectiveConfig = {
+        ...effectiveConfig,
+        ui: {
+          ...effectiveConfig.ui,
+          collapsed,
+        },
+      };
+      void persist();
+      deps.logger.debug("panel", "collapsed changed", { collapsed });
+    },
+    onSaveLayout: (geo: {
+      readonly width: number;
+      readonly height: number;
+      readonly x: number;
+      readonly y: number;
+      readonly collapsed: boolean;
+    }) => {
+      effectiveConfig = {
+        ...effectiveConfig,
+        ui: {
+          ...effectiveConfig.ui,
+          panelWidth: geo.width,
+          panelHeight: geo.height,
+          panelPosition: { x: geo.x, y: geo.y },
+          collapsed: geo.collapsed,
+        },
+      };
+      void persist();
+    },
+    onResetLayout: () => {
+      effectiveConfig = {
+        ...effectiveConfig,
+        ui: {
+          ...effectiveConfig.ui,
+          panelWidth: undefined,
+          panelHeight: undefined,
+          panelPosition: "bottom-right",
+          collapsed: false,
+        },
+      };
+      void persist();
+      panel.toast("info", t("toast.layoutReset"));
+    },
+    onSaveDisplayName: (displayName: string) => {
+      effectiveConfig = {
+        ...effectiveConfig,
+        general: {
+          ...effectiveConfig.general,
+          displayName: displayName.trim() || undefined,
+        },
+      };
+      void persist();
+      render();
+    },
+  };
+
   const panel = createPanel({
     document: globalThis.document,
     version: VERSION,
-    callbacks: {
-      discover: () => {
-        if (!isOwner) {
-          panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
-          return;
-        }
-        void runDiscovery();
-      },
-      start: () => {
-        if (!isOwner) {
-          panel.toast("warn", "JobPilot is running in another tab. Take over there first.");
-          return;
-        }
-        if (verification.isBlocked()) {
-          panel.toast(
-            "warn",
-            "BOSS is asking for manual verification. Complete it, then press Re-check Page.",
-          );
-          return;
-        }
-        deps.recorder.record({
-          level: "info",
-          category: "user-action",
-          event: EVENTS.userStart,
-        });
-        controller?.dispatch({ type: "START" });
-      },
-      recheck: () => {
-        // Step one of the two-step recovery. This VALIDATES and reports; it
-        // never resumes. Resuming is a separate, explicit user action.
-        const pageKind = deps.platform.detectPage();
-        const result = verification.recheck(
-          {
-            pageKind,
-            loginValid: pageKind !== "login-required",
-            riskPresent: pageKind === "captcha" || pageKind === "unknown",
-            expectedRoute:
-              pageKind === "job-list" || pageKind === "job-detail" || pageKind === "empty-result",
-            storageHealthy: tracedStorage.health().healthy,
-            isQueueOwner: isOwner,
-          },
-          deps.clock.now(),
-        );
-        panel.toast(
-          result.result.ok ? "success" : "warn",
-          result.result.ok
-            ? "The page looks safe. Press Resume when you are ready."
-            : result.result.detail,
-        );
-        render();
-      },
-      pause: () => {
-        deps.recorder.record({
-          level: "info",
-          category: "user-action",
-          event: EVENTS.userPause,
-        });
-        controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
-      },
-      resume: () => {
-        // The two-step recovery is enforced HERE, at the only place resume can
-        // be triggered. A challenge disappearing is not sufficient: the user
-        // must have re-checked the page and been told it is safe.
-        const state = verification.state();
-        if (state.phase === "blocked" || state.phase === "still-blocked") {
-          deps.recorder.warnEvent("risk", EVENTS.humanVerificationRecheck, {
-            detail: "resume refused: the page has not been re-checked",
-            phase: state.phase,
-          });
-          panel.toast(
-            "warn",
-            state.phase === "still-blocked"
-              ? `JobPilot cannot resume yet: ${state.lastCheckDetail ?? "a challenge is still present"}.`
-              : "Complete the verification in the page, then press Re-check Page.",
-          );
-          return;
-        }
-        if (state.phase === "ready") {
-          // The user has re-checked and been told it is safe; this press is the
-          // explicit confirmation the flow requires.
-          verification.clear(deps.clock.now());
-          deps.recorder.record({
-            level: "info",
-            category: "user-action",
-            event: EVENTS.userCompletedVerification,
-          });
-        }
-        deps.recorder.record({
-          level: "info",
-          category: "user-action",
-          event: EVENTS.userResume,
-        });
-        controller?.dispatch({ type: "RESUME" });
-      },
-      skipCurrent: () => {
-        deps.logger.info("panel", "skip requested");
-        controller?.dispatch({ type: "PAUSE", reason: { kind: "user" } });
-      },
-      stop: () => controller?.dispatch({ type: "STOP" }),
-      setCollapsed: (collapsed) => {
-        deps.logger.debug("panel", "collapsed changed", { collapsed });
-      },
+    startCollapsed: effectiveConfig.ui.collapsed ?? effectiveConfig.ui.compactMode,
+    geometry: {
+      width: effectiveConfig.ui.panelWidth,
+      height: effectiveConfig.ui.panelHeight,
+      position: effectiveConfig.ui.panelPosition,
+      collapsed: effectiveConfig.ui.collapsed,
     },
+    callbacks: panelCallbacks,
   });
 
   globalThis.document.body.append(panel.host);
@@ -732,6 +797,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
     const view: PanelViewModel = {
       ...partial,
+      config: effectiveConfig,
+      displayName: effectiveConfig.general.displayName,
+      channel: deps.build.channel,
       sections: buildSections(globalThis.document, {
         ...(partial.message === undefined ? {} : { message: partial.message }),
         ...(partial.blocked === undefined ? {} : { blocked: partial.blocked }),
@@ -742,8 +810,71 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         queue: partial.queue,
         history: partial.history,
         logs: partial.logs,
+        config: effectiveConfig,
+        displayName: effectiveConfig.general.displayName,
+        callbacks: panelCallbacks,
+        state: context.state,
+        running: partial.running,
+        paused: partial.paused,
+        channel: deps.build.channel,
       }),
     };
+
+    if (deps.build.channel === "diagnostic") {
+      const diagSections = view.sections as Record<string, HTMLElement>;
+      diagSections.diagnostics = renderDiagnostics(
+        globalThis.document,
+        {
+          build: deps.build,
+          recorder: deps.recorder,
+          verification: verification.state(),
+          storageHealth: tracedStorage.health(),
+          isQueueOwner: isOwner,
+          route: currentPageKind,
+          state: context.state,
+          currentJob: context.currentJob ? String(context.currentJob.id) : undefined,
+          lastError: context.lastError,
+          lastSelectorFailure: undefined,
+        },
+        {
+          startSession: () => {
+            const now = deps.clock.now();
+            deps.recorder.startSession(
+              createDiagnosticSession({
+                id: newSessionId(now, () => deps.random.next()),
+                scenarioId: "MANUAL",
+                scenarioName: "Manual interactive session",
+                startedAt: now,
+                build: deps.build,
+              }),
+            );
+            panel.toast("info", "Started diagnostic session");
+            render();
+          },
+          finishAndExport: () => {
+            panel.toast("info", "Diagnostic session finished");
+            render();
+          },
+          exportNow: () => {
+            panel.toast("info", "Exporting diagnostic bundle...");
+          },
+          copySessionId: () => {
+            if (globalThis.navigator?.clipboard) {
+              void globalThis.navigator.clipboard.writeText(deps.recorder.sessionId());
+              panel.toast("success", "Session ID copied");
+            }
+          },
+          recheckPage: () => {
+            panelCallbacks.recheck();
+          },
+          resetBuffers: () => {
+            deps.recorder.resetBuffers();
+            panel.toast("info", "Diagnostic buffers cleared");
+            render();
+          },
+        },
+      );
+    }
 
     panel.render(view);
   };
