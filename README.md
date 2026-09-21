@@ -10,6 +10,28 @@ opened. There is no server, no account, and no telemetry: the configuration
 schema contains a `telemetryEnabled` field that is hard-defaulted to `false` and
 has no code path that turns it on.
 
+> ### 致我的至爱：不要担心工作
+>
+> 找工作的过程难免会有焦虑与疲惫，但请放宽心，慢慢来。  
+> JobPilot 是为你量身定制的温柔助手：它安安静静地替你过滤繁杂信息、整理心仪机会、记录求职笔记，把求职的节奏稳稳交还给你。  
+> 无论何时，不要有压力，做你自己，最好的机会一直在前方向你走来。
+
+---
+
+## 界面与工作台预览
+
+JobPilot 采用柔和温暖、低压力的设计风格，原生嵌入 BOSS 直聘浏览体验，助你在从容、自主的节奏中管理求职全流程：
+
+| **BOSS 原生嵌入浏览** | **从容低压的求职主页** |
+| :---: | :---: |
+| ![BOSS 原生嵌入预览](docs/images/jobpilot-overview.png) | ![求职主页与低压引导](docs/images/jobpilot-home.png) |
+| *悬浮于页面右上角，阴影隔离，不干扰原生页面操作* | *舒缓问候语、轻量探索引导与今日求职动态小结* |
+
+| **职位伴侣与私密笔记** | **求职全流程进展看板** |
+| :---: | :---: |
+| ![职位伴侣与私密笔记](docs/images/jobpilot-workspace.png) | ![求职全流程进展看板](docs/images/jobpilot-pipeline.png) |
+| *自动提取亮点、主观偏好标记、私密笔记自动保存与提问清单* | *全阶段流转看板（准备沟通、已沟通、待面试、Offer）与面试排程* |
+
 ---
 
 ## Status
@@ -78,6 +100,36 @@ well-tested userscript whose real-site behaviour is unverified.
 ---
 
 ## Features
+
+**Personal job workspace & companion**
+
+- Native companion view (`正在看`): automatically extracts and highlights core
+  job criteria, perks, potential concerns, and salary details from the active posting.
+- Subjective feeling tags: record your personal attitude (`很喜欢` / `有点兴趣` /
+  `再看看` / `不适合`) with zero cognitive pressure.
+- Private note-taking: autosaved personal impressions, team notes, and interview thoughts
+  stored locally with debounce and visual confirmation.
+- Inquiry checklist: preconfigured and customizable questions to ask recruiters (e.g.
+  work-life balance, overtime expectations, team size, probation terms).
+- Multi-bucket collection: quick access to favorites, considering list, side-by-side
+  job comparison table, and archived opportunities.
+
+**Recruitment pipeline & interview tracker**
+
+- Full-funnel progression: tracks opportunities across stages (`准备沟通` → `已沟通` →
+  `有回复` → `待面试` → `已面试` → `收到 Offer` → `已结束`).
+- Interview schedule manager: tracks interview timestamps, formats (online video,
+  phone, onsite), meeting rooms/locations, and preparation notes.
+- Quick stage-mover: effortlessly advance or adjust candidates directly from cards.
+
+**Local-first persistence & backup center**
+
+- Dual storage architecture: GM storage for user configuration and state machine invariants;
+  client-side IndexedDB (`jobpilot_workspace_db`) for comprehensive workspace data.
+- Absolute privacy: zero outbound telemetry, zero remote tracking; all private notes,
+  ratings, and search sessions never leave your local browser.
+- Data management: one-click JSON backup export, backup import with safety verification,
+  temporary data pruning, and complete local purge controls.
 
 **Discovery and evaluation**
 
@@ -373,9 +425,10 @@ These are real and current.
 3. **Apply flows are not driven end to end in a browser test.** No browser spec
    completes a real apply; the safety specs assert that JobPilot does *nothing*
    on a blocked page.
-4. **Two panel tabs are still placeholders.** `Matches` is populated from real
-   discovery and `Queue` from the real task queue, but `Rules`, `Messages` and
-   `Settings` still render explanatory text rather than live controls.
+4. **Interactive tabs are fully built; live automated messaging remains unlinked.**
+   All eleven panel sections (Home, Workspace, Pipeline, Search, Matches, Queue, History, Rules,
+   Messages, Settings, Diagnostics) are live and interactive. Unattended end-to-end messaging
+   via queue trigger remains intentionally gated until live-site verification is completed.
 5. **Sending is not yet driven by the queue.** The runner
    (`src/application/communication-runner.ts`), the adapter action and the
    intent persistence are all implemented and tested, and bootstrap uses the

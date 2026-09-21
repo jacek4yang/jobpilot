@@ -1024,6 +1024,26 @@ export const PANEL_CSS = `
   text-overflow: ellipsis;
 }
 
+.jobpilot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jobpilot-job-salary {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--jp-primary);
+  flex-shrink: 0;
+}
+
+.jobpilot-job-meta {
+  font-size: 11px;
+  color: var(--jp-text-secondary);
+  margin-top: 4px;
+}
+
 /* --- Subnav inside Workspace ------------------------------------------- */
 .jobpilot-subnav {
   display: flex;
@@ -1112,8 +1132,13 @@ export const PANEL_CSS = `
   display: none;
 }
 
+.jobpilot-stage-tile,
 .jobpilot-stage-tab {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   padding: 6px 10px;
   font-size: 11px;
   font-weight: 500;
@@ -1126,16 +1151,42 @@ export const PANEL_CSS = `
   transition: all 0.15s ease;
 }
 
+.jobpilot-stage-tile:hover,
 .jobpilot-stage-tab:hover {
   border-color: var(--jp-primary-border);
   color: var(--jp-text);
 }
 
+.jobpilot-stage-tile.jobpilot-stage-tile-active,
 .jobpilot-stage-tab[data-active="true"] {
   background: var(--jp-primary-soft);
   border-color: var(--jp-primary-border);
   color: var(--jp-primary);
   font-weight: 600;
+}
+
+.jobpilot-stage-name {
+  font-size: 11px;
+}
+
+.jobpilot-stage-count {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.jobpilot-interview-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-top: 6px;
+  background: var(--jp-surface-soft);
+  border: 1px solid var(--jp-primary-border);
+  border-radius: var(--jp-radius-sm);
+  font-size: 11px;
+  color: var(--jp-primary);
+  font-weight: 500;
 }
 
 .jobpilot-stage-cards {
