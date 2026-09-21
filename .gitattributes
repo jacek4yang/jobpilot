@@ -1,0 +1,29 @@
+# Line-ending policy.
+#
+# The repository stores LF. Without this file the checked-out form depends on
+# each contributor's `core.autocrlf`, which makes a local `biome check` fail on
+# Windows while CI (Linux) passes — a confusing, platform-specific false alarm.
+#
+# `text=auto` normalises to LF in the repository and lets git convert on
+# checkout. The explicit `eol=lf` entries are for files where a conversion
+# would change behaviour rather than just bytes.
+* text=auto
+
+# Shell and Node scripts must stay LF even on Windows: a CRLF shebang line
+# produces `bad interpreter` when the script is executed.
+*.sh text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Fixtures are exact input for tests. Normalising them would change what the
+# parser is tested against, so they are stored and checked out byte-for-byte.
+tests/fixtures/** -text
+*.html -text
+
+# Binary artefacts.
+*.png binary
+*.zip binary
