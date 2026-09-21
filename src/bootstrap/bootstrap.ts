@@ -36,7 +36,7 @@ import {
 import { createOrchestrator } from "../application/orchestrator";
 import { toDomainProfile } from "../application/profile-mapping";
 import { createRepository } from "../application/repository";
-import { filterSummariesBySelection } from "../application/selection";
+import { filterSummariesBySelection, isSelectionCurrent } from "../application/selection";
 import { describePauseReason } from "../application/state";
 import type { JobPilotConfig } from "../config/schema";
 import { createDefaultConfig, toSessionPolicy } from "../config/schema";
@@ -176,8 +176,11 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
 
   // Operator's batch selection: which discovered jobs the next run may touch.
   // Empty = no restriction (legacy whole-listing behaviour). Populated from
-  // the accepted matches at discovery time; the user can toggle entries.
+  // the accepted matches at discovery time; the user can toggle entries. The
+  // selection is scoped to the page it was made on (selectionHref): on any
+  // other listing it is stale and must not narrow the scan.
   let selectedJobIds: ReadonlySet<string> = new Set();
+  let selectionHref: string | undefined;
 
   const discoveryService = createDiscoveryService({
     platform: deps.platform,
@@ -251,6 +254,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     // Default the batch selection to every accepted match; the user can
     // uncheck entries on the Home page before starting the run.
     selectedJobIds = new Set(matches.filter((m) => m.accepted).map((m) => String(m.summary.id)));
+    selectionHref = globalThis.location?.href;
 
     const accepted = matches.filter((match) => match.accepted).length;
     discoveryNote = `共找到 ${matches.length} 个职位，${accepted} 个符合你的意向，已默认勾选。`;
@@ -465,7 +469,10 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
             : [...existing, profile],
       };
       void persist();
-      render();
+      // Deliberately NO render() here: a keystroke must not rebuild the panel
+      // DOM, or the input being typed into loses focus. The Search page's
+      // module-scope draft already keeps values consistent, and the next
+      // natural render (any state update) picks the persisted profile up.
     },
 
     // Personal Job Workspace callbacks
@@ -806,8 +813,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
   // nothing.
   const platformForRun: typeof deps.platform = {
     ...deps.platform,
-    scanJobs: async (options) =>
-      filterSummariesBySelection(await deps.platform.scanJobs(options), selectedJobIds),
+    scanJobs: async (options) => {
+      const summaries = await deps.platform.scanJobs(options);
+      // A stale (other-page) selection must never empty a valid scan.
+      if (!isSelectionCurrent(selectionHref, globalThis.location?.href)) return summaries;
+      return filterSummariesBySelection(summaries, selectedJobIds);
+    },
   };
 
   const orchestrator = createOrchestrator({

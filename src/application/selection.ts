@@ -21,3 +21,18 @@ export const filterSummariesBySelection = <T extends { readonly id: unknown }>(
   if (selected.size === 0) return summaries;
   return summaries.filter((summary) => selected.has(String(summary.id)));
 };
+
+/**
+ * Whether a batch selection may narrow a scan on the CURRENT page.
+ *
+ * A selection is only meaningful on the listing it was made on: it is
+ * recorded at discovery time together with the page URL. On any other page
+ * the selection is stale, and filtering by it would silently empty an
+ * otherwise valid scan (the live bug: "the page clearly has jobs but the run
+ * says none found" after navigating to a new listing). Stale → no filter,
+ * which matches the empty-selection legacy behaviour.
+ */
+export const isSelectionCurrent = (
+  selectionHref: string | undefined,
+  currentHref: string | undefined,
+): boolean => selectionHref !== undefined && selectionHref === currentHref;

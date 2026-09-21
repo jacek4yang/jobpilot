@@ -73,7 +73,8 @@ export interface BossPlatformDeps {
  *
  * Failure modes:
  *   - `detectPage()` never throws; unreadable structure yields `"unknown"`
- *   - `scanJobs()` returns `[]` on any non-list page, an empty list, or an
+ *   - `scanJobs()` returns `[]` when no job-list container is present (even if
+ *     a detail drawer is open over the listing), on an empty list, or on an
  *     aborted signal — it never falls back to parsing "whatever is there"
  *   - `loadJob()` throws when the detail cannot be parsed or the page is not a
  *     detail page, because a `JobDetail` cannot honestly be fabricated
@@ -102,13 +103,22 @@ export const createBossPlatform = (deps: BossPlatformDeps): JobPlatform => {
       return logDetection(detectBossPageKind(doc, location));
     },
 
-    /** Scans the current page. Returns `[]` unless the page is a job list. */
+    /** Scans the current page. Returns `[]` unless a job list is present. */
     async scanJobs(options?: ScanOptions): Promise<readonly JobSummary[]> {
       throwIfAborted(options?.signal);
 
       const kind = detectBossPageKind(doc, location);
-      if (kind !== "job-list") {
-        logger.info("boss.scan", "scan skipped: page is not a job list", { kind });
+      // A listing with the detail drawer open classifies as "job-detail" (the
+      // drawer root is positive detail evidence), but the listing itself is
+      // still on screen and the drawer never replaces it. Scan whenever the
+      // list container is actually present; stay fail-closed otherwise. The
+      // page-kind check doubles as the host guard: "unsupported" never scans,
+      // whatever the DOM contains.
+      const listPresent =
+        kind === "job-list" ||
+        (kind === "job-detail" && doc.querySelector(".job-list-container") !== null);
+      if (!listPresent) {
+        logger.info("boss.scan", "scan skipped: no job list on this page", { kind });
         return [];
       }
 
