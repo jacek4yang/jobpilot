@@ -3,12 +3,12 @@ JobPilot live-test artifact
 
 scenario:                  T00
 version:                   0.1.0
-git commit (full):         ece20c3c5cb0902a52a6d38b49c5ce024bbf1836
-git commit (embedded):     ece20c3c5cb0902a52a6d38b49c5ce024bbf1836
+git commit (full):         47600e7f8a759d379e3a9223a08f8118cbb49c03
+git commit (embedded):     47600e7f8a759d379e3a9223a08f8118cbb49c03
 channel:                   diagnostic
-build timestamp:           2026-09-21T04:10:17.267Z
+build timestamp:           2026-09-21T04:15:49.153Z
 diagnostic schema version: 1
-sha256:                    2634463d6e443692519be3108c57d5606e61234b04f5277de332c72c90e2527a
+sha256:                    297f0bb63f26022a710ea416bcd149ca3e2bc703ae419206f5ba0122cd52ecf7
 bytes:                     301583
 
 The embedded commit equals the git commit above; the preparation script
