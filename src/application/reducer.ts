@@ -17,7 +17,19 @@ export interface ReduceOptions {
   readonly now: number;
   /** Maximum automatic retries for a retryable failure, from SessionPolicy. */
   readonly maxRetries: number;
+  /**
+   * Delay before the cooldown timer fires, from the session delay policy.
+   * Governs pacing between batch jobs. Falls back to a conservative default
+   * so tests and one-off reduce callers need not model the policy.
+   */
+  readonly cooldownDelayMs?: number | undefined;
 }
+
+/** Fallback pacing between batch jobs when no policy value is provided. */
+export const DEFAULT_COOLDOWN_DELAY_MS = 2_000;
+
+/** Single scheduling path: every settle-into-cooldown arms the next tick. */
+const cooldownTick = (delayMs: number): Effect => ({ type: "schedule-cooldown", delayMs }) as const;
 
 /** States from which an event must not silently continue the workflow. */
 const HALTED_STATES: readonly AutomationState[] = ["blocked", "failed", "paused"];
@@ -262,12 +274,19 @@ export const reduce = (
           effects: [
             { type: "notify", level: "info", message: `已跳过职位：${reasonText}` },
             { type: "persist" },
+            cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
           ],
         };
       }
 
       if (context.currentJob === undefined) {
-        return { context: enter(base, "cooldown", now), effects: [{ type: "persist" }] };
+        return {
+          context: enter(base, "cooldown", now),
+          effects: [
+            { type: "persist" },
+            cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
+          ],
+        };
       }
 
       const approved = enter(base, "validating", now, {
@@ -314,7 +333,13 @@ export const reduce = (
         currentStatus: "verified",
         lastMessage: `已投递过：${event.evidence}`,
       });
-      return { context: next, effects: [{ type: "persist" }] };
+      return {
+        context: next,
+        effects: [
+          { type: "persist" },
+          cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
+        ],
+      };
     }
 
     case "APPLY_NEEDS_CONFIRMATION": {
@@ -338,7 +363,10 @@ export const reduce = (
             lastError: event.error,
             lastMessage: `尝试失败，正在重试：${event.error}`,
           }),
-          effects: [{ type: "persist" }],
+          effects: [
+            { type: "persist" },
+            cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
+          ],
         };
       }
 
@@ -371,7 +399,11 @@ export const reduce = (
       );
       return {
         context: next,
-        effects: [{ type: "notify", level: "info", message: "投递已确认" }, { type: "persist" }],
+        effects: [
+          { type: "notify", level: "info", message: "投递已确认" },
+          { type: "persist" },
+          cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
+        ],
       };
     }
 
@@ -383,7 +415,13 @@ export const reduce = (
         lastMessage: `未投递：${event.evidence}`,
         currentStatus: "approved",
       });
-      return { context: next, effects: [{ type: "persist" }] };
+      return {
+        context: next,
+        effects: [
+          { type: "persist" },
+          cooldownTick(options.cooldownDelayMs ?? DEFAULT_COOLDOWN_DELAY_MS),
+        ],
+      };
     }
 
     case "VERIFICATION_INDETERMINATE":

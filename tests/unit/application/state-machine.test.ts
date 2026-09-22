@@ -461,6 +461,42 @@ describe("automation state machine", () => {
       expect(result.effects.map((effect) => effect.type)).toContain("scan-jobs");
     });
 
+    it("arms the cooldown timer on every settle-into-cooldown path", () => {
+      // Live regression 2026-09-22: nothing dispatched COOLDOWN_ELAPSED, so a
+      // batch settled into cooldown and sat until the watchdog paused it.
+      // Every path that enters cooldown must schedule the next tick, with the
+      // policy delay plumbed through ReduceOptions.
+      const cooldownEffect = (effects: readonly { type: string }[]) =>
+        effects.find((effect) => effect.type === "schedule-cooldown");
+
+      const settled = reduce(
+        startContext(),
+        { type: "SCAN_COMPLETED", summaries: [summary(), summary("job-2")], skipped: 0 },
+        { now: 0, maxRetries: 2, cooldownDelayMs: 2_500 },
+      );
+      let result = reduce(settled.context, { type: "JOB_LOADED", job: detail() }, opts);
+      result = reduce(
+        result.context,
+        { type: "EVALUATED", evaluation: rejectedByScore },
+        { now: 0, maxRetries: 2, cooldownDelayMs: 2_500 },
+      );
+      expect(result.context.state).toBe("cooldown");
+      const tick = cooldownEffect(result.effects);
+      expect(tick).toBeDefined();
+      expect(tick).toMatchObject({ type: "schedule-cooldown", delayMs: 2_500 });
+
+      // The remaining settle paths arm the same tick (already-done shown here;
+      // retry/negative/confirmed share the helper and are covered by the
+      // batch-drain tests driving COOLDOWN_ELAPSED after each).
+      const applied = reduce(
+        { ...result.context, state: "applying" as const, currentJob: detail() },
+        { type: "APPLY_ALREADY_DONE", evidence: "button gone" },
+        opts,
+      );
+      expect(applied.context.state).toBe("cooldown");
+      expect(cooldownEffect(applied.effects)).toBeDefined();
+    });
+
     it("runs every scanned job exactly once, however long the scan was", () => {
       const summaries = [summary(), summary("job-2"), summary("job-3")];
       const loaded: string[] = [];

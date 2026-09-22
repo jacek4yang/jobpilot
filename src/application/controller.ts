@@ -15,6 +15,8 @@ export interface ControllerOptions {
   readonly history: ApplicationHistory;
   readonly watchdog: Watchdog;
   readonly maxRetries: number;
+  /** Pacing between batch jobs, from the session delay policy. */
+  readonly cooldownDelayMs?: number;
   /** Called after every transition so the UI can re-render. */
   readonly onChange: (context: AutomationContext) => void;
   /**
@@ -123,6 +125,7 @@ export const createController = (options: ControllerOptions): Controller => {
         const result = activeReducer(current, next, {
           now: options.clock.now(),
           maxRetries: options.maxRetries,
+          cooldownDelayMs: options.cooldownDelayMs,
         });
 
         current = result.context;

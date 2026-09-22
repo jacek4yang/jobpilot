@@ -1211,6 +1211,9 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     history,
     watchdog,
     maxRetries: policy.maxRetries,
+    // Pacing between batch jobs: use the upper action-delay bound so the
+    // site sees human-ish spacing, never faster than configured.
+    cooldownDelayMs: policy.maxActionDelayMs,
     // State transitions are traced by wrapping the pure reducer, so the reducer
     // itself keeps no diagnostics dependency.
     reducer: (context, event, reduceOptions) =>
