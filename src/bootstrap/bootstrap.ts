@@ -1550,12 +1550,18 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     }
   };
 
+  // Change detection works on a NORMALISED route key: when a list container is
+  // present, job-list and job-detail are the same route (a drawer opening over
+  // the listing is not navigation — the batch itself opens drawers, and
+  // pausing on that flip killed every live run). The key is (URL, normalised
+  // kind); it updates on every settle, and PAGE_CHANGED dispatches only when
+  // the key actually changes.
+  let lastRouteKey: string | undefined;
+
   pageObserver.onPageChange(() => {
     discoveryEpoch += 1;
     pageEpoch += 1;
     const epoch = pageEpoch;
-    const hrefBeforeChange = globalThis.location?.href;
-    const kindBeforeChange = currentPageKind;
     if (routeSettleTimer !== undefined) clearTimeout(routeSettleTimer);
     // Give the SPA a moment to render the new route's DOM before re-reading it.
     routeSettleTimer = setTimeout(() => {
@@ -1564,31 +1570,22 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       try {
         const after = deps.platform.detectPage();
         refreshPageKind();
-        // A drawer opening over the same listing flips the classification
-        // between job-list and job-detail without any navigation: the URL is
-        // unchanged and the list container is still present. That flip is not
-        // a route change — the batch itself opens drawers — and pausing on it
-        // killed every live run ("页面意外发生变化（job-detail）"). Suppress
-        // only that exact case; any real URL transition still dispatches,
-        // including same-kind transitions between two listings.
-        const drawerOnlyFlip =
-          hrefBeforeChange !== undefined &&
-          globalThis.location?.href === hrefBeforeChange &&
-          ((kindBeforeChange === "job-list" && after === "job-detail") ||
-            (kindBeforeChange === "job-detail" && after === "job-list")) &&
-          globalThis.document?.querySelector(".job-list-container") !== null;
-        if (drawerOnlyFlip) {
-          deps.logger.debug("bootstrap", "ignored drawer classification flip", {
-            from: kindBeforeChange,
-            to: after,
-          });
+        const href = globalThis.location?.href ?? "";
+        const listPresent = globalThis.document?.querySelector(".job-list-container") !== null;
+        const normalisedKind =
+          listPresent && (after === "job-list" || after === "job-detail") ? "listing" : after;
+        const key = `${href}::${normalisedKind}`;
+        // First observation establishes the baseline without a spurious event.
+        if (lastRouteKey === undefined) {
+          lastRouteKey = key;
           return;
         }
         // A URL transition is navigation even when both routes classify to the
-        // same kind (for example, one search/list page to another). Suppressing
-        // same-kind transitions would let an active batch continue against a
-        // different listing. The reducer explicitly permits only the expected
-        // contacting -> chat transition; every other active route change stops.
+        // same kind (one search/list page to another). The reducer explicitly
+        // permits only the expected contacting -> chat transition; every other
+        // active route change stops the run.
+        if (key === lastRouteKey) return;
+        lastRouteKey = key;
         controller?.dispatch({ type: "PAGE_CHANGED", pageKind: after });
       } catch (error) {
         deps.logger.error("bootstrap", "page re-detection failed", { error });
