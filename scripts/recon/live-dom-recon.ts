@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 /**
  * Live-DOM reconnaissance harness — DEVELOPMENT-ONLY maintainer tooling.
  *
@@ -246,15 +246,46 @@ const deepCapture = async (page: Page, kind: string): Promise<Record<string, str
 const run = async (): Promise<void> => {
   // `data_dir` is always set, so Camoufox resolves to a persistent
   // BrowserContext. The cast reflects that invariant.
-  const context = (await Camoufox({
-    headless: false,
-    os: "windows",
-    locale: ["zh-CN"],
-    window: [1440, 900],
-    humanize: true,
-    data_dir: PROFILE,
-  })) as BrowserContext;
+  // Retry the launch: camoufox-js occasionally rolls a non-integer
+  // screen offset in its random fingerprint and rejects its own config
+  // ("Expected int, got number"); a fresh roll almost always succeeds.
+  let context: BrowserContext | undefined;
+  for (let attempt = 1; attempt <= 4 && context === undefined; attempt += 1) {
+    try {
+      context = (await Camoufox({
+        headless: false,
+        os: "windows",
+        locale: ["zh-CN"],
+        window: [1440, 900],
+        humanize: true,
+        data_dir: PROFILE,
+      })) as BrowserContext;
+    } catch (e) {
+      console.log(`[recon] camoufox launch attempt ${attempt} failed: ${String(e).slice(0, 140)}`);
+      if (attempt === 4) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+  }
+  if (context === undefined) throw new Error("camoufox launch failed");
   const page = context.pages()[0] ?? (await context.newPage());
+
+  // Console/pageerror capture: the bundle runs inside this page, and its
+  // boot failures surface here first. Appended to <OUT>/console.log.
+  const consoleLog = join(OUT, "console.log");
+  writeFileSync(consoleLog, "", "utf8");
+  const appendLog = (line: string): void => {
+    try {
+      writeFileSync(consoleLog, `${line}\n`, { encoding: "utf8", flag: "a" });
+    } catch {}
+  };
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      appendLog(`[console.${message.type()}] ${message.text().slice(0, 400)}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    appendLog(`[pageerror] ${String(error).slice(0, 600)}`);
+  });
 
   console.log("[recon] opened Camoufox — please log in to zhipin.com by hand (incl. any CAPTCHA).");
   await page.goto("https://www.zhipin.com/", { waitUntil: "domcontentloaded" });
@@ -285,6 +316,56 @@ const run = async (): Promise<void> => {
     await context.close();
     process.exit(2);
   }
+
+  // Install the built diagnostic bundle into this browser: Camoufox has no
+  // userscript manager, so the bundle body is injected as an init script with
+  // minimal GM_* stubs backed by localStorage (container.ts only requires the
+  // three storage functions to exist; menu commands are unused). The bundle
+  // header block is stripped. This makes the panel testable end to end in the
+  // same browser the DOM evidence comes from.
+  try {
+    const bundlePath = join(process.cwd(), "dist", "jobpilot.diagnostic.user.js");
+    if (existsSync(bundlePath)) {
+      const raw = readFileSync(bundlePath, "utf8");
+      const body = raw.replace(/\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==/, "");
+      const stubs = `(() => {
+        const ns = "jobpilot-gm:";
+        globalThis.GM_getValue = (k, d) => {
+          const v = localStorage.getItem(ns + k);
+          return v === null ? d : JSON.parse(v);
+        };
+        globalThis.GM_setValue = (k, v) => { localStorage.setItem(ns + k, JSON.stringify(v)); };
+        globalThis.GM_deleteValue = (k) => { localStorage.removeItem(ns + k); };
+        globalThis.GM_registerMenuCommand = () => {};
+        globalThis.__jobpilotStubbed = true;
+      })();`;
+      // The bundle normally runs at document-idle; init scripts run earlier,
+      // while document.body may still be null — so the body is wrapped in a
+      // ready-state guard, on BOTH branches, or the boot throws before the
+      // panel ever mounts. Plain concatenation: the body may contain any
+      // character, including backticks.
+      const guarded =
+        'if (document.readyState === "loading") {\n' +
+        '  document.addEventListener("DOMContentLoaded", function () {\n' +
+        body +
+        "\n  }, { once: true });\n" +
+        "} else {\n" +
+        body +
+        "\n}\n";
+      await page.addInitScript(`${stubs}\n${guarded}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      console.log(
+        "[recon] installed diagnostic bundle via init-script (GM stubs on localStorage).",
+      );
+    } else {
+      console.log(
+        "[recon] WARN: dist/jobpilot.diagnostic.user.js missing — panel ops will not work.",
+      );
+    }
+  } catch (e) {
+    console.log(`[recon] WARN: bundle install failed: ${String(e)}`);
+  }
+
   console.log("[recon] login detected. Session mode — waiting for commands in:");
   console.log(`[recon]   ${CMD_DIR}`);
   console.log(
@@ -304,7 +385,7 @@ const run = async (): Promise<void> => {
       if (handled.has(file)) continue;
       handled.add(file);
       const id = file.replace(/\.json$/, "");
-      let cmd: { op?: string; kind?: string } = {};
+      let cmd: { op?: string; kind?: string; text?: string; keep?: number; url?: string } = {};
       try {
         cmd = JSON.parse(readFileSync(join(CMD_DIR, file), "utf8"));
       } catch (e) {
@@ -320,8 +401,49 @@ const run = async (): Promise<void> => {
         }
         if (cmd.op === "url") {
           writeResult(id, { url: page.url(), title: await page.title() });
+        } else if (cmd.op === "goto" && typeof cmd.url === "string") {
+          // Single, deliberate navigation — used instead of scripted hop
+          // sequences (which trip risk control). The operator remains
+          // responsible for any verification the site demands.
+          await page.goto(cmd.url, { waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(5_000);
+          writeResult(id, { ok: true, url: page.url() });
+        } else if (cmd.op === "debug") {
+          writeResult(id, {
+            url: page.url(),
+            stub: await page.evaluate(
+              () => (globalThis as { __jobpilotStubbed?: boolean }).__jobpilotStubbed === true,
+            ),
+            hostCount: await page.locator("[data-jobpilot-host]").count(),
+            readyState: await page.evaluate(() => document.readyState),
+          });
+        } else if (cmd.op === "reload") {
+          await page.reload({ waitUntil: "domcontentloaded" });
+          writeResult(id, { ok: true, url: page.url() });
         } else if (cmd.op === "probe" && isProbeGroup(cmd.kind)) {
           writeResult(id, { url: page.url(), probes: await probe(page, cmd.kind) });
+        } else if (cmd.op === "panel") {
+          // Whitelisted panel interaction: clicks ONLY land on buttons inside
+          // the JobPilot panel's own open shadow root ([data-jobpilot-host]).
+          // The site's controls are never a target. Used to drive the real
+          // operator flow (扫描/开始) and export the diagnostic bundle so a
+          // live failure can be analysed with full event evidence.
+          const panelCmd = cmd as { kind?: string; text?: string; keep?: number; url?: string };
+          if (panelCmd.kind === "text") {
+            writeResult(id, { url: page.url(), text: await panelText(page) });
+          } else if (panelCmd.kind === "click" && typeof panelCmd.text === "string") {
+            writeResult(id, await panelClick(page, panelCmd.text));
+          } else if (panelCmd.kind === "tab" && typeof panelCmd.text === "string") {
+            writeResult(id, await panelTab(page, panelCmd.text));
+          } else if (panelCmd.kind === "uncheck-all-but" && typeof panelCmd.keep === "number") {
+            writeResult(id, await panelUncheckAllBut(page, panelCmd.keep));
+          } else if (panelCmd.kind === "session") {
+            writeResult(id, await panelStartSession(page));
+          } else if (panelCmd.kind === "export") {
+            writeResult(id, await panelExport(page));
+          } else {
+            writeResult(id, { error: `unknown panel kind: ${JSON.stringify(panelCmd)}` });
+          }
         } else if (cmd.op === "deep" && typeof cmd.kind === "string") {
           writeResult(id, {
             url: page.url(),
@@ -345,6 +467,118 @@ const run = async (): Promise<void> => {
 
 const isProbeGroup = (v: unknown): v is ProbeGroup =>
   v === "list" || v === "detail" || v === "chat" || v === "chatOpen" || v === "guards";
+
+/**
+ * Unchecks every match checkbox except the one at `keep` (0-based). The
+ * initial state after a scan is all-checked, so this narrows a live test
+ * down to exactly one job before 开始投递.
+ */
+const panelUncheckAllBut = async (
+  page: Page,
+  keep: number,
+): Promise<{ ok: boolean; total?: number; kept?: number; error?: string }> => {
+  try {
+    const boxes = page.locator("[data-jobpilot-host] input[type='checkbox']");
+    const count = await boxes.count();
+    if (count === 0) return { ok: false, error: "no checkboxes found" };
+    for (let index = 0; index < count; index += 1) {
+      if (index === keep) continue;
+      await boxes.nth(index).evaluate((node) => (node as HTMLElement).click());
+    }
+    return { ok: true, total: count, kept: keep };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+};
+
+/** Text of the JobPilot panel (pierces its open shadow root). */
+const panelText = async (page: Page): Promise<{ found: boolean; text: string }> => {
+  const host = page.locator("[data-jobpilot-host]").first();
+  if ((await host.count()) === 0) return { found: false, text: "" };
+  const texts = await host.locator("*").allInnerTexts();
+  const text = texts
+    .map((entry) => entry.replace(/\s+/g, " ").trim())
+    .filter((entry) => entry.length > 0 && entry.length < 400 && !entry.includes("--jp-"))
+    .join(" | ")
+    .slice(0, 4000);
+  return { found: true, text };
+};
+
+/** Clicks a JobPilot panel button by its EXACT visible label. Never the site. */
+const panelClick = async (
+  page: Page,
+  label: string,
+): Promise<{ ok: boolean; clicked?: string; error?: string }> => {
+  try {
+    const button = page
+      .locator("[data-jobpilot-host]")
+      .getByRole("button", { name: label, exact: true })
+      .first();
+    if ((await button.count()) === 0) {
+      return { ok: false, error: `panel button not found: ${label}` };
+    }
+    await button.evaluate((node) => (node as HTMLElement).click());
+    return { ok: true, clicked: label };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+};
+
+/** Switches to a JobPilot tab by its exact label (e.g. 诊断). */
+const panelTab = async (page: Page, label: string): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const tab = page
+      .locator("[data-jobpilot-host]")
+      .locator(".jobpilot-tab", { hasText: label })
+      .first();
+    if ((await tab.count()) === 0) return { ok: false, error: `tab not found: ${label}` };
+    await tab.evaluate((node) => (node as HTMLElement).click());
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+};
+
+/**
+ * Starts a named diagnostic session from the panel: opens the Diagnostics
+ * tab, clicks Start Test Session and answers the two prompts (scenario id,
+ * then an empty name). window.prompt dialogs are auto-accepted.
+ */
+const panelStartSession = async (page: Page): Promise<{ ok: boolean; error?: string }> => {
+  const tabbed = await panelTab(page, "诊断");
+  if (!tabbed.ok) return tabbed;
+  let promptCount = 0;
+  page.once("dialog", (dialog) => {
+    promptCount += 1;
+    void dialog.accept(promptCount === 1 ? "T00" : "");
+  });
+  // A second prompt may appear after the first accept; keep accepting.
+  page.once("dialog", (dialog) => {
+    void dialog.accept("");
+  });
+  return panelClick(page, "Start Test Session");
+};
+
+/**
+ * Finishes the session and captures the downloaded bundle.
+ * Camoufox (Firefox-based) has no showSaveFilePicker, so the exporter's
+ * anchor-download fallback fires and Playwright can grab the download.
+ */
+const panelExport = async (page: Page): Promise<{ ok: boolean; file?: string; error?: string }> => {
+  try {
+    const tabbed = await panelTab(page, "诊断");
+    if (!tabbed.ok) return { ok: false, error: tabbed.error };
+    const downloadPromise = page.waitForEvent("download", { timeout: 20_000 });
+    const clicked = await panelClick(page, "Finish Test & Export");
+    if (!clicked.ok) return { ok: false, error: clicked.error };
+    const download = await downloadPromise;
+    const target = join(OUT, download.suggestedFilename());
+    await download.saveAs(target);
+    return { ok: true, file: target };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+};
 
 function writeResult(id: string, data: unknown): void {
   writeFileSync(join(RESULT_DIR, `${id}.json`), JSON.stringify(data, null, 2), "utf8");
