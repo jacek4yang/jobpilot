@@ -94,7 +94,21 @@ export type ObserveResult =
 export type OpenConversationResult =
   | { readonly kind: "ready"; readonly identity: ChatIdentity }
   | { readonly kind: "chat-mismatch"; readonly detail: string }
+  | { readonly kind: "needs-human-click"; readonly detail: string }
   | BlockedResult;
+
+/**
+ * How long `openConversation` waits for the operator's click before failing
+ * closed. The site only accepts trusted (human) clicks on 立即沟通 — live
+ * evidence 2026-09-22: a full synthetic pointer/mouse/click sequence on
+ * `.op-btn-chat` produced no window.open, no navigation and no dialog. The
+ * operator may need a moment to find the highlighted control and click it, so
+ * the budget is human-scale: 480 polls × 250ms = 120 seconds, then blocked.
+ */
+export const HUMAN_CLICK_BUDGET: { readonly maxAttempts: number; readonly intervalMs: number } = {
+  maxAttempts: 480,
+  intervalMs: 250,
+};
 
 /** The communication action surface handed to the queue runner. */
 export interface CommunicationAction {
@@ -102,7 +116,12 @@ export interface CommunicationAction {
   findCommunicateButton(): LocatedElement | null;
   /** Identity of the conversation currently displayed, or `null`. */
   readCurrentChat(): ChatIdentity | null;
-  /** Opens the selected job's chat and waits for positive identity evidence. */
+  /**
+   * Gets the selected job's chat on screen and waits for positive identity
+   * evidence. Never clicks the 立即沟通 control itself: the site ignores
+   * synthetic clicks there, so the control is highlighted and the operator's
+   * trusted click is awaited instead. Times out into `needs-human-click`.
+   */
   openConversation(
     intent: CommunicationIntent,
     options?: ActionOptions,
@@ -419,17 +438,39 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
         jobId: intent.jobId,
         matchedBy: located.matchedBy,
       });
-      (located.element as Element & { click: () => void }).click();
 
+      // The site ignores synthetic clicks on this control (an isTrusted-class
+      // guard, live-verified 2026-09-22), so JobPilot must not click 立即沟通
+      // in any mode. Highlight the control so the operator can find it at a
+      // glance, scroll it into view, and wait for THEIR click. The styling is
+      // one-shot and reversible: it is a site element we do not own, and any
+      // re-render the site performs drops the inline outline on its own.
+      const control = located.element as HTMLElement;
+      control.style.outline = "3px solid #cf5477";
+      control.style.outlineOffset = "2px";
+      if (typeof control.scrollIntoView === "function") {
+        control.scrollIntoView({ block: "center" });
+      }
+      logger.info(
+        "boss.communication",
+        "waiting for the operator to click 立即沟通 (the site only accepts trusted clicks — live evidence 2026-09-22)",
+        { jobId: intent.jobId },
+      );
+
+      // `root` is the Document captured at construction (production passes
+      // `globalThis.document`). BOSS is a same-document SPA: after the click
+      // the chat renders into this very document on /web/geek/chat, so polling
+      // `root` stays correct across the route change.
       const identity = await pollUntil(() => readChatIdentity(root) ?? undefined, options, {
-        maxAttempts: 40,
-        intervalMs: 250,
+        maxAttempts: HUMAN_CLICK_BUDGET.maxAttempts,
+        intervalMs: HUMAN_CLICK_BUDGET.intervalMs,
       });
       if (identity === undefined) {
-        return blocked(
-          "selector-missing",
-          "the conversation did not appear after clicking 立即沟通",
-        );
+        return {
+          kind: "needs-human-click",
+          detail:
+            "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。",
+        };
       }
 
       const verdict = matchChatIdentity(

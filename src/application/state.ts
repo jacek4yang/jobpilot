@@ -43,6 +43,16 @@ export type PauseReason =
   | { readonly kind: "unknown-dom"; readonly evidence: string }
   | { readonly kind: "selector-missing"; readonly selector: string }
   | { readonly kind: "ambiguous-state"; readonly evidence: string }
+  | {
+      /**
+       * BOSS's 立即沟通 control ignores synthetic clicks (an isTrusted-class
+       * guard, live-verified 2026-09-22), so the contact step is human-gated:
+       * the control was highlighted and the batch waits for the operator's
+       * click. Reaching this reason means the wait timed out, fail closed.
+       */
+      readonly kind: "needs-human-click";
+      readonly evidence: string;
+    }
   | { readonly kind: "session-limit"; readonly limit: number }
   | { readonly kind: "rate-limited"; readonly retryAt: number }
   | { readonly kind: "watchdog"; readonly evidence: string }
@@ -65,6 +75,8 @@ export const describePauseReason = (reason: PauseReason): string => {
       return `未找到预期元素（${reason.selector}）`;
     case "ambiguous-state":
       return `投递结果不明确，请手动确认（${reason.evidence}）`;
+    case "needs-human-click":
+      return "需要点击「立即沟通」";
     case "session-limit":
       return `已达到本次任务上限（${reason.limit}）`;
     case "rate-limited":

@@ -1128,7 +1128,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         : {
             blocked: {
               reason: describePauseReason(context.pauseReason),
-              body: "JobPilot 已暂停所有操作。你的队列和进度都已保存。处理好页面状态后，点「继续」即可恢复。",
+              // For the human-gated contact step the generic "handle the page"
+              // body would bury the one action that unblocks the batch, so the
+              // pause reason's own evidence — the actionable message — is the
+              // body here.
+              body:
+                context.pauseReason.kind === "needs-human-click"
+                  ? context.pauseReason.evidence
+                  : "JobPilot 已暂停所有操作。你的队列和进度都已保存。处理好页面状态后，点「继续」即可恢复。",
               canResume: true,
             },
           }),

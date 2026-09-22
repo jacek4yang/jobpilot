@@ -80,11 +80,12 @@ interface DepsOverrides {
   readonly engine?: RuleEngine;
   readonly history?: ReturnType<typeof createApplicationHistory>;
   readonly dispatch?: (event: AutomationEvent) => void;
+  readonly communication?: OrchestratorDeps["communication"];
 }
 
 const makeDeps = (overrides: DepsOverrides = {}): OrchestratorDeps => ({
   platform: overrides.platform ?? makePlatform(async (job) => detail(String(job.id))),
-  communication: {
+  communication: overrides.communication ?? {
     communicate: async () => ({ kind: "sent", evidence: "outgoing message observed" }),
   },
   engine: overrides.engine ?? makeEngine(rejectedByScore),
@@ -130,6 +131,40 @@ const cappedContext = (): AutomationContext => ({
   state: "evaluating",
   currentJob: detail(),
   sessionApplications: 5,
+});
+
+describe("orchestrator contact-job", () => {
+  const contactingContext = (): AutomationContext => ({
+    ...initialContext(NOW),
+    state: "contacting",
+    currentJob: detail(),
+  });
+
+  it("dispatches PAUSE with the needs-human-click reason when the contact step times out", async () => {
+    const events: AutomationEvent[] = [];
+    const timeoutDetail =
+      "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。";
+    const orchestrator = createOrchestrator(
+      makeDeps({
+        communication: {
+          communicate: async () => ({ kind: "needs-human-click", detail: timeoutDetail }),
+        },
+        dispatch: (event) => events.push(event),
+      }),
+    );
+
+    await orchestrator.runEffect({ type: "contact-job", job: detail() }, contactingContext());
+
+    // BLOCKED cannot carry this reason (it only holds a platform BlockReason),
+    // so the pause goes through the full-PauseReason PAUSE path — the same
+    // fail-closed blockFor the reducer runs for BLOCKED.
+    expect(events.map((event) => event.type)).toEqual(["PAUSE"]);
+    const pause = events[0];
+    expect(pause?.type).toBe("PAUSE");
+    if (pause?.type === "PAUSE") {
+      expect(pause.reason).toEqual({ kind: "needs-human-click", evidence: timeoutDetail });
+    }
+  });
 });
 
 describe("orchestrator load-job", () => {

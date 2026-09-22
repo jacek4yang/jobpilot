@@ -393,8 +393,66 @@ test.describe("built finite-batch production composition", () => {
     await expect(page.locator(".jobpilot-step-match-row input[type=checkbox]")).toHaveCount(2);
   };
 
+  /**
+   * Stands in for the operator at the human-gated contact step. The real site
+   * rejects synthetic clicks on 立即沟通 (an isTrusted-class guard, live-verified
+   * 2026-09-22), so JobPilot highlights that control and waits for a trusted
+   * click instead of clicking it. Playwright input IS trusted, so a production
+   * browser test must click the highlighted control itself; the batch then
+   * continues through the unchanged identity/draft/send flow.
+   *
+   * Runs until the panel reaches a terminal state, so it must be awaited after
+   * the test's own assertions.
+   */
+  const runBatchAsOperator = async (page: import("@playwright/test").Page): Promise<void> => {
+    // One round-trip per iteration: a single evaluate reads both the panel
+    // state and the highlight, so the loop cannot queue protocol chatter
+    // behind the batch's own work. Bounded by wall time as well, so it can
+    // never outlive the test that spawned it.
+    const deadline = Date.now() + 60_000;
+    let started = false;
+    // A page that stays idle for ~3s straight never started (the losing tab
+    // in the ownership race): exit instead of spinning for the deadline.
+    let idleTicks = 0;
+    while (Date.now() < deadline) {
+      const snapshot = await page
+        .evaluate(() => {
+          // The panel renders inside its host's shadow root.
+          const root = document.querySelector("[data-jobpilot-host]")?.shadowRoot ?? document;
+          const dot = root.querySelector(".jobpilot-dot");
+          const control = document.querySelector("[data-jobpilot-action='apply']");
+          return {
+            state: dot?.getAttribute("data-state") ?? null,
+            highlighted: control instanceof HTMLElement && control.style.outlineWidth === "3px",
+          };
+        })
+        .catch(() => null);
+      if (snapshot === null) return; // page went away (test finished or failed)
+      const { state, highlighted } = snapshot;
+      if (state === null || state === "paused" || state === "blocked" || state === "failed") {
+        return;
+      }
+      if (state === "idle") {
+        if (started) return;
+        idleTicks += 1;
+        if (idleTicks >= 30) return;
+        await page.waitForTimeout(100).catch(() => {});
+        continue;
+      }
+      idleTicks = 0;
+      started = true;
+      if (highlighted) {
+        const control = page.locator("[data-jobpilot-action='apply']").first();
+        await control.click().catch(() => {});
+      } else {
+        await page.waitForTimeout(100).catch(() => {});
+      }
+    }
+  };
+
   test("scans, selects two, sends each once and explicitly finishes", async ({ page }) => {
     await loadFinite(page);
+    const operator = runBatchAsOperator(page);
     await page.locator(PANEL_START).click();
 
     await expect
@@ -424,10 +482,12 @@ test.describe("built finite-batch production composition", () => {
     expect(outcome.fixture?.openedJobs).toEqual(["e2e-1001", "e2e-1002"]);
     expect(outcome.fixture?.sentJobs).toEqual(["e2e-1001", "e2e-1002"]);
     expect(outcome.applicationCount).toBe(2);
+    await operator;
   });
 
   test("double Start still runs one finite batch", async ({ page }) => {
     await loadFinite(page);
+    const operator = runBatchAsOperator(page);
     await page.evaluate(() => {
       const button = document
         .querySelector("[data-jobpilot-host]")
@@ -449,6 +509,7 @@ test.describe("built finite-batch production composition", () => {
       )
       .toBe(2);
     await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
+    await operator;
   });
 
   test("Stop during a pending load cancels before send", async ({ page }) => {
@@ -490,6 +551,7 @@ test.describe("built finite-batch production composition", () => {
     // duplicate send and the batch still terminates deterministically.
     await page.locator('button[data-action="resume-batch"]').click();
     await expect(page.locator(PANEL_DOT).first()).not.toHaveAttribute("data-state", "paused");
+    const operator = runBatchAsOperator(page);
     await expect
       .poll(
         () =>
@@ -522,6 +584,7 @@ test.describe("built finite-batch production composition", () => {
       /^(idle|paused|blocked|failed)$/,
       { timeout: 60_000 },
     );
+    await operator;
   });
 
   test("two tabs starting concurrently produce one finite batch", async ({ context, page }) => {
@@ -529,6 +592,9 @@ test.describe("built finite-batch production composition", () => {
     const other = await context.newPage();
     await loadFinite(other);
 
+    // Only the tab that wins queue ownership runs a batch; the other stays
+    // inert. Whichever tab highlights 立即沟通 gets the operator's click.
+    const operators = [runBatchAsOperator(page), runBatchAsOperator(other)];
     await Promise.all([page.locator(PANEL_START).click(), other.locator(PANEL_START).click()]);
     await expect
       .poll(
@@ -557,6 +623,7 @@ test.describe("built finite-batch production composition", () => {
       ),
     );
     expect(finalCounts.sort()).toEqual([0, 2]);
+    await Promise.all(operators);
     await other.close();
   });
 
@@ -568,6 +635,9 @@ test.describe("built finite-batch production composition", () => {
   ] as const) {
     test(`${failure.variant} fails closed without a duplicate send`, async ({ page }) => {
       await loadFinite(page, failure.variant);
+      // The operator DOES click 立即沟通 (trusted input); the variant's fault
+      // then stops the batch fail-closed before any duplicate send.
+      const operator = runBatchAsOperator(page);
       await page.locator(PANEL_START).click();
       await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "paused", {
         timeout: failure.variant === "uncertain" ? 20_000 : 10_000,
@@ -578,6 +648,7 @@ test.describe("built finite-batch production composition", () => {
             .__finiteBatchFixture?.sendClicks ?? -1,
       );
       expect(clicks).toBe(failure.clicks);
+      await operator;
     });
   }
 

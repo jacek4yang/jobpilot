@@ -195,7 +195,7 @@ application layers and are covered by tests.
 | **Never clicks twice.** `sendAttemptedAt` records the runner committing; `clickDispatched` records the adapter actually clicking. `mayDispatchClick` permits exactly one click per transaction, and it is persisted, so a reload cannot replay it | `src/domain/communication/intent.ts` |
 | **Never infers success.** An unconfirmed click is `needs-confirmation`; an unobserved message is `uncertain`. Neither is ever `submitted` / `verified` | `readApplyEvidence`; `observeSend` |
 | **Prefers a false skip over a duplicate send.** Five independent dedup layers; if the platform's own state is ambiguous, the job is skipped and labelled as assumed-contacted so you can override deliberately | `src/application/orchestrator.ts`, `src/application/history.ts`, `src/application/discovery.ts` |
-| **Yields to the user.** A draft, a route change, or a control the user touches interrupts automation rather than competing with it | `PAGE_CHANGED` and `DRAFT_DETECTED` transitions |
+| **Yields to the user.** A draft, a route change, or a control the user touches interrupts automation rather than competing with it. BOSS's 立即沟通 button ignores synthetic clicks (live-verified `isTrusted`-class guard), so the contact step pauses for a one-tap human click in every mode and then continues automatically | `PAGE_CHANGED` and `DRAFT_DETECTED` transitions; `needs-human-click` pause reason |
 
 JobPilot deliberately does **not** do any of the following, all of which appear
 in comparable tools: connect over the Chrome DevTools Protocol, reuse or copy a
@@ -460,6 +460,14 @@ These are real and current.
    table goes stale silently; nothing checks it against the site.
 11. **No telemetry, and therefore no crash reporting.** Diagnostics stay in the
     browser. If something fails on the live site, only your own logs will say so.
+12. **Opening a conversation needs one human click.** BOSS's 立即沟通 control
+    ignores synthetic clicks — a full synthetic pointer/mouse/click sequence on
+    `.op-btn-chat` produced no `window.open`, no navigation and no dialog in a
+    live session (2026-09-22), the signature of an `isTrusted` guard. JobPilot
+    therefore never auto-clicks that button: in ASSIST and AUTOMATIC mode alike
+    it highlights the control, asks you to click it, and waits up to two minutes
+    for the conversation to appear before failing closed. Everything after your
+    click (identity match, draft check, send, observation) is unchanged.
 
 ---
 

@@ -388,6 +388,18 @@ describe("communication service", () => {
       expect(result.kind).toBe("blocked");
     });
 
+    it("passes through needs-human-click with the actionable detail intact", async () => {
+      const detail =
+        "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。";
+      const h = harness({
+        runner: {
+          run: async () => ({ kind: "needs-human-click", detail }),
+        },
+      });
+      const result = await h.service.communicate({ job: job() });
+      expect(result).toEqual({ kind: "needs-human-click", detail });
+    });
+
     it("treats a runner exception as uncertain, never as a retryable failure", async () => {
       const h = harness({
         runner: {
