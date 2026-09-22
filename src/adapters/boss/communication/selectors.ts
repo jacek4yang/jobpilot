@@ -217,18 +217,27 @@ export const COMMUNICATION_SELECTORS = {
       "[data-jobpilot-modal='success']",
       "[role='dialog'][data-jobpilot-modal]",
       ".dialog-container.success",
+      "[class*='success']",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Fixture asserts [data-jobpilot-modal='success'] AND the visible text 已向BOSS发送消息. The reader requires the text token as well, so a bare skin class alone can never classify as success.",
+    note: "Fixture asserts [data-jobpilot-modal='success'] AND the visible text 已向BOSS发送消息. The reader requires the text token as well, so a bare skin class alone can never classify as success. The text token itself is live-documented by the boss-helper flow (criscool/boss-helper, 2026): a real 立即沟通 click shows this dialog on the listing tab. The dialog SHAPE beyond the fixture ([class*='success']) is boss-helper-documented, NOT our own live capture — do not promote the confidence on that basis.",
   },
-  /** The 留在此页 / 继续沟通 button inside the success dialog. */
+  /**
+   * The 留在此页 button inside the platform success dialog.
+   *
+   * The label filter is applied in code (communication-action): the *entire*
+   * normalised label must be exactly 留在此页. 继续沟通 is NEVER clicked — it
+   * would jump to the chat tab, which is the flow this project avoids.
+   */
   successModalStayButton: {
     candidates: [
       "[data-jobpilot-modal='success'] [data-jobpilot-action='stay']",
       ".dialog-container.success .dialog__footer button",
+      "[class*='dialog'] button",
+      ".dialog-container button",
     ],
     confidence: FIXTURE_ONLY,
-    note: "Reported as evidence only. The adapter NEVER clicks a dialog button on the user's behalf, because the choice between 留在此页 and 继续沟通 is the user's.",
+    note: "The adapter clicks 留在此页 (exact label only) to dismiss the platform's own success dialog after a human 立即沟通 click — dialog buttons accept synthetic clicks (boss-helper flow, 2026). Structural candidates beyond the fixture ([class*='dialog'] button, .dialog-container button) are boss-helper-documented shapes, NOT our live capture. A miss means keep waiting, never a blind click; 继续沟通 must never match the exact-label filter.",
   },
   /**
    * Any visible dialog. Used to prove that something is on screen when no

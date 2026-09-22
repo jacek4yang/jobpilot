@@ -49,8 +49,9 @@ import {
   readChatIdentity,
   readEditorText,
   readOutgoingMessageBodies,
+  SUCCESS_TOKENS,
 } from "./chat-reader";
-import { COMMUNICATION_SELECTORS, normalizeText, queryAll } from "./selectors";
+import { COMMUNICATION_SELECTORS, normalizeText, queryAll, queryFirst } from "./selectors";
 import { writeEditorText } from "./write-editor";
 
 /** Dependencies of the communication action. All injectable. */
@@ -95,6 +96,16 @@ export type OpenConversationResult =
   | { readonly kind: "ready"; readonly identity: ChatIdentity }
   | { readonly kind: "chat-mismatch"; readonly detail: string }
   | { readonly kind: "needs-human-click"; readonly detail: string }
+  | {
+      /**
+       * The platform confirmed the contact itself: after the operator's
+       * 立即沟通 click the listing tab showed the 已向BOSS发送消息 dialog, and
+       * the adapter dismissed it with 留在此页. The conversation lives in the
+       * new tab; there is no message-text evidence in this document.
+       */
+      readonly kind: "platform-dialog-confirmed";
+      readonly evidence: string;
+    }
   | BlockedResult;
 
 /**
@@ -316,6 +327,57 @@ const isHiddenByStyle = (element: Element): boolean => {
   return normalized.includes("display:none") || normalized.includes("visibility:hidden");
 };
 
+/** The one acceptable visible label for the stay control of the platform dialog. */
+const STAY_LABEL = "留在此页";
+
+/**
+ * Finds the platform's own success dialog, if one is visible.
+ *
+ * Requires BOTH a structural candidate from `successModal` and the visible
+ * text token 已向BOSS发送消息 (the shared `SUCCESS_TOKENS`) — the exact discipline
+ * of `classifyModal`, so a bare skin class can never qualify. Documented by
+ * the boss-helper flow (criscool/boss-helper, 2026): a real 立即沟通 click shows
+ * this dialog on the listing tab while the conversation opens in a new tab.
+ */
+const findPlatformSuccessDialog = (root: ParentNode): Element | null => {
+  const located = queryFirst(root, COMMUNICATION_SELECTORS.successModal);
+  if (located === null || isHiddenByStyle(located.element)) return null;
+  const text = normalizeText(located.element.textContent);
+  return SUCCESS_TOKENS.some((token) => text.includes(normalizeText(token)))
+    ? located.element
+    : null;
+};
+
+/**
+ * Finds the 留在此页 control inside a platform success dialog.
+ *
+ * Same exact-label discipline as `findSendButton`: only an enabled element
+ * whose ENTIRE normalised label is exactly 留在此页 qualifies, so 继续沟通 (and
+ * any wrapper whose text merely contains the phrase) can never be clicked.
+ * A miss means the dialog is a variant we do not act on — never a blind click.
+ */
+const findStayButton = (dialog: Element): Element | null => {
+  for (const candidate of COMMUNICATION_SELECTORS.successModalStayButton.candidates) {
+    let matches: readonly Element[] = [];
+    try {
+      matches = Array.from(dialog.querySelectorAll(candidate));
+    } catch {
+      continue;
+    }
+    for (const element of matches) {
+      const disabled =
+        element.hasAttribute("disabled") ||
+        element.getAttribute("aria-disabled") === "true" ||
+        element.classList.contains("disabled");
+      if (disabled) continue;
+      const label =
+        normalizeText(element.getAttribute("aria-label")) || normalizeText(element.textContent);
+      if (label === STAY_LABEL) return element;
+    }
+  }
+  return null;
+};
+
 /** Builds the adapter. */
 export const createCommunicationAction = (deps: CommunicationActionDeps): CommunicationAction => {
   const { document: root, clock, logger } = deps;
@@ -458,20 +520,70 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
       );
 
       // `root` is the Document captured at construction (production passes
-      // `globalThis.document`). BOSS is a same-document SPA: after the click
-      // the chat renders into this very document on /web/geek/chat, so polling
-      // `root` stays correct across the route change.
-      const identity = await pollUntil(() => readChatIdentity(root) ?? undefined, options, {
-        maxAttempts: HUMAN_CLICK_BUDGET.maxAttempts,
-        intervalMs: HUMAN_CLICK_BUDGET.intervalMs,
-      });
-      if (identity === undefined) {
+      // `globalThis.document`). BOSS is a same-document SPA for the LISTING:
+      // after the operator's click the conversation opens in a NEW tab, and
+      // this tab shows the platform's own success dialog instead (boss-helper
+      // documented flow, 2026). So each poll accepts either outcome:
+      //   1. a chat identity rendered in THIS document (the existing same-tab
+      //      path — wins whenever present), or
+      //   2. the visible 已向BOSS发送消息 dialog → dismiss it with 留在此页 and
+      //      report `platform-dialog-confirmed`. Dialog buttons accept
+      //      synthetic clicks (boss-helper flow), unlike 立即沟通 itself.
+      // 继续沟通 is never clicked: it would jump to the chat tab.
+      const wait = await pollUntil<
+        | { readonly type: "identity"; readonly identity: ChatIdentity }
+        | { readonly type: "dialog-confirmed"; readonly evidence: string }
+      >(
+        () => {
+          const found = readChatIdentity(root);
+          if (found !== null) return { type: "identity", identity: found };
+          const dialog = findPlatformSuccessDialog(root);
+          if (dialog !== null) {
+            const stay = findStayButton(dialog);
+            const clickable: unknown = (stay as { click?: unknown } | null)?.click;
+            if (stay !== null && typeof clickable === "function") {
+              logger.info(
+                "boss.communication",
+                "platform success dialog observed; clicking 留在此页 (dialog buttons accept synthetic clicks — boss-helper documented flow)",
+                { jobId: intent.jobId },
+              );
+              (stay as Element & { click: () => void }).click();
+              return {
+                type: "dialog-confirmed",
+                evidence: "platform success dialog observed and dismissed",
+              };
+            }
+            // Stay control missing or not clickable: the dialog is a variant we
+            // do not act on. Keep waiting; never click anything else.
+          }
+          return undefined;
+        },
+        options,
+        {
+          maxAttempts: HUMAN_CLICK_BUDGET.maxAttempts,
+          intervalMs: HUMAN_CLICK_BUDGET.intervalMs,
+        },
+      );
+      if (wait === undefined) {
+        // Distinguish "nothing happened" from "the dialog showed but had no
+        // resolvable stay control" — the latter needs different operator
+        // action, so its message must say so.
+        if (findPlatformSuccessDialog(root) !== null) {
+          return blocked(
+            "ambiguous-state",
+            "检测到「已向BOSS发送消息」弹窗，但没有找到「留在此页」按钮。请手动点「留在此页」，然后点「继续」。",
+          );
+        }
         return {
           kind: "needs-human-click",
           detail:
             "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。",
         };
       }
+      if (wait.type === "dialog-confirmed") {
+        return { kind: "platform-dialog-confirmed", evidence: wait.evidence };
+      }
+      const identity = wait.identity;
 
       const verdict = matchChatIdentity(
         {

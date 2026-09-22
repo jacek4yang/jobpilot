@@ -373,6 +373,42 @@ describe("communication runner", () => {
       expect(calls.prepare).toBe(0);
       expect(calls.observe).toBe(0);
     });
+
+    it("forwards platform-dialog-confirmed untouched and never prepares or dispatches", async () => {
+      const clock = makeClock();
+      const evidence = "platform success dialog observed and dismissed";
+      const { action, calls } = makeAction({
+        opened: { kind: "platform-dialog-confirmed", evidence },
+      });
+      const outcome = await runner(action, clock).run(intent());
+      expect(outcome).toEqual({ kind: "platform-dialog-confirmed", evidence });
+      // The platform sent the greeting; the runner never reaches prepare,
+      // dispatch or observe on this path.
+      expect(calls.dispatch).toBe(0);
+      expect(calls.prepare).toBe(0);
+      expect(calls.observe).toBe(0);
+    });
+
+    it("clears the persisted intent on platform-dialog-confirmed so the next job is not gated", async () => {
+      const clock = makeClock();
+      let cleared = 0;
+      const { action } = makeAction({
+        opened: {
+          kind: "platform-dialog-confirmed",
+          evidence: "platform success dialog observed and dismissed",
+        },
+      });
+      const instance = runner(action, clock, {
+        clearIntent: async () => {
+          cleared += 1;
+        },
+      });
+      const outcome = await instance.run(intent());
+      expect(outcome.kind).toBe("platform-dialog-confirmed");
+      // The transaction settled; a leftover record would make the service
+      // refuse the NEXT job with "intent-in-flight".
+      expect(cleared).toBe(1);
+    });
   });
 
   describe("abort handling", () => {

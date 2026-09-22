@@ -27,6 +27,17 @@ export type AutomationEvent =
   | { readonly type: "EVALUATED"; readonly evaluation: Evaluation }
   | { readonly type: "CONTACT_STARTED"; readonly job: JobDetail }
   | { readonly type: "CONTACT_CONFIRMED"; readonly evidence: string }
+  | {
+      /**
+       * The platform itself confirmed the contact: after the operator's
+       * 立即沟通 click the listing tab showed the 已向BOSS发送消息 dialog, which
+       * the adapter dismissed with 留在此页. The platform sent the default
+       * greeting; unlike CONTACT_CONFIRMED there is no message-text evidence,
+       * so history locks the job as submitted without a verified claim.
+       */
+      readonly type: "CONTACT_PLATFORM_CONFIRMED";
+      readonly evidence: string;
+    }
   | { readonly type: "CONTACT_UNCERTAIN"; readonly evidence: string }
   | { readonly type: "BLOCKED"; readonly reason: BlockReason; readonly evidence: string }
   | {

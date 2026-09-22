@@ -51,6 +51,13 @@ export type CommunicationOutcome =
    * pauses with the actionable detail.
    */
   | { readonly kind: "needs-human-click"; readonly detail: string }
+  /**
+   * The operator clicked 立即沟通 and the platform confirmed the contact itself:
+   * the 已向BOSS发送消息 dialog was observed on the listing tab and dismissed
+   * with 留在此页. The platform sent the default greeting; no message-text
+   * verification exists in this document.
+   */
+  | { readonly kind: "platform-dialog-confirmed"; readonly evidence: string }
   | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string };
 
 export interface CommunicationRunnerDeps {
@@ -188,8 +195,12 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
     // A live run does not click the contact control either: the site ignores
     // synthetic clicks on 立即沟通 (live evidence 2026-09-22), so opening the
     // conversation is human-gated — the adapter highlights the control and
-    // waits for the operator's trusted click. A timeout surfaces here as
-    // `needs-human-click`, before anything irreversible has happened.
+    // waits for the operator's trusted click. After that click the platform
+    // usually opens the conversation in a NEW tab and shows its own success
+    // dialog on the listing (boss-helper documented flow), which the adapter
+    // dismisses with 留在此页; either a same-document chat identity or that
+    // dialog ends the wait. A timeout surfaces as `needs-human-click`, before
+    // anything irreversible has happened.
     const chat =
       options.verificationOnly === true
         ? deps.action.readCurrentChat()
@@ -212,6 +223,11 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
                   };
                 case "needs-human-click":
                   return { kind: "needs-human-click" as const, detail: opened.detail };
+                case "platform-dialog-confirmed":
+                  return {
+                    kind: "platform-dialog-confirmed" as const,
+                    evidence: opened.evidence,
+                  };
               }
             });
     if (chat === null) {
@@ -221,7 +237,18 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       if (chat.kind === "blocked") {
         return { kind: "blocked", reason: chat.reason, evidence: chat.evidence };
       }
+      if (chat.kind === "platform-dialog-confirmed") {
+        // The transaction is complete: the platform contacted the job and its
+        // own dialog was the evidence. Clear the persisted intent so the next
+        // job's in-flight gate is not tripped and a reload has nothing to
+        // recover — unlike the blocked/aborted paths, this outcome settles
+        // the batch forward.
+        await deps.clearIntent();
+        return chat;
+      }
       // `aborted` and `needs-human-click` already carry the outcome shape.
+      // Their intent records stay persisted on purpose: recovery discards an
+      // uncommitted transaction on the next load.
       return chat;
     }
 

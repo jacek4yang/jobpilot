@@ -303,6 +303,19 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
                 reason: { kind: "needs-human-click", evidence: outcome.detail },
               });
               return;
+            case "platform-dialog-confirmed":
+              // The no-jump happy path: the operator's 立即沟通 click made the
+              // platform send the greeting and show its own success dialog on
+              // the listing tab (the conversation opened in a NEW tab). The
+              // dialog evidence cannot be verified against an outgoing bubble
+              // in this document, so history locks the job as submitted —
+              // never "verified" — and the batch settles into cooldown.
+              deps.history.transition(effect.job.id, "submitted", { now: deps.clock.now() });
+              deps.dispatch({
+                type: "CONTACT_PLATFORM_CONFIRMED",
+                evidence: outcome.evidence,
+              });
+              return;
             case "refused":
               deps.dispatch({
                 type: "BLOCKED",
