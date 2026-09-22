@@ -105,6 +105,11 @@ const textOf = (root: ParentNode, candidates: readonly string[]): string | undef
  * a wrong-job drawer fails closed regardless of which candidate matched.
  */
 const DRAWER_TITLE_CANDIDATES: readonly string[] = [
+  // Live evidence 2026-09-22 (drawer header dump): the drawer title is a
+  // `span.job-name` inside `.job-detail-header .job-detail-info` — NOT an h1
+  // and NOT `.name` (that is the recruiter card). Without this candidate the
+  // drawer parse never matched, loadJob fell through, and the batch failed.
+  ".job-detail-header .job-name",
   ".job-detail-header .name",
   ".job-detail-header [itemprop='title']",
   ".job-detail-header h1",
