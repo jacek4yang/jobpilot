@@ -44,6 +44,13 @@ export type CommunicationOutcome =
     }
   /** A send was attempted and the result could not be observed. Needs a human. */
   | { readonly kind: "uncertain"; readonly detail: string }
+  /**
+   * The site refuses synthetic clicks on 立即沟通, so the runner never clicks
+   * it. The control was highlighted and the operator did not produce the
+   * conversation within the human-scale budget. Nothing was sent; the batch
+   * pauses with the actionable detail.
+   */
+  | { readonly kind: "needs-human-click"; readonly detail: string }
   | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string };
 
 export interface CommunicationRunnerDeps {
@@ -178,6 +185,11 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
 
     // --- 3. Navigate to the selected job's chat, then verify identity ------
     // Recovery is observation-only: it must not click even a contact control.
+    // A live run does not click the contact control either: the site ignores
+    // synthetic clicks on 立即沟通 (live evidence 2026-09-22), so opening the
+    // conversation is human-gated — the adapter highlights the control and
+    // waits for the operator's trusted click. A timeout surfaces here as
+    // `needs-human-click`, before anything irreversible has happened.
     const chat =
       options.verificationOnly === true
         ? deps.action.readCurrentChat()
@@ -198,6 +210,8 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
                     failure: "CHAT_MISMATCH" as const,
                     detail: opened.detail,
                   };
+                case "needs-human-click":
+                  return { kind: "needs-human-click" as const, detail: opened.detail };
               }
             });
     if (chat === null) {
@@ -207,6 +221,7 @@ export const createCommunicationRunner = (deps: CommunicationRunnerDeps): Commun
       if (chat.kind === "blocked") {
         return { kind: "blocked", reason: chat.reason, evidence: chat.evidence };
       }
+      // `aborted` and `needs-human-click` already carry the outcome shape.
       return chat;
     }
 

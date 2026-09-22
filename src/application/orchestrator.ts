@@ -289,6 +289,20 @@ export const createOrchestrator = (deps: OrchestratorDeps): Orchestrator => {
                 evidence: outcome.evidence,
               });
               return;
+            case "needs-human-click":
+              // The contact control was highlighted and never clicked (the site
+              // rejects synthetic clicks), and the operator did not produce the
+              // conversation within the human-scale budget. Fail closed into a
+              // paused state carrying the actionable message. This goes through
+              // PAUSE, not BLOCKED, because BLOCKED carries only a platform
+              // BlockReason — the reducer's BLOCKED map has no slot for this
+              // reason, and PAUSE passes a full PauseReason to the same
+              // fail-closed blockFor path.
+              deps.dispatch({
+                type: "PAUSE",
+                reason: { kind: "needs-human-click", evidence: outcome.detail },
+              });
+              return;
             case "refused":
               deps.dispatch({
                 type: "BLOCKED",

@@ -46,6 +46,7 @@ const matchingChat: ChatIdentity = {
 const makeAction = (options: {
   readonly block?: { readonly reason: BlockReason; readonly evidence: string } | null;
   readonly chat?: ChatIdentity | null;
+  readonly opened?: Awaited<ReturnType<CommunicationAction["openConversation"]>>;
   readonly prepare?: Awaited<ReturnType<CommunicationAction["prepareMessage"]>>;
   readonly dispatch?: Awaited<ReturnType<CommunicationAction["dispatchSend"]>>;
   /** Values returned by successive observeSend calls, last one repeats. */
@@ -66,6 +67,7 @@ const makeAction = (options: {
     findCommunicateButton: () => null,
     readCurrentChat: () => (options.chat === undefined ? matchingChat : options.chat),
     openConversation: async () => {
+      if (options.opened !== undefined) return options.opened;
       const identity = options.chat === undefined ? matchingChat : options.chat;
       return identity === null
         ? { kind: "blocked", reason: "selector-missing", evidence: "chat did not open" }
@@ -354,6 +356,22 @@ describe("communication runner", () => {
       });
       const outcome = await runner(action, clock).run(intent());
       expect(outcome.kind).toBe("blocked");
+    });
+
+    it("forwards needs-human-click untouched and never prepares or dispatches", async () => {
+      const clock = makeClock();
+      const detail =
+        "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。";
+      const { action, calls } = makeAction({
+        opened: { kind: "needs-human-click", detail },
+      });
+      const outcome = await runner(action, clock).run(intent());
+      expect(outcome).toEqual({ kind: "needs-human-click", detail });
+      // Nothing was written, clicked or observed: the contact step is gated
+      // on a human click, so nothing past it may run.
+      expect(calls.dispatch).toBe(0);
+      expect(calls.prepare).toBe(0);
+      expect(calls.observe).toBe(0);
     });
   });
 

@@ -251,6 +251,22 @@ describe("automation state machine", () => {
       expect(context.pauseReason?.kind).toBe("user");
     });
 
+    it("pauses fail-closed with the actionable evidence when the contact click never came", () => {
+      const detail =
+        "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。";
+      const { context, effects } = run(startContext(), [
+        { type: "PAUSE", reason: { kind: "needs-human-click", evidence: detail } },
+      ]);
+      expect(context.state).toBe("paused");
+      expect(context.pauseReason).toEqual({ kind: "needs-human-click", evidence: detail });
+      // The friendly title is what the operator sees: it becomes lastMessage
+      // and the notify effect that feeds the run log.
+      expect(context.lastMessage).toBe("需要点击「立即沟通」");
+      expect(context.lastTerminalReason).toBe("blocked");
+      expect(effects).toContain("notify");
+      expect(effects).toContain("record-diagnostics");
+    });
+
     it("pauses on a watchdog timeout", () => {
       const { context } = run(startContext(), [
         { type: "WATCHDOG_TIMEOUT", evidence: "stuck in contacting" },

@@ -56,6 +56,7 @@ export type CommunicationServiceResult =
   | { readonly kind: "sent"; readonly evidence: string }
   | { readonly kind: "uncertain"; readonly detail: string }
   | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string }
+  | { readonly kind: "needs-human-click"; readonly detail: string }
   | { readonly kind: "aborted"; readonly detail: string }
   | { readonly kind: "refused"; readonly reason: CommunicationRefusal; readonly message: string };
 
@@ -179,6 +180,7 @@ const reasonOf = (outcome: CommunicationOutcome): string | undefined => {
       return undefined;
     case "uncertain":
     case "aborted":
+    case "needs-human-click":
       return outcome.detail;
     case "blocked":
       return `${outcome.reason}: ${outcome.evidence}`;
@@ -622,6 +624,11 @@ export const createCommunicationService = (
             });
           }
           return { kind: "blocked", reason: outcome.reason, evidence: outcome.evidence };
+        case "needs-human-click":
+          // The contact control was never clicked (the site rejects synthetic
+          // clicks), so nothing irreversible happened. The actionable detail
+          // is handed to the caller to surface to the operator.
+          return { kind: "needs-human-click", detail: outcome.detail };
         case "aborted":
           // The runner aborted before clicking, so no message went out.
           return { kind: "aborted", detail: outcome.detail };
@@ -696,6 +703,10 @@ export const createCommunicationService = (
           return { kind: "uncertain", detail: outcome.detail };
         case "blocked":
           return { kind: "blocked", reason: outcome.reason, evidence: outcome.evidence };
+        case "needs-human-click":
+          // Unreachable in verification-only mode (recovery never navigates),
+          // but mapped for exhaustiveness: recovery must not hide the reason.
+          return { kind: "needs-human-click", detail: outcome.detail };
         case "aborted":
           return { kind: "aborted", detail: outcome.detail };
         default: {

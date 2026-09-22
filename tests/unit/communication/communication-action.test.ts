@@ -85,6 +85,15 @@ const preparedOnly = (intent: CommunicationIntent): CommunicationIntent => ({
   phase: "prepared",
 });
 
+/** Attaches a counting click listener; the returned reader reports the total. */
+const countClicksOn = (element: Element): (() => number) => {
+  let clicks = 0;
+  element.addEventListener("click", () => {
+    clicks += 1;
+  });
+  return () => clicks;
+};
+
 describe("findCommunicateButton", () => {
   it("finds 立即沟通 inside an active job-detail root", () => {
     const root = load("success-modal.html");
@@ -116,45 +125,135 @@ describe("openConversation", () => {
     document.body.innerHTML = html;
   };
 
-  it("clicks the exact contact control once and waits for the intended chat", async () => {
+  it("never clicks the control; waits for the operator's click and proceeds when the chat appears", async () => {
     const root = load("success-modal.html");
     const button = root.querySelector("button");
     expect(button).not.toBeNull();
     let clicks = 0;
     button?.addEventListener("click", () => {
       clicks += 1;
-      replaceWithFixture(root, "chat-conversation.html");
     });
 
+    // Simulate the operator: the conversation appears only after JobPilot has
+    // started polling — the identity must be picked up on a LATER attempt,
+    // without any synthetic click.
+    let polls = 0;
     const result = await actionFor(root).openConversation(intentFor(), {
-      maxAttempts: 2,
-      scheduler: (run) => run(),
+      maxAttempts: 3,
+      scheduler: (run) => {
+        polls += 1;
+        if (polls === 2) replaceWithFixture(root, "chat-conversation.html");
+        run();
+      },
     });
 
     expect(result.kind).toBe("ready");
-    expect(clicks).toBe(1);
+    expect(clicks).toBe(0);
+    expect(polls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("highlights the exact control and scrolls it into view while waiting", async () => {
+    const root = load("success-modal.html");
+    const button = root.querySelector("button");
+    expect(button).not.toBeNull();
+    if (button === null) throw new Error("fixture has no control");
+    let scrolled = 0;
+    button.scrollIntoView = (() => {
+      scrolled += 1;
+    }) as typeof button.scrollIntoView;
+    const clicks = countClicksOn(button);
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 1,
+    });
+
+    expect(result.kind).toBe("needs-human-click");
+    expect(clicks()).toBe(0);
+    // happy-dom serialises the shorthand in its own order, so assert the
+    // parsed longhands — those are what the operator's browser renders.
+    expect(button.style.outlineWidth).toBe("3px");
+    expect(button.style.outlineStyle).toBe("solid");
+    expect(button.style.outlineColor).toBe("#cf5477");
+    expect(button.style.outlineOffset).toBe("2px");
+    expect(scrolled).toBe(1);
+  });
+
+  it("fails closed with an actionable detail when no click arrives before the budget runs out", async () => {
+    const root = load("success-modal.html");
+    const button = root.querySelector("button");
+    expect(button).not.toBeNull();
+    if (button === null) throw new Error("fixture has no control");
+    const clicks = countClicksOn(button);
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 3,
+      scheduler: (run) => run(),
+    });
+
+    expect(result.kind).toBe("needs-human-click");
+    expect(result).toEqual({
+      kind: "needs-human-click",
+      detail: "等待超时：没有检测到对话出现。请点击职位详情里的「立即沟通」按钮，然后点「继续」。",
+    });
+    expect(clicks()).toBe(0);
   });
 
   it("fails closed when the opened conversation belongs to another job", async () => {
     const root = load("success-modal.html");
-    root.querySelector("button")?.addEventListener("click", () => {
-      replaceWithFixture(root, "chat-wrong-conversation.html");
-    });
-
+    let polls = 0;
     const result = await actionFor(root).openConversation(intentFor(), {
       maxAttempts: 2,
-      scheduler: (run) => run(),
+      scheduler: (run) => {
+        polls += 1;
+        if (polls === 1) replaceWithFixture(root, "chat-wrong-conversation.html");
+        run();
+      },
     });
 
     expect(result.kind).toBe("chat-mismatch");
   });
 
-  it("never clicks a broad fallback when the exact control is absent", async () => {
-    const result = await actionFor(load("unknown-modal.html")).openConversation(intentFor(), {
+  it("blocks when the active detail has no exact 立即沟通 control, with no fallback click", async () => {
+    const window = new Window({ url: CHAT_URL });
+    window.document.write(`<!doctype html>
+      <html>
+        <body>
+          <main data-jobpilot-detail>
+            <button type="button" aria-label="收藏">收藏</button>
+          </main>
+        </body>
+      </html>`);
+    const root = window.document as unknown as ParentNode;
+    const wrongControl = root.querySelector("button");
+    expect(wrongControl).not.toBeNull();
+    if (wrongControl === null) throw new Error("fixture has no control");
+    const clicks = countClicksOn(wrongControl);
+
+    const result = await actionFor(root).openConversation(intentFor(), {
       maxAttempts: 1,
     });
+
     expect(result.kind).toBe("blocked");
     expect(result.kind === "blocked" ? result.reason : "").toBe("selector-missing");
+    expect(clicks()).toBe(0);
+  });
+
+  it("never treats an unrelated dialog as an opened conversation", async () => {
+    // unknown-modal is a job-detail with the exact control plus an unrelated
+    // dialog and no chat: the wait must time out as needs-human-click, and no
+    // synthetic click may have fired — the dialog is not send evidence.
+    const root = load("unknown-modal.html");
+    const button = root.querySelector("[data-jobpilot-action='apply']");
+    expect(button).not.toBeNull();
+    if (button === null) throw new Error("fixture has no control");
+    const clicks = countClicksOn(button);
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 1,
+    });
+
+    expect(result.kind).toBe("needs-human-click");
+    expect(clicks()).toBe(0);
   });
 });
 

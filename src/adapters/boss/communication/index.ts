@@ -47,8 +47,10 @@ export {
   evaluateGuards,
   findActiveDetailRoot,
   findConversationRoot,
+  HUMAN_CLICK_BUDGET,
   isChatEditorEmpty,
   type ObserveResult,
+  type OpenConversationResult,
   type PrepareResult,
   readCommonPhrases,
 } from "./communication-action";
