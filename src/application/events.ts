@@ -28,6 +28,10 @@ export type AutomationEvent =
   | { readonly type: "CONTACT_STARTED"; readonly job: JobDetail }
   | { readonly type: "CONTACT_CONFIRMED"; readonly evidence: string }
   | {
+      readonly type: "CONTACT_AWAITING_HUMAN_CLICK";
+      readonly evidence: string;
+    }
+  | {
       /**
        * The platform itself confirmed the contact: after the operator's
        * 立即沟通 click the listing tab showed the 已向BOSS发送消息 dialog, which

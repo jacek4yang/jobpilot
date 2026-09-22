@@ -312,7 +312,7 @@ export const reduce = (
           consecutiveFailures: 0,
           lastMessage: `消息已发送并核实（${event.evidence}）`,
         }),
-        ["currentJob", "currentStatus"],
+        ["currentJob", "currentStatus", "pauseReason"],
       );
       return {
         context: next,
@@ -320,6 +320,30 @@ export const reduce = (
           { type: "notify", level: "info", message: "沟通消息已确认发送" },
           { type: "persist" },
           { type: "schedule-cooldown", delayMs: 0 },
+        ],
+      };
+    }
+
+    case "CONTACT_AWAITING_HUMAN_CLICK": {
+      // The adapter has handed the irreversible click to the operator and is
+      // polling for the result. Enter the human-paced waiting state: the
+      // watchdog does not police it, the modal + run-log tell the operator
+      // what to do, and the follow-up contact events (which gate only on
+      // HALTED_STATES) keep flowing into the machine.
+      if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
+      const waiting = enter(context, "awaiting-click", now, {
+        pauseReason: { kind: "needs-human-click", evidence: event.evidence },
+        lastMessage: "请手动点击高亮的「立即沟通」按钮（网站只响应真人点击）",
+      });
+      return {
+        context: waiting,
+        effects: [
+          {
+            type: "notify",
+            level: "info",
+            message: "请手动点击高亮的「立即沟通」按钮（网站只响应真人点击）",
+          },
+          { type: "persist" },
         ],
       };
     }
@@ -340,7 +364,7 @@ export const reduce = (
           consecutiveFailures: 0,
           lastMessage: `平台已发送打招呼消息（成功弹窗已确认）：${event.evidence}`,
         }),
-        ["currentJob", "currentStatus"],
+        ["currentJob", "currentStatus", "pauseReason"],
       );
       return {
         context: next,

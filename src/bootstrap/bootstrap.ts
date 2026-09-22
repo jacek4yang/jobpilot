@@ -764,6 +764,14 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     document: globalThis.document,
     clock: deps.clock,
     logger: deps.logger,
+    // Surface the human-click prompt IMMEDIATELY (live regression 2026-09-22:
+    // the prompt only appeared on timeout, so the operator sat staring at a
+    // silent panel) and move the machine into the watchdog-free wait state.
+    onAwaitingHumanClick: () =>
+      controller?.dispatch({
+        type: "CONTACT_AWAITING_HUMAN_CLICK",
+        evidence: "请点击高亮的「立即沟通」按钮",
+      }),
   });
 
   const communicationRunner = createCommunicationRunner({
@@ -1114,7 +1122,12 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         "cooldown",
       ].includes(context.state),
       paused:
-        context.state === "paused" || context.state === "blocked" || context.state === "failed",
+        context.state === "paused" ||
+        context.state === "blocked" ||
+        context.state === "failed" ||
+        // awaiting-click is a human-paced wait, not an error: the UI shows
+        // the same paused semantics (resume/stop available, modal up).
+        context.state === "awaiting-click",
 
       ...(context.pauseReason === undefined
         ? context.lastMessage === undefined

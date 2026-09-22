@@ -9,6 +9,11 @@ export type AutomationState =
   | "opening"
   | "validating"
   | "contacting"
+  // Waiting for the operator's real click on 立即沟通. NOT an active state:
+  // the watchdog must not police a human-paced wait (live regression
+  // 2026-09-22: the 60s contacting watchdog killed the wait before a person
+  // could click).
+  | "awaiting-click"
   | "cooldown"
   | "paused"
   | "blocked"
