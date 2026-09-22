@@ -117,6 +117,12 @@ export const zhCN = {
     userPaused: "JobPilot 已暂停，不会继续发送任何内容。",
     rateLimited: "已达到设定的安全频次上限，暂时休息片刻以保护账号安全。",
   },
+  modal: {
+    title: "需要你的处理",
+    recheckButton: "重新检查页面",
+    stopButton: "停止本次任务",
+    badge: "需要处理",
+  },
   decisions: {
     title: "需要确认的事项",
     uncertainSend:

@@ -140,6 +140,12 @@ export interface BlockedView {
   readonly reason: string;
   readonly body: string;
   readonly canResume: boolean;
+  /**
+   * The PauseReason kind behind this block (e.g. "captcha", "risk-control").
+   * Drives which surface renders: human-verification kinds get the floating
+   * blocking modal, everything else keeps the in-flow card.
+   */
+  readonly kind: string;
 }
 
 /** A pending decision the user must resolve before work can continue. */

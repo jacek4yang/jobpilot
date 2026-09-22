@@ -105,6 +105,16 @@ export const PANEL_CSS = `
   border-radius: var(--jp-radius-full);
 }
 
+.jobpilot-launcher-badge {
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: var(--jp-radius-full);
+  background: var(--jp-chip-blocked-bg);
+  color: var(--jp-chip-blocked-text);
+}
+
 .jobpilot-dot {
   width: 8px;
   height: 8px;
@@ -130,6 +140,8 @@ export const PANEL_CSS = `
 
 /* --- Header ------------------------------------------------------------- */
 .jobpilot-header {
+  position: relative;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -452,6 +464,70 @@ export const PANEL_CSS = `
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* --- Floating Blocking Modal (human verification) ------------------------- */
+.jobpilot-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  font-family: var(--jp-font);
+  background: rgba(44, 36, 39, 0.3);
+  animation: jobpilot-fadein 0.2s ease;
+}
+
+.jobpilot-modal-card {
+  width: 100%;
+  max-width: 340px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px 16px 14px;
+  text-align: center;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-danger-border);
+  border-radius: var(--jp-radius-lg);
+  box-shadow: var(--jp-shadow-panel);
+  box-sizing: border-box;
+}
+
+.jobpilot-modal-icon {
+  display: inline-flex;
+  color: var(--jp-warning);
+}
+
+.jobpilot-modal-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.jobpilot-modal-title {
+  margin: 10px 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--jp-danger);
+}
+
+.jobpilot-modal-body {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--jp-text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.jobpilot-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.jobpilot-modal-actions .jobpilot-btn {
+  flex: 1;
 }
 
 /* --- Pending Decisions -------------------------------------------------- */

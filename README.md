@@ -175,7 +175,11 @@ well-tested userscript whose real-site behaviour is unverified.
 - A panel in an open shadow root, so the host page's CSS cannot reach in and
   JobPilot's cannot leak out.
 - Blocked states replace the panel body with a plain-language explanation, the
-  reason in the largest text on screen, and a Resume control.
+  reason in the largest text on screen, and a Resume control. Human-verification
+  blocks (CAPTCHA, risk control, expired login, rate limiting, the human-gated
+  立即沟通 click) additionally raise a floating modal above the panel — inside the
+  shadow root, on every tab — offering 重新检查页面 (validate only) and 停止本次任务,
+  while the collapsed launcher pill carries a 「需要处理」 badge until resolved.
 - An `uncertain` send is a first-class state with a dedicated badge. It is never
   rounded to success and never auto-retried.
 
