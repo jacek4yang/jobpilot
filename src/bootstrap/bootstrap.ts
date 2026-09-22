@@ -1554,6 +1554,8 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     discoveryEpoch += 1;
     pageEpoch += 1;
     const epoch = pageEpoch;
+    const hrefBeforeChange = globalThis.location?.href;
+    const kindBeforeChange = currentPageKind;
     if (routeSettleTimer !== undefined) clearTimeout(routeSettleTimer);
     // Give the SPA a moment to render the new route's DOM before re-reading it.
     routeSettleTimer = setTimeout(() => {
@@ -1562,6 +1564,26 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
       try {
         const after = deps.platform.detectPage();
         refreshPageKind();
+        // A drawer opening over the same listing flips the classification
+        // between job-list and job-detail without any navigation: the URL is
+        // unchanged and the list container is still present. That flip is not
+        // a route change — the batch itself opens drawers — and pausing on it
+        // killed every live run ("页面意外发生变化（job-detail）"). Suppress
+        // only that exact case; any real URL transition still dispatches,
+        // including same-kind transitions between two listings.
+        const drawerOnlyFlip =
+          hrefBeforeChange !== undefined &&
+          globalThis.location?.href === hrefBeforeChange &&
+          ((kindBeforeChange === "job-list" && after === "job-detail") ||
+            (kindBeforeChange === "job-detail" && after === "job-list")) &&
+          globalThis.document?.querySelector(".job-list-container") !== null;
+        if (drawerOnlyFlip) {
+          deps.logger.debug("bootstrap", "ignored drawer classification flip", {
+            from: kindBeforeChange,
+            to: after,
+          });
+          return;
+        }
         // A URL transition is navigation even when both routes classify to the
         // same kind (for example, one search/list page to another). Suppressing
         // same-kind transitions would let an active batch continue against a
