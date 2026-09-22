@@ -232,7 +232,16 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
     render();
 
     const pageKind = deps.platform.detectPage();
-    if (pageKind !== "job-list") {
+    // A listing with the detail drawer open classifies as "job-detail" (the
+    // drawer root is positive detail evidence), but the listing itself is
+    // still on screen and scannable — mirror the scanJobs rule and refuse
+    // only when no list container is present. Live regression 2026-09-22:
+    // with a card pre-selected, discovery refused to scan an obvious list.
+    const listPresent =
+      pageKind === "job-list" ||
+      (pageKind === "job-detail" &&
+        globalThis.document?.querySelector(".job-list-container") !== null);
+    if (!listPresent) {
       discoveryNote = `当前页面不是职位列表（识别为：${pageKind}），没有扫描。`;
       appendRunLog(discoveryNote);
       render();
