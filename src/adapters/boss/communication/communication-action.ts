@@ -63,6 +63,14 @@ export interface CommunicationActionDeps {
   readonly document: ParentNode;
   readonly clock: Clock;
   readonly logger: Logger;
+  /**
+   * Invoked once when the flow starts waiting for the operator's real click
+   * on 立即沟通. Production wires it to a state-machine event that surfaces
+   * the prompt immediately (modal + run-log) and moves the machine into the
+   * watchdog-free awaiting-click state. Optional so existing tests/consumers
+   * keep compiling.
+   */
+  readonly onAwaitingHumanClick?: (() => void) | undefined;
 }
 
 /** A blocked outcome, carrying the typed reason and short evidence. */
@@ -518,6 +526,7 @@ export const createCommunicationAction = (deps: CommunicationActionDeps): Commun
         "waiting for the operator to click 立即沟通 (the site only accepts trusted clicks — live evidence 2026-09-22)",
         { jobId: intent.jobId },
       );
+      deps.onAwaitingHumanClick?.();
 
       // `root` is the Document captured at construction (production passes
       // `globalThis.document`). BOSS is a same-document SPA for the LISTING:

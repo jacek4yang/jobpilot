@@ -636,6 +636,36 @@ describe("automation state machine", () => {
   });
 
   describe("queue depth", () => {
+    it("enters the watchdog-free awaiting-click state with an immediate prompt", () => {
+      // Live regression 2026-09-22: the human-click wait sat in `contacting`,
+      // the 60s watchdog killed it, and the operator was never told to click.
+      const settled = reduce(
+        startContext(),
+        { type: "SCAN_COMPLETED", summaries: [summary(), summary("job-2")], skipped: 0 },
+        opts,
+      );
+      let result = reduce(
+        { ...settled.context, state: "contacting" as const },
+        { type: "CONTACT_AWAITING_HUMAN_CLICK", evidence: "请点击高亮的「立即沟通」按钮" },
+        opts,
+      );
+      expect(result.context.state).toBe("awaiting-click");
+      expect(isActive(result.context.state)).toBe(false);
+      expect(result.context.pauseReason).toMatchObject({ kind: "needs-human-click" });
+      expect(
+        result.effects.some(
+          (e) => e.type === "notify" && e.message.includes("请手动点击高亮的「立即沟通」按钮"),
+        ),
+      ).toBe(true);
+      result = reduce(
+        result.context,
+        { type: "CONTACT_PLATFORM_CONFIRMED", evidence: "platform dialog observed" },
+        opts,
+      );
+      expect(result.context.state).toBe("cooldown");
+      expect(result.context.pauseReason).toBeUndefined();
+    });
+
     it("tracks queue depth without changing state", () => {
       const started = startContext();
       const { context } = run(started, [{ type: "QUEUE_CHANGED", depth: 7 }]);
