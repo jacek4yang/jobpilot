@@ -139,6 +139,18 @@ export const PANEL_LAUNCHER = ".jobpilot-launcher";
 export const PANEL_START = 'button.jobpilot-btn[data-action="start-batch"]';
 export const PANEL_PAUSE = 'button.jobpilot-btn[data-action="pause-batch"]';
 export const PANEL_STOP = 'button.jobpilot-btn[data-action="stop-batch"]';
+/**
+ * Floating human-verification modal, rendered inside the panel shell (shadow
+ * root) above every tab. Surfaced for CAPTCHA / risk-control / login-expired /
+ * unknown-dom / rate-limited / needs-human-click pause reasons; user pauses
+ * never raise it. It has no close button — only re-check (validate) and stop.
+ */
+export const PANEL_MODAL = ".jobpilot-modal-overlay";
+export const PANEL_MODAL_TITLE = ".jobpilot-modal-title";
+export const PANEL_MODAL_BODY = ".jobpilot-modal-body";
+export const PANEL_MODAL_RECHECK = 'button.jobpilot-btn[data-action="recheck"]';
+export const PANEL_MODAL_STOP = 'button.jobpilot-btn[data-action="stop"]';
+export const PANEL_LAUNCHER_BADGE = ".jobpilot-launcher-badge";
 
 /**
  * Page kinds observed from the built userscript, per fixture, on the loopback

@@ -116,6 +116,12 @@ export const en = {
     userPaused: "JobPilot is paused and will not send any messages.",
     rateLimited: "Safe rate limit reached. Pausing temporarily to protect your account.",
   },
+  modal: {
+    title: "Needs Your Attention",
+    recheckButton: "Re-check Page",
+    stopButton: "Stop Session",
+    badge: "Needs Action",
+  },
   decisions: {
     title: "Decisions Required",
     uncertainSend:

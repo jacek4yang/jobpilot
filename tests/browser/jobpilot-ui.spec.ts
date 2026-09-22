@@ -27,6 +27,11 @@ import {
   PANEL_DOT,
   PANEL_HOST,
   PANEL_LAUNCHER,
+  PANEL_MODAL,
+  PANEL_MODAL_BODY,
+  PANEL_MODAL_RECHECK,
+  PANEL_MODAL_STOP,
+  PANEL_MODAL_TITLE,
   PANEL_PAGE_CHIP,
   PANEL_PAUSE,
   PANEL_ROOT,
@@ -375,6 +380,76 @@ test.describe("JobPilot panel on a job-list fixture", () => {
       page.locator('.jobpilot-resize-handle[data-resize-handle="s"]').first(),
     ).toBeAttached();
     await expect(page.locator(".jobpilot-resize-indicator").first()).toBeAttached();
+  });
+});
+
+test.describe("blocking modal on human-verification pages", () => {
+  test.beforeAll(() => {
+    test.skip(!isBuildPresent(), MISSING_BUILD_MESSAGE);
+  });
+
+  test("floats the modal inside the panel on a CAPTCHA page", async ({ page }) => {
+    // The CAPTCHA fixture makes JobPilot proactively pause with a captcha
+    // pause reason at load (see safety.spec.ts); the panel must surface that
+    // as the floating modal, not just the in-flow Home card.
+    test.skip(!fixtureExists("captcha.html"), "captcha fixture is not present");
+
+    await loadHarness(page, "captcha.html");
+    expect(await waitForPanel(page), "panel should mount on the captcha fixture").toBe(true);
+
+    const modal = page.locator(PANEL_MODAL).first();
+    await expect(modal).toBeAttached({ timeout: 10_000 });
+
+    // The modal lives inside the panel's open shadow root, i.e. inside
+    // [data-jobpilot-host], above the tab sections.
+    const insideShadow = await page.evaluate(() => {
+      const host = document.querySelector("[data-jobpilot-host]");
+      return host?.shadowRoot?.querySelector(".jobpilot-modal-overlay") !== null;
+    });
+    expect(insideShadow, "modal must render inside [data-jobpilot-host]").toBe(true);
+    await expect(modal).toBeVisible();
+
+    // The title is the largest text on screen; the body reuses the
+    // plain-language pause reason (describePauseReason output).
+    await expect(modal.locator(PANEL_MODAL_TITLE)).toHaveText("需要你的处理");
+    await expect(modal.locator(PANEL_MODAL_BODY)).toContainText("验证");
+
+    // Two-step recovery controls — validate (re-check) or abort (stop) — and
+    // no close affordance: a block clears only when the operator acts.
+    const recheckBtn = modal.locator(PANEL_MODAL_RECHECK);
+    const stopBtn = modal.locator(PANEL_MODAL_STOP);
+    await expect(recheckBtn).toHaveText("重新检查页面");
+    await expect(stopBtn).toHaveText("停止本次任务");
+    await expect(modal.locator('button[data-action="close"]')).toHaveCount(0);
+  });
+
+  test("modal re-check validates without resuming, and stopping dismisses it", async ({ page }) => {
+    test.skip(!fixtureExists("captcha.html"), "captcha fixture is not present");
+
+    await loadHarness(page, "captcha.html");
+    expect(await waitForPanel(page), "panel should mount on the captcha fixture").toBe(true);
+
+    const modal = page.locator(PANEL_MODAL).first();
+    await expect(modal).toBeAttached({ timeout: 10_000 });
+
+    // Step one of the two-step recovery: re-check only VALIDATES. On a page
+    // that is still a CAPTCHA it reports back via the warn toast and never
+    // resumes; the modal stays until the block truly resolves.
+    await modal.locator(PANEL_MODAL_RECHECK).click();
+    const toast = page.locator(".jobpilot-toast[data-tone='warn']").first();
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText("cannot resume yet");
+    await expect(modal).toBeAttached();
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute(
+      "data-state",
+      /paused|blocked|failed/,
+    );
+
+    // Stopping the task is the explicit abort: the block clears and the
+    // modal is dismissed with it.
+    await modal.locator(PANEL_MODAL_STOP).click();
+    await expect(modal).toHaveCount(0);
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
   });
 });
 

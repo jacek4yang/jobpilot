@@ -1128,6 +1128,7 @@ const bootstrapWith = async (config: JobPilotConfig): Promise<BootstrapResult> =
         : {
             blocked: {
               reason: describePauseReason(context.pauseReason),
+              kind: context.pauseReason.kind,
               // For the human-gated contact step the generic "handle the page"
               // body would bury the one action that unblocks the batch, so the
               // pause reason's own evidence — the actionable message — is the

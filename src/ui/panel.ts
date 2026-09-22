@@ -21,6 +21,12 @@ import {
   type StoredGeometryInput,
 } from "./layout/geometry";
 import { createResizeController } from "./layout/resize";
+import {
+  type BlockingModal,
+  createBlockingModal,
+  isBlockingModalKind,
+  syncBlockingModal,
+} from "./modal";
 import { PANEL_CSS } from "./theme/styles";
 import type { PanelTab, PanelViewModel, UiCallbacks } from "./view-model";
 
@@ -89,8 +95,10 @@ export const createPanel = (options: PanelOptions): Panel => {
   const launcherLabel = el(doc, "span", "jobpilot-launcher-label", t("launcher.idle"));
   const launcherCount = el(doc, "span", "jobpilot-launcher-count", "");
   launcherCount.classList.add("jobpilot-hidden");
+  const launcherBadge = el(doc, "span", "jobpilot-launcher-badge", t("modal.badge"));
+  launcherBadge.classList.add("jobpilot-hidden");
 
-  launcher.append(dot, monogram, launcherLabel, launcherCount);
+  launcher.append(dot, monogram, launcherLabel, launcherCount, launcherBadge);
 
   // --- 2. Main Panel Shell ------------------------------------------------
   const panelEl = el(doc, "div", "jobpilot-root");
@@ -304,7 +312,18 @@ export const createPanel = (options: PanelOptions): Panel => {
     callbacks.onSaveLayout?.(currentGeometry);
   };
 
-  // --- 7. Keyboard Shortcuts ----------------------------------------------
+  // --- 7. Blocking Modal (human verification) -------------------------------
+  // Surfaced from renderView whenever the view model carries a human-
+  // verification block. Lives inside the panel shell (appended to panelEl), so
+  // it exists on every tab and tracks the panel when dragged or resized.
+  let blockingModal: BlockingModal | undefined;
+
+  const closeBlockingModal = (): void => {
+    blockingModal?.close();
+    blockingModal = undefined;
+  };
+
+  // --- 8. Keyboard Shortcuts ----------------------------------------------
   const onKeyDown = (event: KeyboardEvent): void => {
     if (!expanded) return;
     const target = event.target;
@@ -313,7 +332,9 @@ export const createPanel = (options: PanelOptions): Panel => {
       if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return;
     }
     if (event.key === "Escape") {
-      collapse();
+      // A blocking modal offers no escape hatch: the operator must re-check
+      // the page or stop the task. Collapsing stays available via the header.
+      if (blockingModal === undefined) collapse();
       return;
     }
     if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -322,11 +343,12 @@ export const createPanel = (options: PanelOptions): Panel => {
   };
   doc.addEventListener("keydown", onKeyDown);
 
-  // --- 8. Dynamic Locale Subscription -------------------------------------
+  // --- 9. Dynamic Locale Subscription -------------------------------------
   let lastViewModel: PanelViewModel | undefined;
 
   const updateLocalizedStrings = (): void => {
     launcher.setAttribute("aria-label", t("launcher.openAria"));
+    launcherBadge.textContent = t("modal.badge");
     collapseBtn.setAttribute("aria-label", t("header.collapseAria"));
     collapseBtn.title = t("header.collapseAria");
 
@@ -345,7 +367,7 @@ export const createPanel = (options: PanelOptions): Panel => {
     updateLocalizedStrings();
   });
 
-  // --- 9. Toast -----------------------------------------------------------
+  // --- 10. Toast -----------------------------------------------------------
   let toastEl: HTMLElement | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -412,6 +434,33 @@ export const createPanel = (options: PanelOptions): Panel => {
       if (content === undefined) continue;
       if (section.firstChild !== content) section.replaceChildren(content);
     }
+
+    // Blocking modal: human-verification states (CAPTCHA, risk control, login
+    // expiry, ...) float above the whole panel on every tab. User-initiated
+    // and bookkeeping pauses keep the in-flow card and raise no modal.
+    const blocked = view.blocked;
+    const modalActive = blocked !== undefined && isBlockingModalKind(blocked.kind);
+    launcherBadge.classList.toggle("jobpilot-hidden", !modalActive);
+
+    if (modalActive && blocked !== undefined) {
+      if (blockingModal === undefined) {
+        blockingModal = createBlockingModal(doc, {
+          title: t("modal.title"),
+          body: blocked.reason,
+          onRecheck: () => callbacks.recheck(),
+          onStop: () => callbacks.stop(),
+        });
+        panelEl.append(blockingModal.el);
+        // A fresh block demands action: never leave it buried in the pill.
+        // Deliberately only on open, so the operator can collapse afterwards.
+        if (!expanded) expand();
+        blockingModal.el.focus();
+      } else {
+        syncBlockingModal(blockingModal.el, blocked.reason);
+      }
+    } else {
+      closeBlockingModal();
+    }
   };
 
   return {
@@ -446,6 +495,7 @@ export const createPanel = (options: PanelOptions): Panel => {
     dispose() {
       if (toastTimer !== undefined) clearTimeout(toastTimer);
       toastEl?.remove();
+      closeBlockingModal();
       doc.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", onWindowResize);
       dragController.dispose();
