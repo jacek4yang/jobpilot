@@ -257,7 +257,14 @@ const run = async (): Promise<void> => {
         os: "windows",
         locale: ["zh-CN"],
         window: [1440, 900],
-        humanize: true,
+        // humanize wraps the cursor pipeline in a way that hangs Playwright's
+        // synthesized clicks (both panel and site elements); the harness
+        // drives DOM-level clicks anyway, so it stays off here.
+        humanize: false,
+        // The site opens the conversation with window.open; without this the
+        // popup blocker suppresses non-gesture opens and the click appears
+        // to do nothing (the live symptom under diagnosis).
+        firefox_user_prefs: { "dom.disable_open_during_load": false },
         data_dir: PROFILE,
       })) as BrowserContext;
     } catch (e) {
@@ -385,7 +392,15 @@ const run = async (): Promise<void> => {
       if (handled.has(file)) continue;
       handled.add(file);
       const id = file.replace(/\.json$/, "");
-      let cmd: { op?: string; kind?: string; text?: string; keep?: number; url?: string } = {};
+      let cmd: {
+        op?: string;
+        kind?: string;
+        text?: string;
+        keep?: number;
+        url?: string;
+        js?: string;
+        selector?: string;
+      } = {};
       try {
         cmd = JSON.parse(readFileSync(join(CMD_DIR, file), "utf8"));
       } catch (e) {
@@ -400,7 +415,32 @@ const run = async (): Promise<void> => {
           return;
         }
         if (cmd.op === "url") {
-          writeResult(id, { url: page.url(), title: await page.title() });
+          const pages = context.pages().map((p, i) => ({ index: i, url: p.url() }));
+          writeResult(id, { url: page.url(), title: await page.title(), pages });
+        } else if (cmd.op === "site-click" && typeof cmd.selector === "string") {
+          // DIAGNOSTIC ONLY: one trusted (input-pipeline) click on a site
+          // control, to distinguish "the site needs a real user gesture" from
+          // "our synthetic click is being ignored". Not part of any product
+          // path — the shipped adapter only ever uses synthetic clicks.
+          try {
+            const target = page.locator(cmd.selector).first();
+            await target.click({ timeout: 5_000 });
+            await page.waitForTimeout(3_000);
+            const pages = context.pages().map((p) => p.url());
+            writeResult(id, { ok: true, url: page.url(), pages });
+          } catch (e) {
+            writeResult(id, { ok: false, error: String(e) });
+          }
+        } else if (cmd.op === "eval" && typeof cmd.js === "string") {
+          // Structure-only probe of the LIVE page. Maintainer tooling: the
+          // output stays in the gitignored run directory. Site controls are
+          // never clicked (that boundary is panelClick's whole design).
+          try {
+            const value = await page.evaluate(cmd.js);
+            writeResult(id, { url: page.url(), value: String(value ?? "").slice(0, 6000) });
+          } catch (e) {
+            writeResult(id, { error: String(e) });
+          }
         } else if (cmd.op === "goto" && typeof cmd.url === "string") {
           // Single, deliberate navigation — used instead of scripted hop
           // sequences (which trip risk control). The operator remains
