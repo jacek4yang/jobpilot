@@ -560,6 +560,56 @@ test.describe("built finite-batch production composition", () => {
     await operator;
   });
 
+  test("platform success dialog confirms the contact on the listing tab — no chat tab needed", async ({
+    page,
+  }) => {
+    // The boss-helper-documented no-jump flow: the operator clicks 立即沟通,
+    // the platform sends the greeting and shows 已向BOSS发送消息 on the
+    // listing; JobPilot dismisses it with 留在此页 and the batch continues.
+    await loadFinite(page, "platform-dialog");
+    const operator = runBatchAsOperator(page);
+    await page.locator(PANEL_START).click();
+
+    // Wait for the actual work first: the dot is "idle" until Start takes
+    // effect, so asserting it upfront would race the batch.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              (globalThis as unknown as { __finiteBatchFixture?: { stayClicks: number } })
+                .__finiteBatchFixture?.stayClicks ?? -1,
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(2);
+    await expect(page.locator(PANEL_DOT).first()).toHaveAttribute("data-state", "idle");
+    const outcome = await page.evaluate(() => {
+      const fixture = (
+        globalThis as unknown as {
+          __finiteBatchFixture?: {
+            stayClicks: number;
+            continueClicks: number;
+            sendClicks: number;
+            openedJobs: string[];
+          };
+        }
+      ).__finiteBatchFixture;
+      const raw = localStorage.getItem("__jobpilot_browser_gm__:jobpilot:jobpilot:root:v1");
+      const applications =
+        raw === null ? [] : (JSON.parse(raw) as { applications?: unknown[] }).applications;
+      return { fixture, applicationCount: applications?.length ?? 0 };
+    });
+    // 留在此页 dismissed both dialogs; 继续沟通 (the chat-tab jump) was never
+    // clicked; no chat had to open in this tab; both jobs settled.
+    expect(outcome.fixture?.stayClicks).toBe(2);
+    expect(outcome.fixture?.continueClicks).toBe(0);
+    expect(outcome.fixture?.sendClicks).toBe(0);
+    expect(outcome.fixture?.openedJobs).toEqual(["e2e-1001", "e2e-1002"]);
+    expect(outcome.applicationCount).toBe(2);
+    await operator;
+  });
+
   test("double Start still runs one finite batch", async ({ page }) => {
     await loadFinite(page);
     const operator = runBatchAsOperator(page);

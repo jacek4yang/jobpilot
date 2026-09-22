@@ -470,8 +470,14 @@ These are real and current.
     live session (2026-09-22), the signature of an `isTrusted` guard. JobPilot
     therefore never auto-clicks that button: in ASSIST and AUTOMATIC mode alike
     it highlights the control, asks you to click it, and waits up to two minutes
-    for the conversation to appear before failing closed. Everything after your
-    click (identity match, draft check, send, observation) is unchanged.
+    for the conversation to appear before failing closed. After your click the
+    platform opens the conversation in a **new tab** and shows its own success
+    dialog (「已向BOSS发送消息」) on the listing — documented by the
+    battle-tested boss-helper flow, which also shows the platform itself sends
+    the default greeting at click time. JobPilot confirms that dialog on the
+    listing tab (dismissing it with 留在此页, never 继续沟通) and continues the
+    batch without any page jump; you can ignore the new chat tab, or close it
+    later. Everything after the confirmation (cooldown, next job) is unchanged.
 
 ---
 

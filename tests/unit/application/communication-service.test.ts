@@ -400,6 +400,17 @@ describe("communication service", () => {
       expect(result).toEqual({ kind: "needs-human-click", detail });
     });
 
+    it("passes through platform-dialog-confirmed with the dialog evidence intact", async () => {
+      const evidence = "platform success dialog observed and dismissed";
+      const h = harness({
+        runner: {
+          run: async () => ({ kind: "platform-dialog-confirmed", evidence }),
+        },
+      });
+      const result = await h.service.communicate({ job: job() });
+      expect(result).toEqual({ kind: "platform-dialog-confirmed", evidence });
+    });
+
     it("treats a runner exception as uncertain, never as a retryable failure", async () => {
       const h = harness({
         runner: {

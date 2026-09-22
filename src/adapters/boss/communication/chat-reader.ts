@@ -315,8 +315,14 @@ export const findSendButton = (root: ParentNode): Element | null => {
 /** The one acceptable visible label for the send control. */
 const SEND_LABEL = "发送";
 
-/** Tokens that identify a successful-send confirmation dialog. */
-const SUCCESS_TOKENS: readonly string[] = ["已向BOSS发送消息", "已向 BOSS 发送消息"];
+/**
+ * Tokens that identify a successful-send confirmation dialog.
+ *
+ * Exported so `communication-action` reuses the exact same list when it waits
+ * for the platform dialog after a human 立即沟通 click — one source of truth
+ * for what counts as the platform's own confirmation.
+ */
+export const SUCCESS_TOKENS: readonly string[] = ["已向BOSS发送消息", "已向 BOSS 发送消息"];
 
 /** Discriminated result of inspecting the page for a dialog. */
 export type ModalClassification =

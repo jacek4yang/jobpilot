@@ -27,12 +27,41 @@
           "e2e-1001": { title: "前端开发工程师", company: "示例一科技有限公司", recruiter: "招聘者甲" },
           "e2e-1002": { title: "后端开发工程师", company: "示例二科技有限公司", recruiter: "招聘者乙" },
         };
-        const state = { sendClicks: 0, openedJobs: [], sentJobs: [] };
+        const state = { sendClicks: 0, openedJobs: [], sentJobs: [], stayClicks: 0, continueClicks: 0 };
         window.__finiteBatchFixture = state;
         const surface = document.querySelector("#e2e-surface");
 
+        // The boss-helper-documented no-jump flow (2026): a real 立即沟通 click
+        // makes the PLATFORM send the greeting and show this dialog on the
+        // listing tab, while the conversation opens in a new tab. 留在此页
+        // dismisses the dialog; 继续沟通 would jump to the chat tab and must
+        // never be clicked by JobPilot.
+        const renderPlatformDialog = () => {
+          surface.innerHTML = `
+            <div class="dialog-container success" role="dialog" data-jobpilot-modal="success">
+              <div class="dialog__body">已向BOSS发送消息，请留意对方回复。</div>
+              <div class="dialog__footer">
+                <button type="button" data-jobpilot-action="stay">留在此页</button>
+                <button type="button" data-jobpilot-action="continue">继续沟通</button>
+              </div>
+            </div>`;
+          surface.querySelector("[data-jobpilot-action='stay']")?.addEventListener("click", () => {
+            state.stayClicks += 1;
+            surface.querySelector(".dialog-container")?.remove();
+          });
+          surface
+            .querySelector("[data-jobpilot-action='continue']")
+            ?.addEventListener("click", () => {
+              state.continueClicks += 1;
+            });
+        };
+
         const openChat = (id) => {
           const job = jobs[id];
+          if (variant === "platform-dialog") {
+            renderPlatformDialog();
+            return;
+          }
           const observedId = variant === "wrong-chat" ? "e2e-wrong" : id;
           surface.innerHTML = `
             <div class="chat-conversation" data-job-id="${observedId}">

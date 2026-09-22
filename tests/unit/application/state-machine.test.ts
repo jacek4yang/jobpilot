@@ -222,6 +222,39 @@ describe("automation state machine", () => {
       expect(context.state).toBe("cooldown");
       expect(effects).toContain("schedule-cooldown");
     });
+
+    it("settles a platform-dialog contact into cooldown with the platform wording", () => {
+      const contacting = run(approvedContext(), [
+        { type: "CONTACT_STARTED", job: detail() },
+      ]).context;
+      const { context, effects } = run(contacting, [
+        {
+          type: "CONTACT_PLATFORM_CONFIRMED",
+          evidence: "platform success dialog observed and dismissed",
+        },
+      ]);
+      // The no-jump happy path settles exactly like a confirmed contact, but
+      // the wording must credit the platform dialog, not message verification.
+      expect(context.stats.applied).toBe(1);
+      expect(context.sessionApplications).toBe(1);
+      expect(context.state).toBe("cooldown");
+      expect(context.lastMessage).toContain("平台已发送打招呼消息（成功弹窗已确认）");
+      expect(effects).toContain("schedule-cooldown");
+      expect(effects).toContain("notify");
+      // The run-log line the operator sees:
+      const notify = reduce(
+        contacting,
+        {
+          type: "CONTACT_PLATFORM_CONFIRMED",
+          evidence: "platform success dialog observed and dismissed",
+        },
+        opts,
+      ).effects.find((effect) => effect.type === "notify");
+      expect(notify?.type).toBe("notify");
+      if (notify?.type === "notify") {
+        expect(notify.message).toBe("平台已发送打招呼消息（成功弹窗已确认）");
+      }
+    });
   });
 
   describe("fail-closed safety signals", () => {

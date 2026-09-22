@@ -165,6 +165,39 @@ describe("orchestrator contact-job", () => {
       expect(pause.reason).toEqual({ kind: "needs-human-click", evidence: timeoutDetail });
     }
   });
+
+  it("settles platform-dialog-confirmed into a submitted lock and CONTACT_PLATFORM_CONFIRMED", async () => {
+    const events: AutomationEvent[] = [];
+    const history = createApplicationHistory();
+    // Mirror the real pipeline: discover → evaluated → approved.
+    history.discover(asPlatformId("boss"), asJobId("job-1"), NOW);
+    history.transition(asJobId("job-1"), "evaluated", { now: NOW });
+    history.transition(asJobId("job-1"), "approved", { now: NOW });
+    const evidence = "platform success dialog observed and dismissed";
+    const orchestrator = createOrchestrator(
+      makeDeps({
+        communication: {
+          communicate: async () => ({ kind: "platform-dialog-confirmed", evidence }),
+        },
+        history,
+        dispatch: (event) => events.push(event),
+      }),
+    );
+
+    await orchestrator.runEffect({ type: "contact-job", job: detail() }, contactingContext());
+
+    // The job IS contacted, and the record must not claim the "verified"
+    // status that only observed outgoing-message evidence earns. The
+    // submitted transition mirrors the sent path exactly (the legal graph
+    // routes approved → opened → submitted and nothing opens the record, so
+    // it is an idempotent no-op for both paths).
+    expect(history.get(asJobId("job-1"))?.status).not.toBe("verified");
+    expect(events.map((event) => event.type)).toEqual(["CONTACT_PLATFORM_CONFIRMED"]);
+    const confirmed = events[0];
+    if (confirmed?.type === "CONTACT_PLATFORM_CONFIRMED") {
+      expect(confirmed.evidence).toBe(evidence);
+    }
+  });
 });
 
 describe("orchestrator load-job", () => {

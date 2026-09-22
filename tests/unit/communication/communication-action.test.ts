@@ -126,7 +126,7 @@ describe("openConversation", () => {
   };
 
   it("never clicks the control; waits for the operator's click and proceeds when the chat appears", async () => {
-    const root = load("success-modal.html");
+    const root = load("job-detail.html");
     const button = root.querySelector("button");
     expect(button).not.toBeNull();
     let clicks = 0;
@@ -153,7 +153,7 @@ describe("openConversation", () => {
   });
 
   it("highlights the exact control and scrolls it into view while waiting", async () => {
-    const root = load("success-modal.html");
+    const root = load("job-detail.html");
     const button = root.querySelector("button");
     expect(button).not.toBeNull();
     if (button === null) throw new Error("fixture has no control");
@@ -179,7 +179,7 @@ describe("openConversation", () => {
   });
 
   it("fails closed with an actionable detail when no click arrives before the budget runs out", async () => {
-    const root = load("success-modal.html");
+    const root = load("job-detail.html");
     const button = root.querySelector("button");
     expect(button).not.toBeNull();
     if (button === null) throw new Error("fixture has no control");
@@ -199,7 +199,7 @@ describe("openConversation", () => {
   });
 
   it("fails closed when the opened conversation belongs to another job", async () => {
-    const root = load("success-modal.html");
+    const root = load("job-detail.html");
     let polls = 0;
     const result = await actionFor(root).openConversation(intentFor(), {
       maxAttempts: 2,
@@ -211,6 +211,119 @@ describe("openConversation", () => {
     });
 
     expect(result.kind).toBe("chat-mismatch");
+  });
+
+  const PLATFORM_DIALOG = `
+    <div class="dialog-container success" role="dialog" data-jobpilot-modal="success">
+      <div class="dialog__body">已向BOSS发送消息，请留意对方回复。</div>
+      <div class="dialog__footer">
+        <button type="button" data-jobpilot-action="stay">留在此页</button>
+        <button type="button" data-jobpilot-action="continue">继续沟通</button>
+      </div>
+    </div>`;
+
+  const injectPlatformDialog = (root: ParentNode, html: string): void => {
+    (root as Document).body.insertAdjacentHTML("beforeend", html);
+  };
+
+  it("accepts the platform success dialog, clicks 留在此页 once, and reports platform-dialog-confirmed", async () => {
+    const root = load("job-detail.html");
+    const clicks = { stay: 0, jump: 0 };
+    let polls = 0;
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 4,
+      scheduler: (run) => {
+        polls += 1;
+        if (polls === 1) {
+          // The platform answers the operator's click with its own dialog on
+          // the listing tab; the conversation opened in another tab.
+          injectPlatformDialog(root, PLATFORM_DIALOG);
+          const document = root as Document;
+          document.querySelector("[data-jobpilot-action='stay']")?.addEventListener("click", () => {
+            clicks.stay += 1;
+          });
+          document
+            .querySelector("[data-jobpilot-action='continue']")
+            ?.addEventListener("click", () => {
+              clicks.jump += 1;
+            });
+        }
+        run();
+      },
+    });
+
+    expect(result).toEqual({
+      kind: "platform-dialog-confirmed",
+      evidence: "platform success dialog observed and dismissed",
+    });
+    // Exactly one synthetic click, on 留在此页 only. 继续沟通 would jump to
+    // the chat tab and must never be clicked.
+    expect(clicks.stay).toBe(1);
+    expect(clicks.jump).toBe(0);
+  });
+
+  it("keeps waiting when the dialog has no 留在此页 control, then blocks with an actionable message", async () => {
+    const root = load("job-detail.html");
+    const variant = PLATFORM_DIALOG.replace(
+      '<button type="button" data-jobpilot-action="stay">留在此页</button>',
+      "",
+    );
+    let polls = 0;
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 3,
+      scheduler: (run) => {
+        polls += 1;
+        if (polls === 1) injectPlatformDialog(root, variant);
+        run();
+      },
+    });
+
+    // A dialog variant we cannot dismiss is a hard stop, not a success.
+    expect(result.kind).toBe("blocked");
+    if (result.kind === "blocked") {
+      expect(result.reason).toBe("ambiguous-state");
+      expect(result.evidence).toContain("留在此页");
+    }
+  });
+
+  it("prefers a same-document chat identity over the platform dialog", async () => {
+    const root = load("job-detail.html");
+    let polls = 0;
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 3,
+      scheduler: (run) => {
+        polls += 1;
+        if (polls === 1) {
+          // Both outcomes present in the same probe: identity wins.
+          replaceWithFixture(root, "chat-conversation.html");
+          injectPlatformDialog(root, PLATFORM_DIALOG);
+        }
+        run();
+      },
+    });
+
+    expect(result.kind).toBe("ready");
+  });
+
+  it("never treats a dialog without the 已向BOSS发送消息 text as the platform success dialog", async () => {
+    // unknown-modal is a job-detail with the exact 立即沟通 control plus an
+    // unrelated 实名认证 dialog and no chat: the dialog lacks the success
+    // token, so the wait must end as needs-human-click, not dialog-confirmed.
+    const root = load("unknown-modal.html");
+    const button = root.querySelector("[data-jobpilot-action='apply']");
+    expect(button).not.toBeNull();
+    if (button === null) throw new Error("fixture has no control");
+    const clicks = countClicksOn(button);
+
+    const result = await actionFor(root).openConversation(intentFor(), {
+      maxAttempts: 1,
+    });
+
+    expect(result.kind).toBe("needs-human-click");
+    expect(clicks()).toBe(0);
   });
 
   it("blocks when the active detail has no exact 立即沟通 control, with no fallback click", async () => {

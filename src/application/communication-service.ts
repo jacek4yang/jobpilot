@@ -57,6 +57,7 @@ export type CommunicationServiceResult =
   | { readonly kind: "uncertain"; readonly detail: string }
   | { readonly kind: "blocked"; readonly reason: BlockReason; readonly evidence: string }
   | { readonly kind: "needs-human-click"; readonly detail: string }
+  | { readonly kind: "platform-dialog-confirmed"; readonly evidence: string }
   | { readonly kind: "aborted"; readonly detail: string }
   | { readonly kind: "refused"; readonly reason: CommunicationRefusal; readonly message: string };
 
@@ -182,6 +183,8 @@ const reasonOf = (outcome: CommunicationOutcome): string | undefined => {
     case "aborted":
     case "needs-human-click":
       return outcome.detail;
+    case "platform-dialog-confirmed":
+      return outcome.evidence;
     case "blocked":
       return `${outcome.reason}: ${outcome.evidence}`;
   }
@@ -583,7 +586,7 @@ export const createCommunicationService = (
         transactionId,
         jobId,
         kind:
-          outcome.kind === "sent"
+          outcome.kind === "sent" || outcome.kind === "platform-dialog-confirmed"
             ? "completed"
             : outcome.kind === "uncertain"
               ? "uncertain"
@@ -601,6 +604,18 @@ export const createCommunicationService = (
             baseline: intent.outgoingBaseline,
           });
           return { kind: "sent", evidence: outcome.evidence };
+        case "platform-dialog-confirmed":
+          // The platform sent the greeting and confirmed it with its own
+          // dialog; there is no outgoing-message count to report, and claiming
+          // one would fabricate verification we did not do.
+          deps.onVerified?.({
+            transactionId,
+            jobId,
+            kind: "uncertain",
+            outgoingCount: intent.outgoingBaseline,
+            baseline: intent.outgoingBaseline,
+          });
+          return { kind: "platform-dialog-confirmed", evidence: outcome.evidence };
         case "uncertain":
           deps.onVerified?.({
             transactionId,
@@ -688,7 +703,7 @@ export const createCommunicationService = (
         transactionId: recovered.id,
         jobId: String(recovered.jobId),
         kind:
-          outcome.kind === "sent"
+          outcome.kind === "sent" || outcome.kind === "platform-dialog-confirmed"
             ? "completed"
             : outcome.kind === "uncertain"
               ? "uncertain"
@@ -707,6 +722,10 @@ export const createCommunicationService = (
           // Unreachable in verification-only mode (recovery never navigates),
           // but mapped for exhaustiveness: recovery must not hide the reason.
           return { kind: "needs-human-click", detail: outcome.detail };
+        case "platform-dialog-confirmed":
+          // Unreachable in verification-only mode (recovery never navigates),
+          // but mapped for exhaustiveness: recovery must not hide the reason.
+          return { kind: "platform-dialog-confirmed", evidence: outcome.evidence };
         case "aborted":
           return { kind: "aborted", detail: outcome.detail };
         default: {

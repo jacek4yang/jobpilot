@@ -324,6 +324,34 @@ export const reduce = (
       };
     }
 
+    case "CONTACT_PLATFORM_CONFIRMED": {
+      // The no-jump happy path: the operator clicked 立即沟通, the platform
+      // sent the greeting and confirmed it with its own success dialog. The
+      // job IS contacted, so the run settles exactly like a confirmed contact
+      // (cooldown, applied counted) — but the wording must not claim the
+      // message-text verification that only an observed outgoing bubble earns.
+      if (HALTED_STATES.includes(context.state)) return { context, effects: noEffects };
+      const appliedAt = now;
+      const base = withStats(context, { applied: context.stats.applied + 1 }, now);
+      const next = clearFields(
+        enter(base, "cooldown", now, {
+          sessionApplications: context.sessionApplications + 1,
+          applicationTimestamps: [...context.applicationTimestamps, appliedAt],
+          consecutiveFailures: 0,
+          lastMessage: `平台已发送打招呼消息（成功弹窗已确认）：${event.evidence}`,
+        }),
+        ["currentJob", "currentStatus"],
+      );
+      return {
+        context: next,
+        effects: [
+          { type: "notify", level: "info", message: "平台已发送打招呼消息（成功弹窗已确认）" },
+          { type: "persist" },
+          { type: "schedule-cooldown", delayMs: 0 },
+        ],
+      };
+    }
+
     case "BLOCKED": {
       const reasonMap = {
         captcha: { kind: "captcha", evidence: event.evidence },
